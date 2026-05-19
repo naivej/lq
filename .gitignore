@@ -1,0 +1,9 @@
+lq.exe
+.vscode
+dev_logs
+test_report_*.md
+fixtures
+CLAUDE.md
+*.code-workspace
+deno.lock
+test-pilot
