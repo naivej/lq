@@ -1,0 +1,426 @@
+#LyX 2.5 created this file. For more info see https://www.lyx.org/
+\lyxformat 643
+\begin_document
+\begin_header
+\save_transient_properties true
+\origin /systemlyxdir/examples/Graphics_and_Insets/
+\textclass article
+\use_default_options true
+\maintain_unincluded_children no
+\language american
+\language_package none
+\inputencoding utf8-plain
+\fontencoding auto
+\font_roman "default" "default"
+\font_sans "default" "default"
+\font_typewriter "default" "default"
+\font_math "auto" "auto"
+\font_default_family default
+\use_non_tex_fonts false
+\font_sc false
+\font_roman_osf false
+\font_sans_osf false
+\font_typewriter_osf false
+\font_sf_scale 100 100
+\font_tt_scale 100 100
+\use_microtype false
+\use_dash_ligatures true
+\graphics default
+\default_output_format default
+\output_sync 0
+\output_sync_macro "\synctex=-1"
+\bibtex_command default
+\index_command default
+\float_placement class
+\float_alignment center
+\paperfontsize 11
+\spacing single
+\use_hyperref false
+\pdf_bookmarks true
+\pdf_bookmarksnumbered false
+\pdf_bookmarksopen false
+\pdf_bookmarksopenlevel 1
+\pdf_breaklinks true
+\pdf_pdfborder true
+\pdf_colorlinks true
+\pdf_backref false
+\pdf_pdfusetitle true
+\pdf_quoted_options "linkcolor=blue"
+\papersize default
+\use_geometry true
+\use_package amsmath 1
+\use_package amssymb 1
+\use_package cancel 1
+\use_package esint 1
+\use_package mathdots 0
+\use_package mathtools 0
+\use_package mhchem 0
+\use_package stackrel 0
+\use_package stmaryrd 0
+\use_package undertilde 0
+\cite_engine basic
+\cite_engine_type default
+\biblio_style plain
+\use_bibtopic false
+\use_indices false
+\paperorientation portrait
+\suppress_date false
+\justification default
+\crossref_package refstyle
+\use_formatted_ref 1
+\use_minted 0
+\use_lineno 0
+\customcolor lyxboxbgcolor e6e6e6
+\backgroundcolor none
+\fontcolor none
+\notefontcolor lightgray
+\boxbgcolor lyxboxbgcolor
+\table_border_color default
+\table_odd_row_color default
+\table_even_row_color default
+\table_alt_row_colors_start 1
+\index Index
+\shortcut idx
+\color #008000
+\end_index
+\secnumdepth 3
+\tocdepth 3
+\paragraph_separation indent
+\paragraph_indentation default
+\is_math_indent 0
+\math_numbering_side default
+\quotes_style english
+\dynamic_quotes 0
+\papercolumns 1
+\papersides 1
+\paperpagestyle default
+\tablestyle default
+\tracking_changes false
+\output_changes false
+\change_bars false
+\postpone_fragile_content false
+\html_math_output 0
+\html_css_as_file 0
+\html_be_strict false
+\docbook_table_output 0
+\docbook_mathml_prefix 1
+\docbook_mathml_version 0
+\end_header
+
+\begin_body
+
+\begin_layout Standard
+This file shows some possible use cases of computer algebra systems within LyX (currently only for 
+\family typewriter
+Maxima
+\family default
+) which might give you an idea what is working.
+ It also help us to keep track of things which work (or worked).
+ Feel free to send us more examples,
+ especially for octave or mathematica.
+\end_layout
+
+\begin_layout Section
+Maxima
+\end_layout
+
+\begin_layout Standard
+
+\series bold
+Commands that work fine:
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\log(\%e)=1$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\%i^{2}=-1$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\frac{a*b+2*a*b}{b}+\frac{1}{a}+a*b=a\,b+3\,a+\frac{1}{a}$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\sum^{\infty}_{i=1}\left(\frac{1}{2}\right)^{i}=1$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\prod^{5}_{k=1}k=120$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\frac{37}{3}*2-\sum^{3}_{i=1}i^{i}=-\frac{22}{3}$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\frac{37.0}{3}=12.33333333333333$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\int^{2}_{1}\sin(x)dx=\cos1-\cos2$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\int\left(\frac{1}{1+x^{3}}\right)dx=-\frac{\log\left(x^{2}-x+1\right)}{6}+\frac{\arctan\left(\frac{2\,x-1}{\sqrt{3}}\right)}{\sqrt{3}}+\frac{\log\left(x+1\right)}{3}$
+\end_inset
+
+
+\begin_inset Newline newline
+\end_inset
+
+
+\begin_inset Note Greyedout
+status open
+
+\begin_layout Plain Layout
+
+\series bold
+Note:
+
+\series default
+ One needs to use proper delimiter insets 
+\begin_inset Formula $\left(\right)$
+\end_inset
+
+ instead of simple '(' ')' characters.
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\det\left[\begin{array}{ccc}
+1 & 6 & 7\\
+2 & 5 & 8\\
+3 & 4 & 17
+\end{array}\right]=-56$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\lim_{x\rightarrow0}\left(\frac{\sin(x)}{x}\right)=1$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $powerseries\left(-\log\left(5-x\right),x,1\right)=\sum^{\infty}_{{\mathit{i}_{2}}=0}{\frac{4^{-{\mathit{i}_{2}}-1}\,\left(x-1\right)^{{\mathit{i}_{2}}+1}}{{\mathit{i}_{2}}+1}}-\log4$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $solve\left(x_{1}+y^{3}_{1}=y_{1}+x^{2}_{1},x_{1}\right)=\left[x_{1}=-\frac{\sqrt{4\,y^{3}_{1}-4\,y_{1}+1}-1}{2},x_{1}=\frac{\sqrt{4\,y^{3}_{1}-4\,y_{1}+1}+1}{2}\right]$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $expand((x+1)^{2})=x^{2}+2\,x+1$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $factor(x^{2}+2\cdot x+1)=\left(x+1\right)^{2}$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $float(\pi)=3.141592653589793$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $fullratsimp\left(\frac{x^{2}-y^{2}}{x+y}\right)=x-y$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $ratsimp\left(\frac{x^{2}-y^{2}}{x+y}\right)=x-y$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $radcan\left(\frac{e^{x}-1}{e^{x/2}+1}\right)=e^{\frac{x}{2}}-1$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $logcontract(\log(3\cdot x)-2\cdot\log(5\cdot x))=\log\left(\frac{3}{25\,x}\right)$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $trigexpand(\sin(x+y))=\cos x\,\sin y+\sin x\,\cos y$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $trigreduce(\cos x\cdot\sin y+\sin x\cdot\cos y)=\sin\left(y+x\right)$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $trigsimp(2\cdot\sin^{2}x+2\cdot\cos^{2}x)=2$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $trigrat(\sin(3\cdot a)/\sin(a+\pi/3))=\sqrt{3}\,\sin\left(2\,a\right)+\cos\left(2\,a\right)-1$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $powerseries\left(\sin\left(x\right),x,0\right)=\sum^{\infty}_{i_{1}=0}{\frac{\left(-1\right)^{i_{1}}\,x^{2\,i_{1}+1}}{\left(2\,i_{1}+1\right)!}}$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $polarform(1+\%i)=\sqrt{2}\,e^{\frac{i\,\pi}{4}}$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $rectform(e^{\%i\cdot t})=i\,\sin t+\cos t$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Section
+Octave
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $rand(2,2)=\left(\begin{array}{cc}
+0.7397 & 0.5357\\
+0.4950 & 0.2038
+\end{array}\right)$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Section
+Mathematica
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\frac{ab+2ab}{b}+\frac{1}{a}+ab=\frac{1}{a}+ab+\frac{3\,ab}{b}$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\frac{a\,b+2a\,b}{b}+\frac{1}{a}+a\,b=\frac{1}{a}+3\,a+a\,b$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $\frac{a*b+2a*b}{b}+\frac{1}{a}+a*b=\frac{1}{a}+3\,a+a\,b$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $Simplify[\frac{a\,b+2a\,b}{b}+\frac{1}{a}+a\,b]=\frac{1}{a}+a\,\left(3+b\right)$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $Sin[Pi/4]=\frac{1}{{\sqrt{2}}}$
+\end_inset
+
+ but 
+\begin_inset Formula $Sin[P\,i/4]=\sin(\frac{i\,P}{4})$
+\end_inset
+
+,
+ even if we could use 
+\begin_inset Formula $\sin(\pi/4)=\frac{1}{{\sqrt{2}}}$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $TrigExpand[Cos[\alpha+\beta]]=\cos(\alpha)\,\cos(\beta)-\sin(\alpha)\,\sin(\beta)$
+\end_inset
+
+
+\end_layout
+
+\begin_layout Enumerate
+\begin_inset Formula $TrigExpand[\cos\left(\alpha+\beta\right)]=\cos(\alpha)\,\cos(\beta)-\sin(\alpha)\,\sin(\beta)$
+\end_inset
+
+
+\end_layout
+
+\end_body
+\end_document

@@ -1,0 +1,319 @@
+#LyX 2.5 created this file. For more info see https://www.lyx.org/
+\lyxformat 643
+\begin_document
+\begin_header
+\save_transient_properties true
+\origin /systemlyxdir/examples/Language_Support/
+\textclass bxjsarticle
+\use_default_options true
+\maintain_unincluded_children no
+\language japanese
+\language_package auto
+\inputencoding utf8
+\fontencoding auto
+\font_roman "DejaVuSerif" "IPAexMincho"
+\font_sans "DejaVuSans" "IPAexGothic"
+\font_typewriter "DejaVuSansMono" "default"
+\font_math "auto" "auto"
+\font_default_family default
+\use_non_tex_fonts false
+\font_sc false
+\font_roman_osf false
+\font_sans_osf false
+\font_typewriter_osf false
+\font_sf_scale 100 100
+\font_tt_scale 100 100
+\use_microtype false
+\use_dash_ligatures false
+\graphics default
+\default_output_format default
+\output_sync 0
+\bibtex_command default
+\index_command default
+\float_placement class
+\float_alignment class
+\paperfontsize default
+\spacing single
+\use_hyperref false
+\papersize default
+\use_geometry false
+\use_package amsmath 1
+\use_package amssymb 1
+\use_package cancel 1
+\use_package esint 1
+\use_package mathdots 1
+\use_package mathtools 1
+\use_package mhchem 1
+\use_package stackrel 1
+\use_package stmaryrd 1
+\use_package undertilde 1
+\cite_engine basic
+\cite_engine_type default
+\biblio_style plain
+\use_bibtopic false
+\use_indices false
+\paperorientation portrait
+\suppress_date false
+\justification default
+\crossref_package prettyref
+\use_formatted_ref 0
+\use_minted 0
+\use_lineno 0
+\backgroundcolor none
+\fontcolor none
+\notefontcolor lightgray
+\boxbgcolor red
+\table_border_color default
+\table_odd_row_color default
+\table_even_row_color default
+\table_alt_row_colors_start 1
+\index 索引
+\shortcut idx
+\color #008000
+\end_index
+\secnumdepth 3
+\tocdepth 3
+\paragraph_separation indent
+\paragraph_indentation default
+\is_math_indent 0
+\math_numbering_side default
+\quotes_style english
+\dynamic_quotes 0
+\papercolumns 1
+\papersides 1
+\paperpagestyle default
+\tablestyle default
+\tracking_changes false
+\output_changes false
+\change_bars false
+\postpone_fragile_content false
+\html_math_output 0
+\html_css_as_file 0
+\html_be_strict false
+\docbook_table_output 0
+\docbook_mathml_prefix 1
+\docbook_mathml_version 0
+\end_header
+
+\begin_body
+
+\begin_layout Title
+\SpecialChar LyX
+へようこそ！
+
+\end_layout
+
+\begin_layout Section*
+\SpecialChar LyX
+を使うために最初に知っておくべきことがら
+\end_layout
+
+\begin_layout Standard
+You can write text in other scripts and languages inside Japanese documents.
+ With non-TeX fonts,
+ make sure to use document classes that support XeTeX or LuaTeX.
+ (e.g.
+ document classes 
+\begin_inset Quotes eld
+\end_inset
+
+Japanese … (BXJS Class)
+\begin_inset Quotes erd
+\end_inset
+
+ or non-Japanese standard classes).
+\end_layout
+
+\begin_layout Subsection*
+Examples
+\end_layout
+
+\begin_layout Standard
+Text in Latin script:
+\end_layout
+
+\begin_layout Quotation
+English:
+ Hello Mr.
+ Sandman!
+\end_layout
+
+\begin_layout Quotation
+Deutsch:
+ Grüße aus Österreich!
+\end_layout
+
+\begin_layout Standard
+Some Japanese fonts contain Greek and Cyrillic characters,
+ however they are considerabely wider than characters in Latin,
+ Greek,
+ and Cyrillic TeX fonts.
+ 
+\end_layout
+
+\begin_layout Itemize
+With 
+\emph on
+TeX fonts
+\emph default
+,
+ LyX converts them to LaTeX macros,
+ so that the output matches other non-Japanese text.
+\end_layout
+
+\begin_layout Itemize
+With 
+\emph on
+non-TeX fonts 
+\emph default
+and
+\emph on
+ Xe/LuaTeX
+\emph default
+,
+ there is no native support for use of specific fonts for different scripts/languages.
+ Some Unicode fonts provide a large range of characters,
+ but quality is not always best and 
+\begin_inset Quotes eld
+\end_inset
+
+exotic
+\begin_inset Quotes erd
+\end_inset
+
+ characters (like accented Greek) lead to 
+\emph on
+missing character 
+\emph default
+errors.
+\end_layout
+
+\begin_layout Standard
+Text in Cyrillic and Greek script:
+\end_layout
+
+\begin_layout Quotation
+Russisch:
+ Привет с 
+\emph on
+новым
+\emph default
+ годом!
+\end_layout
+
+\begin_layout Quotation
+\begin_inset ERT
+status collapsed
+
+\begin_layout Plain Layout
+
+\backslash
+ifdefined
+\backslash
+fontspec 
+\end_layout
+
+\end_inset
+
+Griechisch:
+ χαιρετισμος!
+\end_layout
+
+\begin_layout Quotation
+\begin_inset ERT
+status collapsed
+
+\begin_layout Plain Layout
+
+\backslash
+else 
+\end_layout
+
+\end_inset
+
+Griechisch:
+ χαιρετισμός!
+ 
+\begin_inset ERT
+status collapsed
+
+\begin_layout Plain Layout
+
+\backslash
+fi
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+Text in some other languages with correct language setting (not all languages supported by LyX are compatible with Japanese (you may try 
+\begin_inset Quotes eld
+\end_inset
+
+japanese (CJK)
+\begin_inset Quotes erd
+\end_inset
+
+):
+\end_layout
+
+\begin_layout Standard
+
+\lang english
+English:
+ Hello Mr.
+ Sandman!
+\end_layout
+
+\begin_layout Standard
+
+\lang afrikaans
+Afrikaans:
+ Good dag minher.
+\end_layout
+
+\begin_layout Standard
+
+\lang swedish
+Swedish:
+ Hej då.
+\end_layout
+
+\begin_layout Standard
+
+\lang ngerman
+Deutsch:
+ Grüße aus Österreich!
+ 
+\end_layout
+
+\begin_layout Standard
+
+\lang french
+French:
+ «Bonsoir à vous.»
+\end_layout
+
+\begin_layout Standard
+
+\lang afrikaans
+Griechisch:
+ χαιρετισμος!
+\end_layout
+
+\begin_layout Standard
+
+\lang russian
+Russisch:
+ Привет с 
+\emph on
+новым
+\emph default
+ годом!
+\end_layout
+
+\end_body
+\end_document

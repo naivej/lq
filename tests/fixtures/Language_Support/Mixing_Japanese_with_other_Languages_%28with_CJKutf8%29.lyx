@@ -1,0 +1,454 @@
+#LyX 2.5 created this file. For more info see https://www.lyx.org/
+\lyxformat 643
+\begin_document
+\begin_header
+\save_transient_properties true
+\origin /systemlyxdir/examples/Language_Support/
+\textclass bxjsarticle
+\begin_preamble
+% line breaking, punctuation kerning and font switching features
+% for CJK with non-TeX fonts requires additional packages
+% currently without GUI support:
+
+% with XeTeX, https://ctan.org/pkg/xecjk
+\usepackage{ifxetex}
+\ifxetex
+  \usepackage{xeCJK}
+  \setCJKmainfont{IPAexMincho}
+  \setCJKsansfont{IPAexGothic}
+\fi
+
+% with LuaTeX, https://www.ctan.org/pkg/luatexja
+% see https://tex.stackexchange.com/questions/222980/how-to-use-chinese-with-lualatex
+\usepackage{ifluatex}
+\ifluatex
+  \usepackage{luatexja-fontspec}
+  % use Mainfont (DejaVu) for Greek and Cyrillic:
+  \ltjsetparameter{jacharrange={-2}}
+  %\usepackage[match]{luatexja-fontspec}
+  %\setmainjfont[Mapping=tex-text]{WenQuanYi Micro Hei}
+  %\setsansjfont[Mapping=tex-text]{WenQuanYi Micro Hei}
+  %\setmonojfont{WenQuanYi Micro Hei Mono}
+\fi
+\end_preamble
+\use_default_options true
+\begin_modules
+logicalmkup
+ruby
+\end_modules
+\maintain_unincluded_children no
+\language japanese-cjk
+\language_package auto
+\inputencoding utf8
+\fontencoding auto
+\font_roman "DejaVuSerif" "DejaVu Serif"
+\font_sans "DejaVuSans" "DejaVu Sans"
+\font_typewriter "DejaVuSansMono" "DejaVu Sans Mono"
+\font_math "auto" "auto"
+\font_default_family default
+\use_non_tex_fonts false
+\font_sc false
+\font_roman_osf false
+\font_sans_osf false
+\font_typewriter_osf false
+\font_sf_scale 100 100
+\font_tt_scale 100 100
+\font_cjk min
+\use_microtype false
+\use_dash_ligatures false
+\graphics default
+\default_output_format default
+\output_sync 0
+\bibtex_command default
+\index_command default
+\float_placement class
+\float_alignment class
+\paperfontsize default
+\spacing single
+\use_hyperref false
+\pdf_bookmarks false
+\pdf_bookmarksnumbered true
+\pdf_bookmarksopen false
+\pdf_bookmarksopenlevel 1
+\pdf_breaklinks false
+\pdf_pdfborder true
+\pdf_colorlinks false
+\pdf_backref false
+\pdf_pdfusetitle true
+\papersize default
+\use_geometry false
+\use_package amsmath 1
+\use_package amssymb 1
+\use_package cancel 1
+\use_package esint 1
+\use_package mathdots 1
+\use_package mathtools 1
+\use_package mhchem 1
+\use_package stackrel 1
+\use_package stmaryrd 1
+\use_package undertilde 1
+\cite_engine basic
+\cite_engine_type default
+\biblio_style plain
+\use_bibtopic false
+\use_indices false
+\paperorientation portrait
+\suppress_date false
+\justification default
+\crossref_package prettyref
+\use_formatted_ref 0
+\use_minted 0
+\use_lineno 0
+\backgroundcolor none
+\fontcolor none
+\notefontcolor lightgray
+\boxbgcolor red
+\table_border_color default
+\table_odd_row_color default
+\table_even_row_color default
+\table_alt_row_colors_start 1
+\index 索引
+\shortcut idx
+\color #008000
+\end_index
+\secnumdepth 3
+\tocdepth 3
+\paragraph_separation indent
+\paragraph_indentation default
+\is_math_indent 0
+\math_numbering_side default
+\quotes_style cjk
+\dynamic_quotes 1
+\papercolumns 1
+\papersides 1
+\paperpagestyle default
+\tablestyle default
+\tracking_changes false
+\output_changes false
+\change_bars false
+\postpone_fragile_content false
+\html_math_output 0
+\html_css_as_file 0
+\html_be_strict false
+\docbook_table_output 0
+\docbook_mathml_prefix 1
+\docbook_mathml_version 0
+\end_header
+
+\begin_body
+
+\begin_layout Title
+
+\lang english
+Multilingual typesetting with the CJK package
+\end_layout
+
+\begin_layout Date
+\begin_inset Info
+type  "moddate"
+arg   "long"
+\end_inset
+
+
+\end_layout
+
+\begin_layout Standard
+
+\lang english
+For multi-lingual documents with parts in European languages,
+ you can use the CJK LaTeX bundle:
+\end_layout
+
+\begin_layout Itemize
+
+\lang english
+Use one of the 
+\begin_inset Quotes bld
+\end_inset
+
+Japanese (
+\begin_inset CommandInset href
+LatexCommand href
+name "BXJS"
+target "https://www.ctan.org/pkg/bxjscls"
+literal "false"
+
+\end_inset
+
+)
+\begin_inset Quotes brd
+\end_inset
+
+ classes or a standard document class.
+ The other 
+\begin_inset Quotes bld
+\end_inset
+
+Japanese
+\begin_inset Quotes brd
+\end_inset
+
+ document classes require pLaTeX.
+\end_layout
+
+\begin_layout Itemize
+
+\lang english
+Set the document language to 
+\begin_inset Quotes bld
+\end_inset
+
+Japanese (CJK)
+\begin_inset Quotes brd
+\end_inset
+
+ and the encoding to 
+\begin_inset Quotes bld
+\end_inset
+
+Unicode (utf8)
+\begin_inset Quotes brd
+\end_inset
+
+.
+\end_layout
+
+\begin_layout Itemize
+
+\lang english
+Select a Japanese CJK-font,
+ e.g.
+ 
+\begin_inset Flex Code
+status collapsed
+
+\begin_layout Plain Layout
+
+\lang english
+\begin_inset Quotes bld
+\end_inset
+
+min
+\begin_inset Quotes brd
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+.
+\end_layout
+
+\begin_layout Itemize
+
+\lang english
+Some fonts are substituted with fallback 
+\begin_inset Quotes bld
+\end_inset
+
+CM roman regular
+\begin_inset Quotes brd
+\end_inset
+
+ (
+\emph on
+DejaVu
+\emph default
+ and 
+\emph on
+Libertine
+\emph default
+ work).
+\end_layout
+
+\begin_layout Itemize
+\noindent
+
+\lang english
+Alternatively,
+ you can use non-TeX fonts with 
+\begin_inset Quotes bld
+\end_inset
+
+xeCJK
+\begin_inset Quotes brd
+\end_inset
+
+ (XeTeX) or 
+\begin_inset Quotes bld
+\end_inset
+
+luatexja
+\begin_inset Quotes brd
+\end_inset
+
+ (LuaTeX).
+ See the document preamble for an example.
+\end_layout
+
+\begin_layout Standard
+
+\lang english
+Then,
+ the following should work:
+\end_layout
+
+\begin_layout Enumerate
+Japanese text,
+ of course:
+ \SpecialChar LyX
+は優秀な取扱説明書を同梱していますので、これをお使いください！
+まずは
+\family sans
+ヘルプ\SpecialChar menuseparator
+はじめの一歩
+\family default
+から始めてください。
+これは、各取扱説明書を簡潔に紹介しています。
+つぎに
+\family sans
+ヘルプ\SpecialChar menuseparator
+入門篇
+\family default
+をお読みになれば、\SpecialChar LyX
+の使い方を学ぶことができます。
+
+\end_layout
+
+\begin_layout Enumerate
+Short texts may be written without setting the language (hyphenation will be missing and spell-checking complain):
+ Greetings;
+ Grüße;
+ Приветы;
+ χαιρετισμός
+\end_layout
+
+\begin_layout Enumerate
+For longer text parts,
+ it is recommended to set the correct language:
+\end_layout
+
+\begin_deeper
+\begin_layout Description
+
+\lang english
+English:
+ Hello Mr.
+ Sandman!
+\end_layout
+
+\begin_layout Description
+
+\lang ngerman
+Deutsch:
+ Grüße aus Österreich!
+\end_layout
+
+\begin_layout Description
+
+\lang ngerman
+Griechisch:
+
+\lang greek
+ χαιρετισμός!
+\end_layout
+
+\begin_layout Description
+
+\lang ngerman
+Russisch:
+
+\lang russian
+ Привет с 
+\series bold
+новым
+\series default
+ годом!
+\end_layout
+
+\end_deeper
+\begin_layout Enumerate
+
+\lang english
+Japanese characters,
+ e.g.,
+ 介 し
+\family sans
+ 門
+\family default
+,
+ may also be used in text parts set to other languages.
+\end_layout
+
+\begin_layout Enumerate
+
+\lang english
+Ruby (ルビ,
+ furigana) with the help of the Ruby module:
+
+\lang japanese-cjk
+ 
+\begin_inset Flex Ruby
+status collapsed
+
+\begin_layout Plain Layout
+東 京
+\begin_inset Argument post:1
+status open
+
+\begin_layout Plain Layout
+とう きょう
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\begin_deeper
+\begin_layout Itemize
+
+\lang english
+Select D
+\family sans
+ocument\SpecialChar menuseparator
+Settings\SpecialChar menuseparator
+Modules\SpecialChar menuseparator
+Annotation&Revision\SpecialChar menuseparator
+Ruby
+\family default
+.
+\end_layout
+
+\begin_layout Itemize
+
+\lang english
+Select 
+\family sans
+Edit\SpecialChar menuseparator
+Custom Text Styles\SpecialChar menuseparator
+Ruby
+\family default
+ for the base character(s).
+\end_layout
+
+\begin_layout Itemize
+
+\lang english
+Select 
+\family sans
+Insert\SpecialChar menuseparator
+Ruby text
+\family default
+ for the reading aid.
+\end_layout
+
+\end_deeper
+\end_body
+\end_document
