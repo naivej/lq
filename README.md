@@ -17,7 +17,7 @@ Quick start
 - May not support all LyX constructs.
 
 ### Known issue & todo
-- Improve speed and token efficiency?
+- Improve token efficiency, e.g. saving big json on desk in tmp?
 - Dig into LyX source code.
 - [LyXServer](https://wiki.lyx.org/LyX/LyXServer#toc5) has been used by JabRef and Zotero to push citations into an open LyX document. This may allow `lq` to 
   - Navigate an open LyX window to a specific location matching a selector. `lq` would resolve the selector to a paragraph/line, then send `LYXCMD:server-goto-file-row:<file>:<row>`
