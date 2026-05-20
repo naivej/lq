@@ -84,8 +84,8 @@ You can find all defined labels by querying the `name` property inside label ins
 This will return a JSON list of all targetable labels (e.g., `sec:Introduction`, `fig:Result`). You can then inject references to them using `--raw` (e.g., `\begin_inset CommandInset ref\nLatexCommand ref\nreference "sec:Introduction"\n\end_inset`).
 
 ### Bibliography & Citations
-To correctly cite external literature, users need to know the available citation keys from the linked `.bib` files.
-You can query all available citations by `lq bib`, then inject citations using `--raw` (e.g., `\begin_inset CommandInset citation\nLatexCommand citet\nkey "Einstein1905"\nliteral "false"\n\end_inset`).
+To correctly cite external literature, users need to know the available citation keys from the linked `.bib` files. (Only `.bib` files are supported — references to `.bst` style files or embedded bibliographies are ignored.)
+You can query or search the bibliography by `lq bib`, then inject citations using `--raw` (e.g., `\begin_inset CommandInset citation\nLatexCommand citet\nkey "Einstein1905"\nliteral "false"\n\end_inset`).
 
 ## Commands
 
@@ -99,9 +99,10 @@ You can query all available citations by `lq bib`, then inject citations using `
     - **insets**: `Note`, `ERT`, `Foot`, `Marginal`, `Branch`, `Box`, `Float`, `Wrap`, `Caption`, `Flex`, `Phantom`, `CommandInset`, `Formula`, `Graphics`, `External`, `Include`, `listings`, `Preview`, `Tabular`, `space`, `VSpace`, `Newline`, `Newpage`, `Separator`, `Line`, `Quotes`, `SpecialChar`, `IPA`, `IPAMacro`, `IPADeco`, `script`, `Argument`, `Info`, `FloatList`, `Index`, `Nomenclature`, `TOC`, `Ending`, `Accent`
     - **inlineProperties**: `change_inserted`, `change_deleted`, `change_unchanged`
 - **bib**: `lq bib <file> [options]`
-  - Extracts available citation keys from linked bibliography files and outputs them as JSON.
-  - By default returns full details (`key`, `author`, `title`, `year`) for each citation.
-  - Options: `--keys-only`. Returns only the citation keys as a compact array — use this when working with large `.bib` files to minimize token consumption.
+  - Extracts available citation keys from linked `.bib` bibliography files and outputs them as JSON.
+  - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
+  - Each citation includes `key`, `author`, `title`, and `year`.
+  - Options: `--search <term>`. Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
 - **dump**: `lq dump <file>`
   - Outputs the full CST as a massive JSON document.
 - **read**: `lq read <file> <selector>`

@@ -37,9 +37,10 @@ When modifying a document, users should follow this safe workflow:
     - **insets**: `Note`, `ERT`, `Foot`, `Marginal`, `Branch`, `Box`, `Float`, `Wrap`, `Caption`, `Flex`, `Phantom`, `CommandInset`, `Formula`, `Graphics`, `External`, `Include`, `listings`, `Preview`, `Tabular`, `space`, `VSpace`, `Newline`, `Newpage`, `Separator`, `Line`, `Quotes`, `SpecialChar`, `IPA`, `IPAMacro`, `IPADeco`, `script`, `Argument`, `Info`, `FloatList`, `Index`, `Nomenclature`, `TOC`, `Ending`, `Accent`
     - **inlineProperties**: `change_inserted`, `change_deleted`, `change_unchanged`
 - **bib**: `lq bib <file> [options]`
-  - Extracts available citation keys from linked bibliography files and outputs them as JSON.
-  - By default returns full details (`key`, `author`, `title`, `year`) for each citation.
-  - **Important**: Use `--keys-only` when working with large `.bib` files to minimize token consumption (returns `{"keys": ["key1", "key2", ...]}` instead of full objects).
+  - Extracts available citation keys from linked `.bib` bibliography files and outputs them as JSON.
+  - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
+  - Each citation includes `key`, `author`, `title`, and `year`.
+  - **Important**: Use `--search <term>` to find the right key from a human description (e.g., `lq bib file.lyx --search "einstein 1905"`). This performs a case-insensitive AND-match across all fields and is far more token-efficient than dumping the entire bibliography.
 - **dump**: `lq dump <file>`
   - Outputs the full CST as a massive JSON document.
 - **read**: `lq read <file> <selector>`

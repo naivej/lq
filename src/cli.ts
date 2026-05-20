@@ -43,7 +43,7 @@ Usage:
 Arguments:
   <file>      The path to the .lyx file.`,
 
-  bib: `lq bib - Extract available citation keys from linked bibliography files.
+  bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
 
 Usage:
   lq bib <file> [options]
@@ -51,9 +51,14 @@ Usage:
 Arguments:
   <file>      The path to the .lyx file.
 
+Note:
+  Only .bib files are supported. References to other file types (e.g. .bst style files,
+  embedded bibliographies) are silently skipped.
+
 Options:
-  --keys-only               Output only the citation keys (compact, token-efficient).
-                            Without this flag, full details (author, title, year) are returned.`,
+  --search <term>           Filter citations by a case-insensitive substring match across
+                            key, author, title, and year. Multiple words are AND'd — all
+                            must match. Without this flag, all citations are returned.`,
 
   set: `lq set - Overwrite the targeted nodes with new text content.
 
@@ -337,7 +342,7 @@ export async function runCli(args: string[]) {
 
   if (command === "bib") {
     const bibArgs = selector ? [selector, ...restArgs] : restArgs;
-    const bibFlags = parseArgs(bibArgs, { boolean: ["keys-only"] });
+    const bibFlags = parseArgs(bibArgs, { string: ["search"] });
     const bibtexNodes = query(ast, "inset[CommandInset bibtex]");
     if (bibtexNodes.length === 0) {
       printError("NO_BIBLIO", "No bibliography files found in the document.");
@@ -346,6 +351,7 @@ export async function runCli(args: string[]) {
 
     const citations: Citation[] = [];
     const lyxDir = path.dirname(path.resolve(filePath));
+    let bibFileCount = 0;
 
     for (const node of bibtexNodes) {
       if (node.type === "block") {
@@ -355,9 +361,16 @@ export async function runCli(args: string[]) {
           const files = value.split(',').map(f => f.trim().replace(/^"|"$/g, ''));
           
           for (let bibFile of files) {
-            if (!bibFile.toLowerCase().endsWith(".bib")) {
+            // Skip files with a non-.bib extension (e.g. .bst style files).
+            // Files without an extension follow LyX convention — append .bib.
+            const hasExt = bibFile.includes(".");
+            if (hasExt && !bibFile.toLowerCase().endsWith(".bib")) {
+              continue;
+            }
+            if (!hasExt) {
               bibFile += ".bib";
             }
+            bibFileCount++;
             
             let bibPath = bibFile;
             if (!path.isAbsolute(bibPath)) {
@@ -376,14 +389,26 @@ export async function runCli(args: string[]) {
         }
       }
     }
+
+    if (bibFileCount === 0) {
+      printError("NO_BIBFILE", "No .bib files referenced in the document. The bib command only processes .bib bibliography files.");
+      return;
+    }
     
     // Deduplicate citations by key
-    const uniqueCitations = Array.from(new Map(citations.map(c => [c.key, c])).values());
-    if (bibFlags["keys-only"]) {
-      printJson({ status: "success", keys: uniqueCitations.map(c => c.key) });
-    } else {
-      printJson({ status: "success", data: uniqueCitations });
+    let uniqueCitations = Array.from(new Map(citations.map(c => [c.key, c])).values());
+
+    // Filter by search term if provided
+    const searchTerm: string | undefined = bibFlags["search"];
+    if (searchTerm) {
+      const terms = searchTerm.toLowerCase().split(/\s+/).filter(Boolean);
+      uniqueCitations = uniqueCitations.filter(c => {
+        const haystack = `${c.key} ${c.author} ${c.title} ${c.year}`.toLowerCase();
+        return terms.every(t => haystack.includes(t));
+      });
     }
+
+    printJson({ status: "success", data: uniqueCitations });
     return;
   }
 
