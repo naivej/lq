@@ -34,7 +34,7 @@ When modifying a document, users should follow this safe workflow:
   - Exposes categories: `documentLayouts`, `insetLayouts`, `insets`, and `inlineProperties`.
   - Global constructs supported include:
     - **insetLayouts**: `Plain Layout`
-    - **insets**: `Formula`, `Note Note`, `Note Comment`, `Float figure`, `Float table`, `Tabular`, `Foot`, `CommandInset`, `Graphics`, `Caption Standard`, `Box`, `Branch`, `ERT`, `Marginal`, `Nomenclature`, `Index`, `FloatList`, `Flex`, `Argument`, `space`, `Newline`, `Newpage`, `Quotes`, `Phantom`, `listings`, `External`, `Preview`
+    - **insets**: `Note`, `ERT`, `Foot`, `Marginal`, `Branch`, `Box`, `Float`, `Wrap`, `Caption`, `Flex`, `Phantom`, `CommandInset`, `Formula`, `Graphics`, `External`, `Include`, `listings`, `Preview`, `Tabular`, `space`, `VSpace`, `Newline`, `Newpage`, `Separator`, `Line`, `Quotes`, `SpecialChar`, `IPA`, `IPAMacro`, `IPADeco`, `script`, `Argument`, `Info`, `FloatList`, `Index`, `Nomenclature`, `TOC`, `Ending`, `Accent`
     - **inlineProperties**: `change_inserted`, `change_deleted`, `change_unchanged`
 - **bib**: `lq bib <file>`
   - Extracts available citation keys from linked bibliography files and outputs them as JSON.
