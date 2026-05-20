@@ -1,6 +1,6 @@
 # lq - A CLI Tool for Editing LyX documents
 
-`lq` is a standalone CLI tool designed to parse, query, and mutate LyX documents  (`.lyx` files)using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
+`lq` is a standalone CLI tool designed to parse, query, and mutate LyX documents  (`.lyx` files) using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
 
 Quick start
 - Download the (fat) binary, then `lq`
@@ -10,18 +10,19 @@ Quick start
 - **Cross-reference and citation** support.
 - **Tracked change** support.
 - CLI + skills designed for **AI agents**.
+- Our approach to `.lyx` files is validated by the LyX source code. There is **no reverse engineering**.
 
 ### Limitation
-- We did not try to understand LyX syntax from the source code. This tool is built by analysing all official templates (LyX -> file -> New from template...) and the author's personal LyX documents.
 - This tool is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting.
-- May not support all LyX constructs.
 
 ### Known issue & todo
 - Improve token efficiency, e.g. saving big json on desk in tmp?
-- Dig into LyX source code.
 - [LyXServer](https://wiki.lyx.org/LyX/LyXServer#toc5) has been used by JabRef and Zotero to push citations into an open LyX document. This may allow `lq` to 
   - Navigate an open LyX window to a specific location matching a selector. `lq` would resolve the selector to a paragraph/line, then send `LYXCMD:server-goto-file-row:<file>:<row>`
   - Send mutations to a running LyX instance instead of writing to disk, letting the user see changes in real-time.
+- **Deferred: `--strict` mode** — would format `lq`-generated content to match LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization). Those are purely cosmetic and LyX reads files fine without them. However, without `--strict`, `lq` can cause formatting-only diffs the next time LyX saves.
+- **Decided: Inset type validation is warning-only** — matching LyX's permissive read path. Unknown inset types in `--raw` content produce a warning but don't block the operation.
+
 
 ## Design Philosophy & Architecture
 
