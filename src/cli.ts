@@ -63,6 +63,9 @@ Arguments:
 
 Options:
   --track-changes <inserted|deleted>  Automatically register author and wrap text with LyX change-tracking markers.
+                                      'inserted' replaces the old text and wraps the new text in \\change_inserted.
+                                      'deleted' preserves the old text wrapped in \\change_deleted and appends
+                                      the new text wrapped in \\change_inserted (standard tracked change).
 
 Warning:
   The 'set' command applies to ALL matched nodes. If a targeted block has nested children (like an inset), they will be destroyed and replaced entirely by the new text.`,
@@ -77,9 +80,9 @@ Arguments:
   <selector>  A CSS-like selector targeting nodes to delete.
 
 Options:
-  --track-changes <inserted|deleted>  Instead of removing nodes, wrap them in LyX change-tracking markers.
-                                      'deleted' wraps old content in \\change_deleted (preserving it).
-                                      'inserted' wraps old content in \\change_deleted and adds no replacement.`,
+  --track-changes <inserted|deleted>  Instead of removing nodes, wrap them in \\change_deleted markers to
+                                      perform a tracked deletion. Both modes behave identically since
+                                      there is no replacement content for a pure deletion.`,
 
   init: `lq init - Initialize the user configuration file.
 
@@ -100,7 +103,7 @@ Arguments:
 
 Options:
   --layouts-dir <path>  Path to the directory containing .layout files.
-                        Defaults to checking ~/.lq/config.json, then a hardcoded path.`,
+                        Defaults to checking ~/.lq/config.json, then the default LyX install path.`,
 
   insert: `lq insert - Insert new blocks or properties relative to a selector.
 
@@ -117,9 +120,10 @@ Options:
   --text <content>             Text content for the new layout or text node.
   --raw <string>               Raw LyX string to parse and insert.
   --raw-file <path>            Read raw LyX string from a file (avoids shell escaping issues).
-  --track-changes <inserted|deleted> Automatically register author and wrap text with tracking markers.
+  --track-changes <inserted|deleted> Automatically register author and wrap inserted content in the
+                                      respective tracking markers. 'inserted' is standard for new content.
   --validate-layouts-dir <dir> Path to layouts directory for strict validation.
-                               Defaults to ~/.lq/config.json.
+                               Defaults to checking ~/.lq/config.json, then the default LyX install path.
 
 Warning:
   If the selector matches multiple nodes, the insertion will be duplicated for EVERY matched node.`
