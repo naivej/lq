@@ -599,8 +599,33 @@ export async function runCli(args: string[]) {
       return null;
     };
 
+    // Pre-fetch schema and config once (avoid per-node I/O and AST traversal)
+    let validateDirForStrict: string | undefined = flags["validate-layouts-dir"] ? String(flags["validate-layouts-dir"]) : undefined;
+    if (!validateDirForStrict) {
+      const config = await loadUserConfig();
+      if (config.layoutsDir) validateDirForStrict = config.layoutsDir;
+      else validateDirForStrict = getDefaultLayoutsDir();
+    }
+
+    let schema: Awaited<ReturnType<typeof getSchemaForClass>> | null = null;
+    let textclassValue: string | null = null;
+    if (validateDirForStrict) {
+      const textclassNode = query(ast, "textclass")[0];
+      if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
+        textclassValue = textclassNode.value;
+        try {
+          schema = await getSchemaForClass(textclassValue, validateDirForStrict);
+        } catch (_e) {
+          // Ignore schema fetching errors
+        }
+      }
+    }
+
+    const isLayoutBlock = newNodeToInsert.type === "block" && newNodeToInsert.tag === "layout";
+
     for (const targetNode of nodes) {
       let targetParentBlock: BlockNode | null = null;
+      let ctx: { list: Node[]; index: number; parentBlock: BlockNode | null } | null = null;
 
       if (flags["track-changes"]) {
         ensureAuthorInHeader(ast);
@@ -615,83 +640,66 @@ export async function runCli(args: string[]) {
       if (position === "prepend" || position === "append") {
         if (targetNode.type !== "block") {
           printError("INVALID_TARGET", "Cannot prepend or append to a non-block node.");
-          return;
+          continue;
         }
         targetParentBlock = targetNode as BlockNode;
       } else {
-        const ctx = findNodeContext(ast.children, targetNode);
+        ctx = findNodeContext(ast.children, targetNode);
         if (!ctx) continue;
         targetParentBlock = ctx.parentBlock;
       }
 
-      // Strict context validation
-      let validateDirForStrict = flags["validate-layouts-dir"] ? String(flags["validate-layouts-dir"]) : undefined;
-      if (!validateDirForStrict) {
-        const config = await loadUserConfig();
-        if (config.layoutsDir) validateDirForStrict = config.layoutsDir;
-        else validateDirForStrict = getDefaultLayoutsDir();
-      }
+      // Per-node validation using pre-fetched schema
+      if (schema) {
+        if (newNodeToInsert.type === "block") {
+          const block = newNodeToInsert as BlockNode;
+          if (block.tag === "layout" && block.args) {
+            const isInsetContext = targetParentBlock && targetParentBlock.tag === "inset";
 
-      if (validateDirForStrict) {
-        const textclassNode = query(ast, "textclass")[0];
-        if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
-           try {
-              const schema = await getSchemaForClass(textclassNode.value, validateDirForStrict);
-              
-              if (newNodeToInsert.type === "block") {
-                 const block = newNodeToInsert as BlockNode;
-                 if (block.tag === "layout" && block.args) {
-                    const isInsetContext = targetParentBlock && targetParentBlock.tag === "inset";
-                    
-                    if (isInsetContext) {
-                       if (!schema.insetLayouts.includes(block.args)) {
-                          printError("INVALID_CONTEXT", `Cannot insert document layout '${block.args}' inside an Inset. Valid inset layouts are: ${schema.insetLayouts.join(", ")}`);
-                          return;
-                       }
-                    } else {
-                       if (schema.insetLayouts.includes(block.args) && !schema.documentLayouts.includes(block.args)) {
-                          const contextName = targetParentBlock ? `${targetParentBlock.tag}[${targetParentBlock.args || ''}]` : 'document body';
-                          printError("INVALID_CONTEXT", `Cannot insert inset layout '${block.args}' into ${contextName}.`);
-                          return;
-                       }
-                       if (!schema.documentLayouts.includes(block.args)) {
-                          printError("INVALID_LAYOUT", `The layout '${block.args}' is not recognized in textclass '${textclassNode.value}'. Valid layouts: ${schema.documentLayouts.join(", ")}`);
-                          return;
-                       }
-                    }
-                 } else if (block.tag === "inset" && block.args) {
-                    const isDocumentContext = targetParentBlock && targetParentBlock.tag === "body";
-                    if (isDocumentContext) {
-                        printError("INVALID_CONTEXT", `Cannot insert inset directly into the document body. Insets must be inside a layout (e.g. Standard).`);
-                        return;
-                    }
-                    
-                    // Quick check if the inset starts with any of our valid insets
-                    const blockArgs = block.args;
-                    const isValidInset = schema.insets.some(i => blockArgs === i || blockArgs.startsWith(i + " "));
-                    if (!isValidInset) {
-                       printError("INVALID_INSET", `Inset type '${block.args}' is not permitted. Valid insets are: ${schema.insets.join(", ")}`);
-                       return;
-                    }
-                 }
-              } else if (newNodeToInsert.type === "property") {
-                 if (!schema.inlineProperties.includes(newNodeToInsert.key)) {
-                    printError("INVALID_PROPERTY", `Property '${newNodeToInsert.key}' is not permitted. Valid inline properties are: ${schema.inlineProperties.join(", ")}`);
-                    return;
-                 }
+            if (isInsetContext) {
+              if (!schema.insetLayouts.includes(block.args)) {
+                printError("INVALID_CONTEXT", `Cannot insert document layout '${block.args}' inside an Inset. Valid inset layouts are: ${schema.insetLayouts.join(", ")}`);
+                continue;
               }
-           } catch (_e) {
-              // Ignore schema fetching errors
-           }
+            } else {
+              if (schema.insetLayouts.includes(block.args) && !schema.documentLayouts.includes(block.args)) {
+                const contextName = targetParentBlock ? `${targetParentBlock.tag}[${targetParentBlock.args || ''}]` : 'document body';
+                printError("INVALID_CONTEXT", `Cannot insert inset layout '${block.args}' into ${contextName}.`);
+                continue;
+              }
+              if (!schema.documentLayouts.includes(block.args)) {
+                printError("INVALID_LAYOUT", `The layout '${block.args}' is not recognized in textclass '${textclassValue}'. Valid layouts: ${schema.documentLayouts.join(", ")}`);
+                continue;
+              }
+            }
+          } else if (block.tag === "inset" && block.args) {
+            const isDocumentContext = targetParentBlock && targetParentBlock.tag === "body";
+            if (isDocumentContext) {
+              printError("INVALID_CONTEXT", `Cannot insert inset directly into the document body. Insets must be inside a layout (e.g. Standard).`);
+              continue;
+            }
+
+            // Quick check if the inset starts with any of our valid insets
+            const blockArgs = block.args;
+            const isValidInset = schema.insets.some(i => blockArgs === i || blockArgs.startsWith(i + " "));
+            if (!isValidInset) {
+              printError("INVALID_INSET", `Inset type '${block.args}' is not permitted. Valid insets are: ${schema.insets.join(", ")}`);
+              continue;
+            }
+          }
+        } else if (newNodeToInsert.type === "property") {
+          if (!schema.inlineProperties.includes(newNodeToInsert.key)) {
+            printError("INVALID_PROPERTY", `Property '${newNodeToInsert.key}' is not permitted. Valid inline properties are: ${schema.inlineProperties.join(", ")}`);
+            continue;
+          }
         }
       }
 
-      const isLayoutBlock = newNodeToInsert.type === "block" && newNodeToInsert.tag === "layout";
       const spacer: Node = { type: "text", text: "" };
-      const copy = JSON.parse(JSON.stringify(newNodeToInsert));
+      const copy = structuredClone(newNodeToInsert);
 
       if (position === "prepend" || position === "append") {
-        if (!targetParentBlock) return;
+        if (!targetParentBlock) continue;
         if (position === "prepend") {
           if (isLayoutBlock) targetParentBlock.children.unshift(copy, spacer);
           else targetParentBlock.children.unshift(copy);
@@ -701,7 +709,7 @@ export async function runCli(args: string[]) {
         }
         insertedCount++;
       } else {
-        const ctx = findNodeContext(ast.children, targetNode);
+        // ctx already computed above
         if (ctx) {
           if (position === "before") {
             if (isLayoutBlock) ctx.list.splice(ctx.index, 0, copy, spacer);

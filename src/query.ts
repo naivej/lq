@@ -135,15 +135,13 @@ function matchNode(node: Node, part: SelectorPart): boolean {
   return true;
 }
 
-function findDescendants(nodes: Node[], part: SelectorPart): Node[] {
-  let results: Node[] = [];
-
+function findDescendants(nodes: Node[], part: SelectorPart, results: Node[] = []): Node[] {
   for (const node of nodes) {
     if (matchNode(node, part)) {
       results.push(node);
     }
     if (node.type === "block") {
-      results = results.concat(findDescendants(node.children, part));
+      findDescendants(node.children, part, results);
     }
   }
 
