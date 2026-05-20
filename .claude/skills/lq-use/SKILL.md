@@ -40,7 +40,7 @@ When modifying a document, users should follow this safe workflow:
   - Extracts available citation keys from linked `.bib` bibliography files and outputs them as JSON.
   - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
   - Each citation includes `key`, `author`, `title`, and `year`.
-  - **Important**: Use `--search <term>` to find the right key from a human description (e.g., `lq bib file.lyx --search "einstein 1905"`). This performs a case-insensitive AND-match across all fields and is far more token-efficient than dumping the entire bibliography.
+  - Options: `--search <term>`. Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
 - **dump**: `lq dump <file>`
   - Outputs the full CST as a massive JSON document.
 - **read**: `lq read <file> <selector>`
@@ -68,3 +68,7 @@ When modifying a document, users should follow this safe workflow:
 4. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Any raw LaTeX (like equations inside `inset[Formula]`) is treated as pure string data. Do not try to parse the LaTeX syntax itself; simply target the `inset[Formula]` node and replace its text content.
 5. **Use `:contains` for Precision**: If structural selectors like `:nth-child(5)` feel brittle, use `:contains("unique phrase")` to precisely target the paragraph or inset you want to edit.
 6. **Cross-Referencing**: Before inserting a cross-reference, find the exact label names by querying `lq read <file> "inset[CommandInset label] property[name]"`. This returns all valid targets (e.g., `sec:Intro`, `fig:1`). You can insert references to these using the `--raw` payload.
+7. **Be Token-Efficient**: `lq` operates on files that can be tens of thousands of lines long.
+   - **Never use `dump`** unless debugging — it serializes the entire CST as JSON, which can consume hundreds of thousands of tokens.
+   - **Always use `bib --search`** instead of bare `bib`. A `.bib` file can contain thousands of entries; `--search` filters server-side so only matching citations are returned.
+   - **Use `read` with precise selectors** — `layout[Standard]` matches every standard paragraph. Narrow it down with `:contains`, `:first`, or `:nth-child`.
