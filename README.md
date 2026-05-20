@@ -20,9 +20,8 @@ Quick start
 - [LyXServer](https://wiki.lyx.org/LyX/LyXServer#toc5) has been used by JabRef and Zotero to push citations into an open LyX document. This may allow `lq` to 
   - Navigate an open LyX window to a specific location matching a selector. `lq` would resolve the selector to a paragraph/line, then send `LYXCMD:server-goto-file-row:<file>:<row>`
   - Send mutations to a running LyX instance instead of writing to disk, letting the user see changes in real-time.
-- **Deferred: `--strict` mode** — would format `lq`-generated content to match LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization). Those are purely cosmetic and LyX reads files fine without them. However, without `--strict`, `lq` can cause formatting-only diffs the next time LyX saves.
-- **Decided: Inset type validation is warning-only** — matching LyX's permissive read path. Unknown inset types in `--raw` content produce a warning but don't block the operation.
-
+- **Deferred: `--strict` mode** would format `lq`-generated content to match LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization). Those are purely cosmetic and LyX reads files fine without them. However, currently `lq` can cause formatting-only diffs the next time LyX saves.
+- **Inset type validation is warning-only:** This matches LyX's permissive read path. Unknown inset types in `--raw` content produce a warning but don't block the operation.
 
 ## Design Philosophy & Architecture
 
