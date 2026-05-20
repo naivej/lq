@@ -46,10 +46,14 @@ Arguments:
   bib: `lq bib - Extract available citation keys from linked bibliography files.
 
 Usage:
-  lq bib <file>
+  lq bib <file> [options]
 
 Arguments:
-  <file>      The path to the .lyx file.`,
+  <file>      The path to the .lyx file.
+
+Options:
+  --keys-only               Output only the citation keys (compact, token-efficient).
+                            Without this flag, full details (author, title, year) are returned.`,
 
   set: `lq set - Overwrite the targeted nodes with new text content.
 
@@ -332,6 +336,8 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "bib") {
+    const bibArgs = selector ? [selector, ...restArgs] : restArgs;
+    const bibFlags = parseArgs(bibArgs, { boolean: ["keys-only"] });
     const bibtexNodes = query(ast, "inset[CommandInset bibtex]");
     if (bibtexNodes.length === 0) {
       printError("NO_BIBLIO", "No bibliography files found in the document.");
@@ -373,7 +379,11 @@ export async function runCli(args: string[]) {
     
     // Deduplicate citations by key
     const uniqueCitations = Array.from(new Map(citations.map(c => [c.key, c])).values());
-    printJson({ status: "success", data: uniqueCitations });
+    if (bibFlags["keys-only"]) {
+      printJson({ status: "success", keys: uniqueCitations.map(c => c.key) });
+    } else {
+      printJson({ status: "success", data: uniqueCitations });
+    }
     return;
   }
 

@@ -36,8 +36,10 @@ When modifying a document, users should follow this safe workflow:
     - **insetLayouts**: `Plain Layout`
     - **insets**: `Note`, `ERT`, `Foot`, `Marginal`, `Branch`, `Box`, `Float`, `Wrap`, `Caption`, `Flex`, `Phantom`, `CommandInset`, `Formula`, `Graphics`, `External`, `Include`, `listings`, `Preview`, `Tabular`, `space`, `VSpace`, `Newline`, `Newpage`, `Separator`, `Line`, `Quotes`, `SpecialChar`, `IPA`, `IPAMacro`, `IPADeco`, `script`, `Argument`, `Info`, `FloatList`, `Index`, `Nomenclature`, `TOC`, `Ending`, `Accent`
     - **inlineProperties**: `change_inserted`, `change_deleted`, `change_unchanged`
-- **bib**: `lq bib <file>`
+- **bib**: `lq bib <file> [options]`
   - Extracts available citation keys from linked bibliography files and outputs them as JSON.
+  - By default returns full details (`key`, `author`, `title`, `year`) for each citation.
+  - **Important**: Use `--keys-only` when working with large `.bib` files to minimize token consumption (returns `{"keys": ["key1", "key2", ...]}` instead of full objects).
 - **dump**: `lq dump <file>`
   - Outputs the full CST as a massive JSON document.
 - **read**: `lq read <file> <selector>`

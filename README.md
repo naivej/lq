@@ -85,9 +85,7 @@ This will return a JSON list of all targetable labels (e.g., `sec:Introduction`,
 
 ### Bibliography & Citations
 To correctly cite external literature, users need to know the available citation keys from the linked `.bib` files.
-You can query all available citations by running:
-`lq bib <file>`
-This extracts the linked bibliography files, parses them, and returns a JSON array containing the `key`, `author`, `title`, and `year` for all available citations. You can then inject citations using `--raw` (e.g., `\begin_inset CommandInset citation\nLatexCommand citet\nkey "Einstein1905"\nliteral "false"\n\end_inset`).
+You can query all available citations by `lq bib`, then inject citations using `--raw` (e.g., `\begin_inset CommandInset citation\nLatexCommand citet\nkey "Einstein1905"\nliteral "false"\n\end_inset`).
 
 ## Commands
 
@@ -100,8 +98,10 @@ This extracts the linked bibliography files, parses them, and returns a JSON arr
     - **insetLayouts**: `Plain Layout`
     - **insets**: `Note`, `ERT`, `Foot`, `Marginal`, `Branch`, `Box`, `Float`, `Wrap`, `Caption`, `Flex`, `Phantom`, `CommandInset`, `Formula`, `Graphics`, `External`, `Include`, `listings`, `Preview`, `Tabular`, `space`, `VSpace`, `Newline`, `Newpage`, `Separator`, `Line`, `Quotes`, `SpecialChar`, `IPA`, `IPAMacro`, `IPADeco`, `script`, `Argument`, `Info`, `FloatList`, `Index`, `Nomenclature`, `TOC`, `Ending`, `Accent`
     - **inlineProperties**: `change_inserted`, `change_deleted`, `change_unchanged`
-- **bib**: `lq bib <file>`
+- **bib**: `lq bib <file> [options]`
   - Extracts available citation keys from linked bibliography files and outputs them as JSON.
+  - By default returns full details (`key`, `author`, `title`, `year`) for each citation.
+  - Options: `--keys-only`. Returns only the citation keys as a compact array — use this when working with large `.bib` files to minimize token consumption.
 - **dump**: `lq dump <file>`
   - Outputs the full CST as a massive JSON document.
 - **read**: `lq read <file> <selector>`
