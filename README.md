@@ -9,7 +9,7 @@ Quick start
 ### Highlight
 - **Cross-reference and citation** support.
 - **Tracked change** support.
-- CLI and skills Designed for **AI agents**.
+- CLI + skills designed for **AI agents**.
 
 ### Limitation
 - We did not try to understand LyX syntax from the source code. This tool is built by analysing all official templates (LyX -> file -> New from template...) and the author's personal LyX files.
