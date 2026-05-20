@@ -122,6 +122,7 @@ This extracts the linked bibliography files, parses them, and returns a JSON arr
 ## Development
 
 - **Run tests:** `deno test -A` (Tests require read access to the fixtures and layout files)
+- **Benchmark:** `deno bench -A --no-check tests/bench_test.ts`
 - **Watch execution:** `deno task dev`
 - **Build binary:** `deno task build` (or `deno task build:all` for all platforms)
 - **Compatibility**: 
