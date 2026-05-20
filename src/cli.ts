@@ -70,11 +70,16 @@ Warning:
   delete: `lq delete - Safely delete the targeted nodes from the LyX file.
 
 Usage:
-  lq delete <file> <selector>
+  lq delete <file> <selector> [options]
 
 Arguments:
   <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector targeting nodes to delete.`,
+  <selector>  A CSS-like selector targeting nodes to delete.
+
+Options:
+  --track-changes <inserted|deleted>  Instead of removing nodes, wrap them in LyX change-tracking markers.
+                                      'deleted' wraps old content in \\change_deleted (preserving it).
+                                      'inserted' wraps old content in \\change_deleted and adds no replacement.`,
 
   init: `lq init - Initialize the user configuration file.
 
@@ -111,6 +116,7 @@ Options:
   --layout <name>              Name of the layout to insert (e.g., 'Standard').
   --text <content>             Text content for the new layout or text node.
   --raw <string>               Raw LyX string to parse and insert.
+  --raw-file <path>            Read raw LyX string from a file (avoids shell escaping issues).
   --track-changes <inserted|deleted> Automatically register author and wrap text with tracking markers.
   --validate-layouts-dir <dir> Path to layouts directory for strict validation.
                                Defaults to ~/.lq/config.json.
@@ -486,6 +492,43 @@ export async function runCli(args: string[]) {
       return;
     }
 
+    // Parse optional flags for delete
+    const deleteFlags = parseArgs(restArgs, { string: ["track-changes"] });
+
+    if (deleteFlags["track-changes"] !== undefined && deleteFlags["track-changes"] !== "inserted" && deleteFlags["track-changes"] !== "deleted") {
+      printError("INVALID_FLAG", `track-changes must be 'inserted' or 'deleted', got: ${deleteFlags["track-changes"]}`);
+      return;
+    }
+
+    if (deleteFlags["track-changes"]) {
+      // Track-changes mode: wrap matched nodes in change_deleted markers instead of removing them
+      ensureAuthorInHeader(ast);
+      const nodesToMark = new Set(nodes);
+
+      const markAsDeleted = (children: Node[]) => {
+        for (let i = children.length - 1; i >= 0; i--) {
+          const child = children[i];
+          if (nodesToMark.has(child)) {
+            if (child.type === "block") {
+              child.children = wrapWithTracking(child.children, "deleted");
+            } else if (child.type === "text" || child.type === "property") {
+              // Replace the node with a tracked version in the parent's children
+              const wrapped = wrapWithTracking([child], "deleted");
+              children.splice(i, 1, ...wrapped);
+            }
+          } else if (child.type === "block") {
+            markAsDeleted(child.children);
+          }
+        }
+      };
+
+      markAsDeleted(ast.children);
+      const newFileText = serialize(ast);
+      await Deno.writeTextFile(filePath, newFileText);
+      printJson({ status: "success", tracked_deleted_nodes: nodes.length });
+      return;
+    }
+
     const nodesToDelete = new Set(nodes);
     
     // Recursive function to filter out children
@@ -522,7 +565,7 @@ export async function runCli(args: string[]) {
 
     // Parse flags
     const flags = parseArgs(restArgs.slice(1), {
-      string: ["layout", "text", "raw", "track-changes"],
+      string: ["layout", "text", "raw", "raw-file", "track-changes"],
     });
 
     if (flags["track-changes"] !== undefined && flags["track-changes"] !== "inserted" && flags["track-changes"] !== "deleted") {
@@ -532,20 +575,37 @@ export async function runCli(args: string[]) {
 
     let flagCount = 0;
     if (flags.raw) flagCount++;
+    if (flags["raw-file"]) flagCount++;
     if (flags.layout) flagCount++;
     if (flags.text && !flags.layout) flagCount++;
 
     if (flagCount > 1) {
-      printError("FLAG_CONFLICT", "You cannot mix --raw with --layout or isolated --text. Please provide exactly one generation strategy.");
+      printError("FLAG_CONFLICT", "You cannot mix --raw/--raw-file with --layout or isolated --text. Please provide exactly one generation strategy.");
       return;
+    }
+
+    if (flags.raw && flags["raw-file"]) {
+      printError("FLAG_CONFLICT", "You cannot provide both --raw and --raw-file. Choose one.");
+      return;
+    }
+
+    // Resolve --raw-file by reading the file content into flags.raw
+    let rawContent = flags.raw;
+    if (flags["raw-file"]) {
+      try {
+        rawContent = await Deno.readTextFile(flags["raw-file"]);
+      } catch (e: Error | unknown) {
+        printError("FILE_NOT_FOUND", `Could not read --raw-file '${flags["raw-file"]}': ${(e as Error).message}`);
+        return;
+      }
     }
 
     let newNodeToInsert: Node | null = null;
 
-    if (flags.raw) {
+    if (rawContent) {
       // Parse the raw string as a document and grab its children
       try {
-        const tempAst = parse(flags.raw, true);
+        const tempAst = parse(rawContent, true);
         if (tempAst.children.length > 0) {
           const validNode = tempAst.children.find(c => c.type === "block" || c.type === "property");
           if (!validNode) {
@@ -587,8 +647,13 @@ export async function runCli(args: string[]) {
                  printError("INVALID_LAYOUT", `The layout '${flags.layout}' is not permitted in textclass '${textclassNode.value}'. Allowed document layouts: ${schema.documentLayouts.join(", ")}`);
                  return;
                }
-            } catch (_e) {
-               // Ignore if we can't find the layout file, just proceed
+            } catch (e: Error | unknown) {
+               const msg = `Schema validation skipped: could not load layouts for textclass '${textclassNode.value}' from '${validateDir}': ${(e as Error).message}`;
+               if (flags["validate-layouts-dir"]) {
+                 printError("SCHEMA_ERROR", msg);
+                 return;
+               }
+               printWarning(msg);
             }
          }
       }
@@ -648,8 +713,13 @@ export async function runCli(args: string[]) {
         textclassValue = textclassNode.value;
         try {
           schema = await getSchemaForClass(textclassValue, validateDirForStrict);
-        } catch (_e) {
-          // Ignore schema fetching errors
+        } catch (e: Error | unknown) {
+          const msg = `Schema validation skipped: could not load layouts for textclass '${textclassValue}' from '${validateDirForStrict}': ${(e as Error).message}`;
+          if (flags["validate-layouts-dir"]) {
+            printError("SCHEMA_ERROR", msg);
+            return;
+          }
+          printWarning(msg);
         }
       }
     }
@@ -676,6 +746,8 @@ export async function runCli(args: string[]) {
           continue;
         }
         targetParentBlock = targetNode as BlockNode;
+        // Also find context to enable ancestor-chain checks (e.g. is this layout inside an inset?)
+        ctx = findNodeContext(ast.children, targetNode);
       } else {
         ctx = findNodeContext(ast.children, targetNode);
         if (!ctx) continue;
@@ -687,7 +759,21 @@ export async function runCli(args: string[]) {
         if (newNodeToInsert.type === "block") {
           const block = newNodeToInsert as BlockNode;
           if (block.tag === "layout" && block.args) {
-            const isInsetContext = targetParentBlock && targetParentBlock.tag === "inset";
+            // Walk ancestor chain to determine if we're inside an inset
+            let isInsetContext = false;
+            if (targetParentBlock && targetParentBlock.tag === "inset") {
+              isInsetContext = true;
+            } else if (ctx && ctx.parentBlock) {
+              let ancestor: BlockNode | null = ctx.parentBlock;
+              while (ancestor) {
+                if (ancestor.tag === "inset") {
+                  isInsetContext = true;
+                  break;
+                }
+                const ancestorCtx = findNodeContext(ast.children, ancestor);
+                ancestor = ancestorCtx ? ancestorCtx.parentBlock : null;
+              }
+            }
 
             if (isInsetContext) {
               if (!schema.insetLayouts.includes(block.args)) {

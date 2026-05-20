@@ -45,15 +45,17 @@ When modifying a document, users should follow this safe workflow:
 - **set**: `lq set <file> <selector> <new text> [options]`
   - Overwrites the targeted nodes with new text content.
   - Options: `--track-changes <inserted|deleted>`. In `inserted` mode, replaces the old text and wraps the new text in `\change_inserted`. In `deleted` mode (standard track-changes), preserves the old text wrapped in `\change_deleted` and appends the new text wrapped in `\change_inserted`.
-- **delete**: `lq delete <file> <selector>`
+- **delete**: `lq delete <file> <selector> [options]`
   - Safely deletes the targeted nodes from the `.lyx` file.
+  - Options: `--track-changes <inserted|deleted>`. Instead of removing nodes, wraps them in `\change_deleted` markers to perform a tracked deletion. Both modes behave identically since there is no replacement content for a pure deletion. Use this for collaborative editing workflows.
 - **insert**: `lq insert <file> <selector> <position> [options]`
   - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector.
   - Helpers (You must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--raw <string>`: The power-user option. Provide exact, raw LyX syntax (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas. If the raw string is invalid LyX syntax, it will be safely rejected.
+    - `--raw-file <path>`: Same as `--raw`, but reads the raw LyX string from a file. Use this to avoid shell escaping issues with complex LyX markup.
   - Options: `--track-changes <inserted|deleted>` to automatically register an author and track changes. Both modes simply wrap the inserted content in the respective tracking markers, but `inserted` is standard.
-  - Validation: Pass `--validate-layouts-dir <path>` to enforce LyX schema rules. Actively rejects inserting document layouts into insets, inset layouts into the document body, or unrecognized insets.
+  - Validation: Pass `--validate-layouts-dir <path>` to enforce LyX schema rules. Actively rejects inserting document layouts into insets, inset layouts into the document body, or unrecognized insets. If the path is invalid and was explicitly provided, produces a hard error; if auto-detected, warns on stderr.
 
 ## Best Practices
 
