@@ -1,6 +1,6 @@
 # lq - A CLI Tool for Editing LyX documents
 
-`lq` is a standalone CLI tool designed to parse, query, and mutate LyX (`.lyx`) documents using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
+`lq` is a standalone CLI tool designed to parse, query, and mutate LyX documents  (`.lyx` files)using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
 
 Quick start
 - Download the (fat) binary, then `lq`
@@ -12,8 +12,8 @@ Quick start
 - CLI + skills designed for **AI agents**.
 
 ### Limitation
-- We did not try to understand LyX syntax from the source code. This tool is built by analysing all official templates (LyX -> file -> New from template...) and the author's personal LyX files.
-- This tool is designed to edit existing LyX files, not to create one from scratch. It enable AI-assisted writing, not type-setting.
+- We did not try to understand LyX syntax from the source code. This tool is built by analysing all official templates (LyX -> file -> New from template...) and the author's personal LyX documents.
+- This tool is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting.
 - May not support all LyX constructs.
 
 ### Known issue & todo
@@ -26,7 +26,7 @@ Quick start
 ## Design Philosophy & Architecture
 
 ### Lossless Virtual DOM
-`lq` is built on a "Lossless DOM" architecture. It parses LyX files into a Concrete Syntax Tree (CST) rather than an Abstract Syntax Tree (AST). This ensures that perfectly valid but idiosyncratic LyX formatting (such as trailing whitespaces in specific tags or exact newline placement) is preserved exactly. The core rule of the project is that `serialize(parse(file)) === file_text` must result in a 0-byte difference.
+`lq` is built on a "Lossless DOM" architecture. It parses `.lyx` files into a Concrete Syntax Tree (CST) rather than an Abstract Syntax Tree (AST). This ensures that perfectly valid but idiosyncratic LyX formatting (such as trailing whitespaces in specific tags or exact newline placement) is preserved exactly. The core rule of the project is that `serialize(parse(file)) === file_text` must result in a 0-byte difference.
 
 ### Context-Aware Strict Validation
 LyX documents have strict semantic rules about where certain elements can exist. `lq` enforces these rules to prevent corrupting `.lyx` files:
@@ -110,7 +110,7 @@ This extracts the linked bibliography files, parses them, and returns a JSON arr
   - Overwrites the targeted nodes with new text content.
   - Options: `--track-changes <inserted|deleted>`. In `inserted` mode, replaces the old text and wraps the new text in `\change_inserted`. In `deleted` mode (standard track-changes), preserves the old text wrapped in `\change_deleted` and appends the new text wrapped in `\change_inserted`.
 - **delete**: `lq delete <file> <selector>`
-  - Safely deletes the targeted nodes from the LyX file.
+  - Safely deletes the targeted nodes from the `.lyx` file.
 - **insert**: `lq insert <file> <selector> <position> [options]`
   - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector.
   - Helpers (You must provide exactly one generation strategy):
