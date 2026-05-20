@@ -13,7 +13,7 @@ Quick start
 - Our approach to `.lyx` files is validated by the LyX source code. There is **no reverse engineering**.
 
 ### Limitation
-- This tool is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting.
+- `lq` is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting. That said, all LyX syntax is supported, so typesetting with `lq` is possible in principle.
 
 ### Known issue & todo
 - Improve token efficiency, e.g. saving big json on desk in tmp?

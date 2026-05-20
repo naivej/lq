@@ -1,4 +1,5 @@
 import * as path from "@std/path";
+import { KNOWN_INSET_TYPES } from "./inset_registry.ts";
 
 export interface LyxSchema {
   textclass: string;
@@ -10,13 +11,7 @@ export interface LyxSchema {
 
 export const INSET_LAYOUTS = ["Plain Layout"];
 
-export const INSETS = [
-  "Formula", "Note Note", "Note Comment", "Float figure", "Float table", 
-  "Tabular", "Foot", "CommandInset", "Graphics", "Caption Standard", 
-  "Box", "Branch", "ERT", "Marginal", "Nomenclature", "Index", 
-  "FloatList", "Flex", "Argument", "space", "Newline", "Newpage", 
-  "Quotes", "Phantom", "listings", "External", "Preview"
-];
+export const INSETS: string[] = [...KNOWN_INSET_TYPES];
 
 export const INLINE_PROPERTIES = [
   "change_inserted", "change_deleted", "change_unchanged"

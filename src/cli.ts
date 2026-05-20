@@ -5,6 +5,7 @@ import { getSchemaForClass } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode } from "./ast.ts";
+import { validateInsetType } from "./inset_registry.ts";
 import * as path from "@std/path";
 
 const HELP_TEXTS: Record<string, string> = {
@@ -159,6 +160,31 @@ function printJson(data: unknown) {
 function printError(code: string, message: string) {
   printJson({ status: "error", code, message });
   Deno.exit(1);
+}
+
+function printWarning(message: string) {
+  // Output to stderr so it doesn't interfere with JSON stdout.
+  // Format as JSON for consistency with the tool's contract.
+  console.error(JSON.stringify({ status: "warning", message }));
+}
+
+/** Walk the parsed raw AST and validate all inset types against the registry. */
+function validateRawInsets(doc: DocumentNode): string[] {
+  const warnings: string[] = [];
+  function walk(nodes: Node[]) {
+    for (const node of nodes) {
+      if (node.type === "block") {
+        const block = node as BlockNode;
+        if (block.tag === "inset" && block.isBeginVariant) {
+          const validation = validateInsetType(block.args);
+          if (validation) warnings.push(validation);
+        }
+        walk(block.children);
+      }
+    }
+  }
+  walk(doc.children);
+  return warnings;
 }
 
 
@@ -526,6 +552,13 @@ export async function runCli(args: string[]) {
             printError("INVALID_RAW", "The --raw string did not parse into any valid LyX blocks or properties. (e.g. expected \\begin_layout, got plain text)");
             return;
           }
+
+          // Validate inset types in raw content (warning only, matching LyX's permissive read path)
+          const warnings = validateRawInsets(tempAst);
+          for (const w of warnings) {
+            printWarning(w);
+          }
+
           newNodeToInsert = validNode;
         } else {
           printError("INVALID_RAW", "The --raw string produced an empty CST.");
