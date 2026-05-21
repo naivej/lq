@@ -7,10 +7,10 @@ Quick start
 - Or install deno, clone this repo, then `deno run -A main.ts` or `deno task build`
 
 ### Highlight
+- **Safety**: `lq` mutates `.lyx` files in the same way as LyX (verified by LyX source code).
+- CLI + skills designed for **AI agents**.
 - **Cross-reference and citation** support.
 - **Tracked change** support.
-- CLI + skills designed for **AI agents**.
-- Our approach to `.lyx` files is validated by the LyX source code. There is **no reverse engineering**.
 
 ### Limitation
 - `lq` is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting. That said, all LyX syntax is supported, so typesetting with `lq` is possible in principle.
