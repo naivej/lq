@@ -16,9 +16,6 @@ Quick start
 - `lq` is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting. That said, all LyX syntax is supported, so typesetting with `lq` is possible in principle.
 
 ### Known issue & todo
-- [LyXServer](https://wiki.lyx.org/LyX/LyXServer#toc5) has been used by JabRef and Zotero to push citations into an open LyX document. This may allow `lq` to 
-  - Navigate an open LyX window to a specific location matching a selector. `lq` would resolve the selector to a paragraph/line, then send `LYXCMD:server-goto-file-row:<file>:<row>`
-  - Send mutations to a running LyX instance instead of writing to disk, letting the user see changes in real-time.
 - Need to improve the lq-use skill.
 - **Deferred: `--strict` mode** would format `lq`-generated content to match LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization). Those are purely cosmetic and LyX reads files fine without them. However, currently `lq` can cause formatting-only diffs the next time LyX saves.
 - **Inset type validation is warning-only:** This matches LyX's permissive read path. Unknown inset types in `--raw` content produce a warning but don't block the operation.
@@ -89,8 +86,12 @@ You can query or search the bibliography by `lq bib`, then inject citations usin
 
 ## Commands
 
-- **init**: `lq init [--layouts-dir <path>]`
-  - Initializes the user configuration file `~/.lq/config.json`. Auto-detects the layouts directory based on your OS if `--layouts-dir` is not explicitly provided.
+- **init**: `lq init [--layouts-dir <path>] [--refresh <mode>]`
+  - Initializes the user configuration file `~/.lq/config.json`. Auto-detects the highest installed LyX version's layouts directory if `--layouts-dir` is not explicitly provided.
+  - `--refresh <mode>` configures automatic LyX buffer refresh after mutations (requires LyXServer enabled in LyX Preferences):
+    - `none` (default): No refresh. LyX detects external changes via its own polling.
+    - `reload`: Reload the buffer after `lq` writes. Fast, but discards unsaved in-LyX edits.
+    - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Requires LyX to be running.
 - **schema**: `lq schema <file> [--layouts-dir <path>]`
   - Returns a list of all semantically valid layouts for the document's class, as well as global constructs.
   - Exposes categories: `documentLayouts`, `insetLayouts`, `insets`, and `inlineProperties`.

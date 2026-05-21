@@ -6,6 +6,7 @@ import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode } from "./ast.ts";
 import { validateInsetType } from "./inset_registry.ts";
+import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
 
 const HELP_TEXTS: Record<string, string> = {
@@ -99,8 +100,15 @@ Usage:
   lq init [options]
 
 Options:
-  --layouts-dir <path>  Explicitly set the LyX layouts directory.
-                        If omitted, lq will attempt to auto-detect it.`,
+  --layouts-dir <path>    Explicitly set the LyX layouts directory.
+                          If omitted, lq will auto-detect the highest installed version.
+  --refresh <mode>        Configure automatic refresh after mutations (requires LyXServer).
+                          Modes:
+                            none        No refresh (default). LyX detects changes via polling.
+                            reload      Reload buffer after lq writes. Fast, but discards
+                                        unsaved in-LyX edits.
+                            save-reload Save unsaved edits first, then reload. Preserves
+                                        everything. Requires LyX to be running.`,
 
   schema: `lq schema - Return a list of all semantically valid layouts.
 
@@ -139,7 +147,12 @@ Warning:
 };
 
 // Helper to load user config
-async function loadUserConfig(): Promise<{ layoutsDir?: string }> {
+interface UserConfig {
+  layoutsDir?: string;
+  refresh?: "none" | "reload" | "save-reload";
+}
+
+async function loadUserConfig(): Promise<UserConfig> {
   try {
     const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
     if (homeDir) {
@@ -156,18 +169,99 @@ async function loadUserConfig(): Promise<{ layoutsDir?: string }> {
   return {};
 }
 
-// Helper to get default layouts dir based on OS
-function getDefaultLayoutsDir(): string {
+// Helper to get default layouts dir based on OS.
+// Scans for installed LyX versions instead of hardcoding a version number.
+async function getDefaultLayoutsDir(): Promise<string> {
   if (Deno.build.os === "windows") {
-    const localAppData = Deno.env.get("LOCALAPPDATA");
-    if (localAppData) {
-      // Common path for LyX 2.3 or 2.4+
-      return path.join(localAppData, "Programs", "LyX 2.5", "Resources", "layouts");
+    const bases = [
+      Deno.env.get("PROGRAMFILES"),
+      Deno.env.get("LOCALAPPDATA") ? path.join(Deno.env.get("LOCALAPPDATA")!, "Programs") : null,
+    ].filter(Boolean) as string[];
+
+    const candidates: { version: number[]; dir: string }[] = [];
+    for (const base of bases) {
+      try {
+        for await (const entry of Deno.readDir(base)) {
+          const m = entry.name.match(/^LyX (\d+(?:\.\d+)*)$/);
+          if (m && entry.isDirectory) {
+            const layoutsDir = path.join(base, entry.name, "Resources", "layouts");
+            try {
+              const stat = await Deno.stat(layoutsDir);
+              if (stat.isDirectory) {
+                const version = m[1].split(".").map(Number);
+                candidates.push({ version, dir: layoutsDir });
+              }
+            } catch { /* skip */ }
+          }
+        }
+      } catch { /* base dir not readable */ }
+    }
+
+    // Sort by version descending, pick highest
+    candidates.sort((a, b) => {
+      for (let i = 0; i < Math.max(a.version.length, b.version.length); i++) {
+        const va = a.version[i] ?? 0;
+        const vb = b.version[i] ?? 0;
+        if (va !== vb) return vb - va;
+      }
+      return 0;
+    });
+
+    if (candidates.length > 0) return candidates[0].dir;
+
+    // Fallback: hardcoded common paths
+    const fallbacks = [
+      path.join(Deno.env.get("LOCALAPPDATA") ?? "", "Programs", "LyX 2.5", "Resources", "layouts"),
+      "C:\\Program Files\\LyX 2.5\\Resources\\layouts",
+    ];
+    for (const f of fallbacks) {
+      try {
+        const stat = await Deno.stat(f);
+        if (stat.isDirectory) return f;
+      } catch { /* skip */ }
     }
     return "C:\\Program Files\\LyX 2.5\\Resources\\layouts";
   } else if (Deno.build.os === "darwin") {
+    const bases = ["/Applications"];
+    const candidates: { version: number[]; dir: string }[] = [];
+    for (const base of bases) {
+      try {
+        for await (const entry of Deno.readDir(base)) {
+          const m = entry.name.match(/^LyX(\d+(?:\.\d+)*)\.app$/);
+          if (m && entry.isDirectory) {
+            const layoutsDir = path.join(base, entry.name, "Contents", "Resources", "layouts");
+            try {
+              const stat = await Deno.stat(layoutsDir);
+              if (stat.isDirectory) {
+                const version = m[1].split(".").map(Number);
+                candidates.push({ version, dir: layoutsDir });
+              }
+            } catch { /* skip */ }
+          }
+        }
+      } catch { /* base dir not readable */ }
+    }
+
+    candidates.sort((a, b) => {
+      for (let i = 0; i < Math.max(a.version.length, b.version.length); i++) {
+        const va = a.version[i] ?? 0;
+        const vb = b.version[i] ?? 0;
+        if (va !== vb) return vb - va;
+      }
+      return 0;
+    });
+
+    if (candidates.length > 0) return candidates[0].dir;
     return "/Applications/LyX.app/Contents/Resources/layouts";
   } else {
+    // Linux: check common paths
+    const linuxPaths = ["/usr/share/lyx/layouts", "/usr/local/share/lyx/layouts"];
+    for (const p of linuxPaths) {
+      try {
+        const stat = await Deno.stat(p);
+        if (stat.isDirectory) return p;
+      } catch { /* skip */ }
+    }
     return "/usr/share/lyx/layouts";
   }
 }
@@ -249,6 +343,39 @@ function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted"): Node[] {
   return result;
 }
 
+// --- LyXServer refresh helpers ---
+
+/**
+ * Pre-step for save-reload: saves the user's unsaved LyX edits to disk
+ * BEFORE lq reads and mutates the file. Must succeed or the mutation is aborted.
+ * Returns true if the pre-step succeeded (or mode doesn't need a pre-step).
+ */
+export async function refreshPreStep(filePath: string, mode: "none" | "reload" | "save-reload"): Promise<boolean> {
+  if (mode !== "save-reload") return true;
+
+  const absPath = path.resolve(filePath);
+  const ok = await sendLyxCommands([
+    `buffer-switch ${absPath}`,
+    "buffer-write",
+  ]);
+
+  return ok;
+}
+
+/**
+ * Post-step: reloads the buffer in LyX after lq has written to disk.
+ * Best-effort — failure is silent.
+ */
+export async function refreshPostStep(filePath: string, mode: "none" | "reload" | "save-reload"): Promise<void> {
+  if (mode === "none") return;
+
+  const absPath = path.resolve(filePath);
+  await sendLyxCommands([
+    `buffer-switch ${absPath}`,
+    "buffer-reload",
+  ]);
+}
+
 export async function runCli(args: string[]) {
 
   const parsedHelp = parseArgs(args, { boolean: ["help", "h"] });
@@ -270,11 +397,18 @@ export async function runCli(args: string[]) {
   const cleanArgs = args.filter(a => a !== "--help" && a !== "-h");
 
   if (commandArg === "init") {
-    const flags = parseArgs(cleanArgs.slice(1), { string: ["layouts-dir"] });
+    const flags = parseArgs(cleanArgs.slice(1), { string: ["layouts-dir", "refresh"] });
     let dir = flags["layouts-dir"];
-    
+    const refresh = flags["refresh"] as string | undefined;
+
+    // Validate --refresh value
+    if (refresh !== undefined && refresh !== "none" && refresh !== "reload" && refresh !== "save-reload") {
+      printError("INVALID_FLAG", `--refresh must be 'none', 'reload', or 'save-reload', got: '${refresh}'`);
+      return;
+    }
+
     if (!dir) {
-      dir = getDefaultLayoutsDir();
+      dir = await getDefaultLayoutsDir();
     }
 
     try {
@@ -297,10 +431,40 @@ export async function runCli(args: string[]) {
     const configDir = path.join(homeDir, ".lq");
     const configPath = path.join(configDir, "config.json");
 
+    // Build config object
+    const config: UserConfig = { layoutsDir: dir };
+    if (refresh !== undefined) {
+      config.refresh = refresh as "none" | "reload" | "save-reload";
+    } else {
+      // Load existing config to preserve any existing refresh setting
+      const existing = await loadUserConfig();
+      if (existing.refresh) {
+        config.refresh = existing.refresh;
+      } else {
+        config.refresh = "none";
+      }
+    }
+
+    // If refresh is enabled, verify LyXServer is reachable
+    if (config.refresh !== "none") {
+      const available = checkLyxServerAvailable();
+      if (!available) {
+        printWarning(
+          `Refresh mode '${config.refresh}' requires a running LyX instance with LyXServer enabled. ` +
+          "Could not detect LyXServer socket. Enable LyXServer in LyX Preferences and restart LyX."
+        );
+      }
+    }
+
     try {
       await Deno.mkdir(configDir, { recursive: true });
-      await Deno.writeTextFile(configPath, JSON.stringify({ layoutsDir: dir }, null, 2));
-      printJson({ status: "success", message: `Configuration saved to ${configPath}`, layoutsDir: dir });
+      await Deno.writeTextFile(configPath, JSON.stringify(config, null, 2));
+      printJson({
+        status: "success",
+        message: `Configuration saved to ${configPath}`,
+        layoutsDir: dir,
+        refresh: config.refresh,
+      });
     } catch (e: Error | unknown) {
       printError("WRITE_ERROR", `Failed to write config file: ${(e as Error).message}`);
     }
@@ -317,6 +481,30 @@ export async function runCli(args: string[]) {
   if (command !== "init" && !filePath.endsWith(".lyx")) {
     printError("INVALID_EXTENSION", "Target file must have a .lyx extension.");
     return;
+  }
+
+  // --- Refresh pre-step (save-reload only) ---
+  // Must happen BEFORE reading the file, so buffer-write saves the user's
+  // latest edits to disk before lq reads the stale version.
+  const mutationCommands = ["set", "delete", "insert"];
+  let refreshMode: "none" | "reload" | "save-reload" = "none";
+  if (mutationCommands.includes(command)) {
+    const config = await loadUserConfig();
+    if (config.refresh) refreshMode = config.refresh;
+    if (refreshMode !== "none") {
+      const preOk = await refreshPreStep(filePath, refreshMode);
+      if (!preOk) {
+        printError("REFRESH_PRE_ERROR",
+          "save-reload: Cannot connect to LyX to save unsaved edits.\n" +
+          "Writing the file now would permanently destroy unsaved changes.\n" +
+          "\n" +
+          "To proceed, either:\n" +
+          "  Save your document in LyX (Ctrl+S), then re-run the command.\n" +
+          "  Or edit ~/.lq/config.json and set \"refresh\" to \"reload\" or \"none\", then re-run."
+        );
+        return;
+      }
+    }
   }
   
   let text: string;
@@ -425,7 +613,7 @@ export async function runCli(args: string[]) {
       if (config.layoutsDir) {
         layoutsDir = config.layoutsDir;
       } else {
-        layoutsDir = getDefaultLayoutsDir();
+        layoutsDir = await getDefaultLayoutsDir();
       }
     } else {
       try {
@@ -521,6 +709,7 @@ export async function runCli(args: string[]) {
     if (flags["track-changes"]) ensureAuthorInHeader(ast);
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
+    await refreshPostStep(filePath, refreshMode);
     printJson({ status: "success", modified_nodes: nodes.length });
     return;
   }
@@ -564,6 +753,7 @@ export async function runCli(args: string[]) {
       markAsDeleted(ast.children);
       const newFileText = serialize(ast);
       await Deno.writeTextFile(filePath, newFileText);
+      await refreshPostStep(filePath, refreshMode);
       printJson({ status: "success", tracked_deleted_nodes: nodes.length });
       return;
     }
@@ -586,6 +776,7 @@ export async function runCli(args: string[]) {
 
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
+    await refreshPostStep(filePath, refreshMode);
     printJson({ status: "success", deleted_nodes: nodes.length });
     return;
   }
@@ -741,7 +932,7 @@ export async function runCli(args: string[]) {
     if (!validateDirForStrict) {
       const config = await loadUserConfig();
       if (config.layoutsDir) validateDirForStrict = config.layoutsDir;
-      else validateDirForStrict = getDefaultLayoutsDir();
+      else validateDirForStrict = await getDefaultLayoutsDir();
     }
 
     let schema: Awaited<ReturnType<typeof getSchemaForClass>> | null = null;
@@ -883,6 +1074,7 @@ export async function runCli(args: string[]) {
 
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
+    await refreshPostStep(filePath, refreshMode);
     printJson({ status: "success", inserted_nodes: insertedCount });
     return;
   }

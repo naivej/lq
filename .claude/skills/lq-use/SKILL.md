@@ -27,8 +27,13 @@ When modifying a document, users should follow this safe workflow:
    - *Warning for `set`*: The `set` command replaces **all** children of a target node. If you target a `Section` layout that contains text *and* a label inset, `set` will destroy the label inset. To preserve inner nested insets, use a more precise selector to target only the `TextNode` itself (if supported), or rebuild the structure using `--raw`.
 
 ### Commands
-- **init**: `lq init [--layouts-dir <path>]`
-  - Initializes the user configuration file `~/.lq/config.json`. Auto-detects the layouts directory based on your OS if `--layouts-dir` is not explicitly provided.
+- **init**: `lq init [--layouts-dir <path>] [--refresh <mode>]`
+  - Initializes the user configuration file `~/.lq/config.json`. Auto-detects the layouts directory for the highest installed LyX version if `--layouts-dir` is not provided.
+  - `--refresh <mode>`: Configures automatic LyX buffer refresh after mutations. Modes:
+    - `none` (default): No automatic refresh. LyX detects changes via its own polling.
+    - `reload`: Reload the buffer after `lq` writes to disk. Fast; discards unsaved edits in LyX.
+    - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Requires a running LyX instance.
+  - **Important**: You MUST NOT attempt to override the refresh setting. The user configured it deliberately. If `save-reload` returns a `REFRESH_PRE_ERROR`, tell the user to save in LyX and retry — do not suggest changing the config.
 - **schema**: `lq schema <file> [--layouts-dir <path>]`
   - Returns a list of all semantically valid layouts for the document's class, as well as global constructs.
   - Exposes categories: `documentLayouts`, `insetLayouts`, `insets`, and `inlineProperties`.
