@@ -366,7 +366,7 @@ export async function refreshPreStep(filePath: string, mode: "none" | "reload" |
  * Post-step: reloads the buffer in LyX after lq has written to disk.
  * Best-effort — failure is silent.
  */
-export async function refreshPostStep(filePath: string, mode: "none" | "reload" | "save-reload"): Promise<void> {
+async function refreshPostStep(filePath: string, mode: "none" | "reload" | "save-reload"): Promise<void> {
   if (mode === "none") return;
 
   const absPath = path.resolve(filePath);
