@@ -64,18 +64,16 @@ Options:
   set: `lq set - Overwrite the targeted nodes with new text content.
 
 Usage:
-  lq set <file> <selector> <new text> [options]
+  lq set <file> <selector> <new text>
 
 Arguments:
   <file>      The path to the .lyx file.
   <selector>  A CSS-like selector targeting nodes to mutate.
   <new text>  The new text content to apply to the matched nodes.
 
-Options:
-  --track-changes <inserted|deleted>  Automatically register author and wrap text with LyX change-tracking markers.
-                                      'inserted' replaces the old text and wraps the new text in \\change_inserted.
-                                      'deleted' preserves the old text wrapped in \\change_deleted and appends
-                                      the new text wrapped in \\change_inserted (standard tracked change).
+Note:
+  Track-changes behavior is governed by the config file. Use 'lq init --track-changes on'
+  to enable tracked changes for all mutations.
 
 Warning:
   The 'set' command applies to ALL matched nodes. If a targeted block has nested children (like an inset), they will be destroyed and replaced entirely by the new text.`,
@@ -83,21 +81,21 @@ Warning:
   delete: `lq delete - Safely delete the targeted nodes from the LyX file.
 
 Usage:
-  lq delete <file> <selector> [options]
+  lq delete <file> <selector>
 
 Arguments:
   <file>      The path to the .lyx file.
   <selector>  A CSS-like selector targeting nodes to delete.
 
-Options:
-  --track-changes <inserted|deleted>  Instead of removing nodes, wrap them in \\change_deleted markers to
-                                      perform a tracked deletion. Both modes behave identically since
-                                      there is no replacement content for a pure deletion.`,
+Note:
+  Track-changes behavior is governed by the config file. Use 'lq init --track-changes on'
+  to wrap deletions in \\change_deleted markers instead of removing nodes.`,
 
-  init: `lq init - Initialize the user configuration file.
+  init: `lq init - Initialize or view the user configuration file.
 
 Usage:
-  lq init [options]
+  lq init              Print current configuration (if config exists).
+  lq init [options]    Update configuration with the given options.
 
 Options:
   --layouts-dir <path>    Explicitly set the LyX layouts directory.
@@ -108,7 +106,11 @@ Options:
                             reload      Reload buffer after lq writes. Fast, but discards
                                         unsaved in-LyX edits.
                             save-reload Save unsaved edits first, then reload. Preserves
-                                        everything. Requires LyX to be running.`,
+                                        everything. Requires LyX to be running.
+  --track-changes <on|off> Enable or disable tracked changes for all mutation commands.
+                            When on: set wraps old text in \\change_deleted + new in \\change_inserted,
+                                      delete wraps removed nodes in \\change_deleted,
+                                      insert wraps new content in \\change_inserted.`,
 
   schema: `lq schema - Return a list of all semantically valid layouts.
 
@@ -137,10 +139,12 @@ Options:
   --text <content>             Text content for the new layout or text node.
   --raw <string>               Raw LyX string to parse and insert.
   --raw-file <path>            Read raw LyX string from a file (avoids shell escaping issues).
-  --track-changes <inserted|deleted> Automatically register author and wrap inserted content in the
-                                      respective tracking markers. 'inserted' is standard for new content.
   --validate-layouts-dir <dir> Path to layouts directory for strict validation.
                                Defaults to checking ~/.lq/config.json, then the default LyX install path.
+
+Note:
+  Track-changes behavior is governed by the config file. Use 'lq init --track-changes on'
+  to wrap inserted content in \\change_inserted markers.
 
 Warning:
   If the selector matches multiple nodes, the insertion will be duplicated for EVERY matched node.`
@@ -150,6 +154,7 @@ Warning:
 interface UserConfig {
   layoutsDir?: string;
   refresh?: "none" | "reload" | "save-reload";
+  trackChanges?: boolean;
 }
 
 async function loadUserConfig(): Promise<UserConfig> {
@@ -397,14 +402,40 @@ export async function runCli(args: string[]) {
   const cleanArgs = args.filter(a => a !== "--help" && a !== "-h");
 
   if (commandArg === "init") {
-    const flags = parseArgs(cleanArgs.slice(1), { string: ["layouts-dir", "refresh"] });
+    const flags = parseArgs(cleanArgs.slice(1), { string: ["layouts-dir", "refresh", "track-changes"] });
+    const hasFlags = flags["layouts-dir"] !== undefined ||
+                     flags["refresh"] !== undefined ||
+                     flags["track-changes"] !== undefined;
     let dir = flags["layouts-dir"];
     const refresh = flags["refresh"] as string | undefined;
+    const trackChangesFlag = flags["track-changes"] as string | undefined;
 
     // Validate --refresh value
     if (refresh !== undefined && refresh !== "none" && refresh !== "reload" && refresh !== "save-reload") {
       printError("INVALID_FLAG", `--refresh must be 'none', 'reload', or 'save-reload', got: '${refresh}'`);
       return;
+    }
+
+    // Validate --track-changes value
+    if (trackChangesFlag !== undefined && trackChangesFlag !== "on" && trackChangesFlag !== "off") {
+      printError("INVALID_FLAG", `--track-changes must be 'on' or 'off', got: '${trackChangesFlag}'`);
+      return;
+    }
+
+    // If no flags and config exists, print it and exit
+    if (!hasFlags) {
+      const existing = await loadUserConfig();
+      const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+      if (homeDir) {
+        const configPath = path.join(homeDir, ".lq", "config.json");
+        try {
+          const stat = await Deno.stat(configPath);
+          if (stat.isFile) {
+            printJson({ status: "success", data: existing });
+            return;
+          }
+        } catch { /* config doesn't exist, proceed to create */ }
+      }
     }
 
     if (!dir) {
@@ -436,12 +467,22 @@ export async function runCli(args: string[]) {
     if (refresh !== undefined) {
       config.refresh = refresh as "none" | "reload" | "save-reload";
     } else {
-      // Load existing config to preserve any existing refresh setting
       const existing = await loadUserConfig();
       if (existing.refresh) {
         config.refresh = existing.refresh;
       } else {
         config.refresh = "none";
+      }
+    }
+
+    if (trackChangesFlag !== undefined) {
+      config.trackChanges = trackChangesFlag === "on";
+    } else {
+      const existing = await loadUserConfig();
+      if (existing.trackChanges !== undefined) {
+        config.trackChanges = existing.trackChanges;
+      } else {
+        config.trackChanges = false;
       }
     }
 
@@ -464,6 +505,7 @@ export async function runCli(args: string[]) {
         message: `Configuration saved to ${configPath}`,
         layoutsDir: dir,
         refresh: config.refresh,
+        trackChanges: config.trackChanges,
       });
     } catch (e: Error | unknown) {
       printError("WRITE_ERROR", `Failed to write config file: ${(e as Error).message}`);
@@ -488,9 +530,11 @@ export async function runCli(args: string[]) {
   // latest edits to disk before lq reads the stale version.
   const mutationCommands = ["set", "delete", "insert"];
   let refreshMode: "none" | "reload" | "save-reload" = "none";
+  let trackChanges = false;
   if (mutationCommands.includes(command)) {
     const config = await loadUserConfig();
     if (config.refresh) refreshMode = config.refresh;
+    trackChanges = config.trackChanges === true;
     if (refreshMode !== "none") {
       const preOk = await refreshPreStep(filePath, refreshMode);
       if (!preOk) {
@@ -668,14 +712,9 @@ export async function runCli(args: string[]) {
   // Mutation commands below
   
   if (command === "set") {
-    const flags = parseArgs(restArgs, { string: ["track-changes"] });
+    const flags = parseArgs(restArgs, { string: [] });
     if (nodes.length === 0) {
       printError("NO_MATCH", "Selector matched no nodes to set.");
-      return;
-    }
-    
-    if (flags["track-changes"] !== undefined && flags["track-changes"] !== "inserted" && flags["track-changes"] !== "deleted") {
-      printError("INVALID_FLAG", `track-changes must be 'inserted' or 'deleted', got: ${flags["track-changes"]}`);
       return;
     }
     
@@ -690,15 +729,12 @@ export async function runCli(args: string[]) {
       if (node.type === "property") {
         node.value = newValue;
       } else if (node.type === "block") {
-        if (flags["track-changes"] === "deleted") {
+        if (trackChanges) {
           node.children = [
             ...wrapWithTracking(node.children, "deleted"),
             ...wrapWithTracking([{ type: "text", text: newValue }], "inserted")
           ];
-        } else if (flags["track-changes"] === "inserted") {
-          node.children = wrapWithTracking([{ type: "text", text: newValue }], "inserted");
         } else {
-          // Clear children and set as a single text node
           node.children = [{ type: "text", text: newValue }];
         }
       } else if (node.type === "text") {
@@ -706,7 +742,7 @@ export async function runCli(args: string[]) {
       }
     }
     
-    if (flags["track-changes"]) ensureAuthorInHeader(ast);
+    if (trackChanges) ensureAuthorInHeader(ast);
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
     await refreshPostStep(filePath, refreshMode);
@@ -720,15 +756,7 @@ export async function runCli(args: string[]) {
       return;
     }
 
-    // Parse optional flags for delete
-    const deleteFlags = parseArgs(restArgs, { string: ["track-changes"] });
-
-    if (deleteFlags["track-changes"] !== undefined && deleteFlags["track-changes"] !== "inserted" && deleteFlags["track-changes"] !== "deleted") {
-      printError("INVALID_FLAG", `track-changes must be 'inserted' or 'deleted', got: ${deleteFlags["track-changes"]}`);
-      return;
-    }
-
-    if (deleteFlags["track-changes"]) {
+    if (trackChanges) {
       // Track-changes mode: wrap matched nodes in change_deleted markers instead of removing them
       ensureAuthorInHeader(ast);
       const nodesToMark = new Set(nodes);
@@ -740,7 +768,6 @@ export async function runCli(args: string[]) {
             if (child.type === "block") {
               child.children = wrapWithTracking(child.children, "deleted");
             } else if (child.type === "text" || child.type === "property") {
-              // Replace the node with a tracked version in the parent's children
               const wrapped = wrapWithTracking([child], "deleted");
               children.splice(i, 1, ...wrapped);
             }
@@ -760,7 +787,6 @@ export async function runCli(args: string[]) {
 
     const nodesToDelete = new Set(nodes);
     
-    // Recursive function to filter out children
     const filterNodes = (children: Node[]) => {
       for (let i = children.length - 1; i >= 0; i--) {
         const child = children[i];
@@ -795,13 +821,8 @@ export async function runCli(args: string[]) {
 
     // Parse flags
     const flags = parseArgs(restArgs.slice(1), {
-      string: ["layout", "text", "raw", "raw-file", "track-changes"],
+      string: ["layout", "text", "raw", "raw-file"],
     });
-
-    if (flags["track-changes"] !== undefined && flags["track-changes"] !== "inserted" && flags["track-changes"] !== "deleted") {
-      printError("INVALID_FLAG", `track-changes must be 'inserted' or 'deleted', got: ${flags["track-changes"]}`);
-      return;
-    }
 
     let flagCount = 0;
     if (flags.raw) flagCount++;
@@ -960,11 +981,11 @@ export async function runCli(args: string[]) {
       let targetParentBlock: BlockNode | null = null;
       let ctx: { list: Node[]; index: number; parentBlock: BlockNode | null } | null = null;
 
-      if (flags["track-changes"]) {
+      if (trackChanges) {
         ensureAuthorInHeader(ast);
         if (newNodeToInsert.type === "block") {
-          newNodeToInsert.children = wrapWithTracking(newNodeToInsert.children, flags["track-changes"] as "inserted" | "deleted");
-        } else { // Since newNodeToInsert can only be block or property
+          newNodeToInsert.children = wrapWithTracking(newNodeToInsert.children, "inserted");
+        } else {
            printError("TRACKING_ERROR", "Cannot track bare text nodes. Wrap in a layout block.");
            return;
         }
