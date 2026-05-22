@@ -697,7 +697,7 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "read") {
-    printJson({ status: "success", data: nodes });
+    printJson({ status: "success", data: nodes, count: nodes.length });
     return;
   }
 
@@ -850,30 +850,25 @@ export async function runCli(args: string[]) {
       }
     }
 
-    let newNodeToInsert: Node | null = null;
+    const newNodesToInsert: Node[] = [];
 
     if (rawContent) {
-      // Parse the raw string as a document and grab its children
+      // Parse the raw string and collect all valid nodes
       try {
         const tempAst = parse(rawContent, true);
-        if (tempAst.children.length > 0) {
-          const validNode = tempAst.children.find(c => c.type === "block" || c.type === "property");
-          if (!validNode) {
-            printError("INVALID_RAW", "The --raw string did not parse into any valid LyX blocks or properties. (e.g. expected \\begin_layout, got plain text)");
-            return;
-          }
-
-          // Validate inset types in raw content (warning only, matching LyX's permissive read path)
-          const warnings = validateRawInsets(tempAst);
-          for (const w of warnings) {
-            printWarning(w);
-          }
-
-          newNodeToInsert = validNode;
-        } else {
-          printError("INVALID_RAW", "The --raw string produced an empty CST.");
+        const validNodes = tempAst.children.filter(c => c.type === "block" || c.type === "property");
+        if (validNodes.length === 0) {
+          printError("INVALID_RAW", "The --raw string did not parse into any valid LyX blocks or properties. (e.g. expected \\begin_layout, got plain text)");
           return;
         }
+
+        // Validate inset types in raw content (warning only)
+        const warnings = validateRawInsets(tempAst);
+        for (const w of warnings) {
+          printWarning(w);
+        }
+
+        for (const n of validNodes) newNodesToInsert.push(n);
       } catch (e: Error | unknown) {
         printError("PARSE_ERROR", `Failed to parse raw LyX string: ${(e as Error).message}`);
         return;
@@ -896,13 +891,13 @@ export async function runCli(args: string[]) {
          }
       }
 
-      newNodeToInsert = {
+      newNodesToInsert.push({
         type: "block",
         tag: "layout",
         args: flags.layout,
         isBeginVariant: true,
         children: flags.text ? [{ type: "text", text: flags.text }] : [],
-      };
+      });
       
       if (!flags.text || flags.text.trim() === "") {
         // Technically valid LyX, but usually a mistake for programmatic insertions.
@@ -916,12 +911,13 @@ export async function runCli(args: string[]) {
       return;
     }
 
-    if (!newNodeToInsert) {
+    if (newNodesToInsert.length === 0) {
       printError("MISSING_CONTENT", "You must provide --layout, --text, or --raw to insert.");
       return;
     }
 
     let insertedCount = 0;
+    let insertedBlocks = 0;
 
     // Helper to find the parent array and index of a target node
     const findNodeContext = (parentList: Node[], target: Node, parentBlock: BlockNode | null = null): { list: Node[]; index: number, parentBlock: BlockNode | null } | null => {
@@ -951,21 +947,9 @@ export async function runCli(args: string[]) {
       }
     }
 
-    const isLayoutBlock = newNodeToInsert.type === "block" && newNodeToInsert.tag === "layout";
-
     for (const targetNode of nodes) {
       let targetParentBlock: BlockNode | null = null;
       let ctx: { list: Node[]; index: number; parentBlock: BlockNode | null } | null = null;
-
-      if (trackChanges) {
-        ensureAuthorInHeader(ast);
-        if (newNodeToInsert.type === "block") {
-          newNodeToInsert.children = wrapWithTracking(newNodeToInsert.children, "inserted");
-        } else {
-           printError("TRACKING_ERROR", "Cannot track bare text nodes. Wrap in a layout block.");
-           return;
-        }
-      }
 
       if (position === "prepend" || position === "append") {
         if (targetNode.type !== "block") {
@@ -981,13 +965,24 @@ export async function runCli(args: string[]) {
         targetParentBlock = ctx.parentBlock;
       }
 
-      // Per-node validation using pre-fetched schema
-      if (schema) {
-        if (newNodeToInsert.type === "block") {
-          const block = newNodeToInsert as BlockNode;
-          if (block.tag === "layout" && block.args) {
-            // Walk ancestor chain to determine if we're inside an inset
-            let isInsetContext = false;
+      // Per-node validation for each block in the payload
+      for (const nodeToInsert of newNodesToInsert) {
+        if (trackChanges) {
+          ensureAuthorInHeader(ast);
+          if (nodeToInsert.type === "block") {
+            nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted");
+          } else {
+            printError("TRACKING_ERROR", "Cannot track bare text nodes. Wrap in a layout block.");
+            return;
+          }
+        }
+
+        if (schema) {
+          if (nodeToInsert.type === "block") {
+            const block = nodeToInsert as BlockNode;
+            if (block.tag === "layout" && block.args) {
+              // Walk ancestor chain to determine if we're inside an inset
+              let isInsetContext = false;
             if (targetParentBlock && targetParentBlock.tag === "inset") {
               isInsetContext = true;
             } else if (ctx && ctx.parentBlock) {
@@ -1033,46 +1028,47 @@ export async function runCli(args: string[]) {
               continue;
             }
           }
-        } else if (newNodeToInsert.type === "property") {
-          if (!schema.inlineProperties.includes(newNodeToInsert.key)) {
-            printError("INVALID_PROPERTY", `Property '${newNodeToInsert.key}' is not permitted. Valid inline properties are: ${schema.inlineProperties.join(", ")}`);
+        } else if (nodeToInsert.type === "property") {
+          if (!schema.inlineProperties.includes(nodeToInsert.key)) {
+            printError("INVALID_PROPERTY", `Property '${nodeToInsert.key}' is not permitted. Valid inline properties are: ${schema.inlineProperties.join(", ")}`);
             continue;
           }
         }
       }
 
-      const spacer: Node = { type: "text", text: "" };
-      const copy = structuredClone(newNodeToInsert);
+        const isLayoutBlock = nodeToInsert.type === "block" && nodeToInsert.tag === "layout";
+        const spacer: Node = { type: "text", text: "" };
+        const copy = structuredClone(nodeToInsert);
 
-      if (position === "prepend" || position === "append") {
-        if (!targetParentBlock) continue;
-        if (position === "prepend") {
-          if (isLayoutBlock) targetParentBlock.children.unshift(copy, spacer);
-          else targetParentBlock.children.unshift(copy);
-        } else {
-          if (isLayoutBlock) targetParentBlock.children.push(spacer, copy);
-          else targetParentBlock.children.push(copy);
-        }
-        insertedCount++;
-      } else {
-        // ctx already computed above
-        if (ctx) {
-          if (position === "before") {
-            if (isLayoutBlock) ctx.list.splice(ctx.index, 0, copy, spacer);
-            else ctx.list.splice(ctx.index, 0, copy);
+        if (position === "prepend" || position === "append") {
+          if (!targetParentBlock) continue;
+          if (position === "prepend") {
+            if (isLayoutBlock) targetParentBlock.children.unshift(copy, spacer);
+            else targetParentBlock.children.unshift(copy);
           } else {
-            if (isLayoutBlock) ctx.list.splice(ctx.index + 1, 0, spacer, copy);
-            else ctx.list.splice(ctx.index + 1, 0, copy);
+            if (isLayoutBlock) targetParentBlock.children.push(spacer, copy);
+            else targetParentBlock.children.push(copy);
           }
-          insertedCount++;
+        } else {
+          if (ctx) {
+            if (position === "before") {
+              if (isLayoutBlock) ctx.list.splice(ctx.index, 0, copy, spacer);
+              else ctx.list.splice(ctx.index, 0, copy);
+            } else {
+              if (isLayoutBlock) ctx.list.splice(ctx.index + 1, 0, spacer, copy);
+              else ctx.list.splice(ctx.index + 1, 0, copy);
+            }
+          }
         }
+        insertedBlocks++;
       }
+      insertedCount++;
     }
 
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
     await refreshPostStep(filePath, refreshMode);
-    printJson({ status: "success", inserted_nodes: insertedCount });
+    printJson({ status: "success", inserted_nodes: insertedCount, inserted_blocks: insertedBlocks });
     return;
   }
 
