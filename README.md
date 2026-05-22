@@ -27,24 +27,22 @@ Quick start
 `lq` is built on a "Lossless DOM" architecture. It parses `.lyx` files into a Concrete Syntax Tree (CST) rather than an Abstract Syntax Tree (AST). This ensures that perfectly valid but idiosyncratic LyX formatting (such as trailing whitespaces in specific tags or exact newline placement) is preserved exactly. The core rule of the project is that `serialize(parse(file)) === file_text` must result in a 0-byte difference.
 
 ### Context-Aware Strict Validation
-`lq` validates mutations in two layers to prevent corrupting `.lyx` files:
+When `lq` mutates document structure with the `insert` command, it enforces semantic rules to prevent corrupting `.lyx` files.
 
-**Mandatory layer (always active):** Core safety checks that run on every `insert` command:
-- Unrecognized layout names are rejected with the list of valid alternatives.
-- Document layouts (e.g., `Section`) cannot be inserted inside insets (e.g., `Foot`); only `Plain Layout` is allowed within insets.
-- Inset-only layouts cannot be inserted directly into the document body.
-- Insets cannot be inserted at the body level — they must be inside a layout.
-- Core CST structures (`document`, `body`, `header`) cannot be mutated.
+**Checks that always run (no config needed):**
+- **Core CST guards**: `document`, `body`, and `header` cannot be mutated directly.
+- **Malformed `--raw` syntax** is rejected (doesn't parse as valid LyX).
+- **Unknown inset types in `--raw`** produce a warning to stderr but don't block the insertion. This uses a hardcoded registry of known LyX engine inset types (sourced from LyX's `InsetCode.h`, available globally regardless of textclass) and matches LyX's own permissive read path.
 
-**Optional layer (`--validate-layouts-dir <path>`):** Extended schema checks that require `.layout` files:
-- Cross-class layout validation (e.g., rejecting `Frame` in an `article` document).
-- Inset type validation against the full registry.
-- Inline property validation (e.g., `change_inserted`).
-- If the path is invalid and was explicitly provided, produces a hard error; if auto-detected from `~/.lq/config.json`, warns on stderr.
+**Checks that require `.layout` files** (enabled when `~/.lq/config.json` has a `layoutsDir`, silently skipped otherwise):
+- **Layout name**: Unrecognized layout names are rejected with the list of valid alternatives.
+- **Context boundaries**: Document layouts (e.g., `Section`) cannot be inserted inside insets (e.g., `Foot`); only `Plain Layout` is allowed within insets. Inset-only layouts cannot be inserted into the document body. Insets must be inside a layout, not at the body level.
+- **Cross-class**: Layouts from other document classes (e.g., `Frame` in an `article` document) are rejected.
+- **Inset types and inline properties**: Checked against the document class schema (both global AND textclass-specific) — rejected if not valid for this textclass. (Distinct from the warning-only `--raw` check above, which uses the engine-level registry.)
 
-Underpinning both layers:
-- **Dynamic Document Class Resolution**: `lq` queries the parsed document's header (`\textclass`) to determine the document class (e.g., `article`, `book`) and loads the corresponding `.layout` file.
-- **Global Constructs**: Core engine constructs (Insets like `Formula`, `Note`, or inline properties like `change_inserted`) are mapped globally in the CLI to provide a complete menu of legal operations regardless of document class.
+Underpinning the schema:
+- **Dynamic Document Class Resolution**: `lq` queries the document's header (`\textclass`) to determine the class (e.g., `article`, `book`) and loads the corresponding `.layout` file.
+- **Global Constructs**: Core engine constructs (Insets like `Formula`, `Note`, or inline properties like `change_inserted`) are mapped globally to provide a complete menu of legal operations regardless of textclass.
 
 ### LaTeX Independence
 While LyX is a frontend for LaTeX, `lq` operates entirely independently of the LaTeX layer:
@@ -142,7 +140,6 @@ You can query or search the bibliography by `lq bib`, then inject citations usin
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--raw <string>`: The power-user option. Provide exact, raw LyX syntax (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas. If the raw string is invalid LyX syntax, it will be safely rejected. Unknown inset types in `--raw` content produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
     - `--raw-file <path>`: Same as `--raw`, but reads the raw LyX string from a file. Use this to avoid shell escaping issues with complex LyX markup.
-  - `--validate-layouts-dir <path>`: Extended schema checks — inset type validation against the full registry, cross-class layout validation, property validation. Requires `.layout` files. If the path is invalid and was explicitly provided, produces a hard error; if auto-detected, warns on stderr.
 
 ## Development
 

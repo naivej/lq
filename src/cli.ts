@@ -139,8 +139,6 @@ Options:
   --text <content>             Text content for the new layout or text node.
   --raw <string>               Raw LyX string to parse and insert.
   --raw-file <path>            Read raw LyX string from a file (avoids shell escaping issues).
-  --validate-layouts-dir <dir> Path to layouts directory for strict validation.
-                               Defaults to checking ~/.lq/config.json, then the default LyX install path.
 
 Note:
   Track-changes behavior is governed by the config file. Use 'lq init --track-changes on'
@@ -286,7 +284,7 @@ function printWarning(message: string) {
   console.error(JSON.stringify({ status: "warning", message }));
 }
 
-/** Walk the parsed raw AST and validate all inset types against the registry. */
+/** Walk the parsed raw CST and validate all inset types against the registry. */
 function validateRawInsets(doc: DocumentNode): string[] {
   const warnings: string[] = [];
   function walk(nodes: Node[]) {
@@ -657,7 +655,8 @@ export async function runCli(args: string[]) {
       if (config.layoutsDir) {
         layoutsDir = config.layoutsDir;
       } else {
-        layoutsDir = await getDefaultLayoutsDir();
+        printError("NO_CONFIG", "No layouts directory configured. Run 'lq init' to auto-detect and save your LyX layouts path.");
+        return;
       }
     } else {
       try {
@@ -880,31 +879,19 @@ export async function runCli(args: string[]) {
         return;
       }
     } else if (flags.layout) {
-      // Optional: Validating the layout against the schema
-      let validateDir = flags["validate-layouts-dir"] ? String(flags["validate-layouts-dir"]) : undefined;
-      
-      if (!validateDir) {
-        const config = await loadUserConfig();
-        if (config.layoutsDir) validateDir = config.layoutsDir;
-      }
-
-      if (validateDir) {
+      // Validate the layout against the schema (loaded from config)
+      const config = await loadUserConfig();
+      if (config.layoutsDir) {
          const textclassNode = query(ast, "textclass")[0];
          if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
             try {
-               const schema = await getSchemaForClass(textclassNode.value, validateDir);
-               // Simple validation for document layouts
+               const schema = await getSchemaForClass(textclassNode.value, config.layoutsDir);
                if (!schema.documentLayouts.includes(flags.layout) && !schema.insetLayouts.includes(flags.layout)) {
                  printError("INVALID_LAYOUT", `The layout '${flags.layout}' is not permitted in textclass '${textclassNode.value}'. Allowed document layouts: ${schema.documentLayouts.join(", ")}`);
                  return;
                }
-            } catch (e: Error | unknown) {
-               const msg = `Schema validation skipped: could not load layouts for textclass '${textclassNode.value}' from '${validateDir}': ${(e as Error).message}`;
-               if (flags["validate-layouts-dir"]) {
-                 printError("SCHEMA_ERROR", msg);
-                 return;
-               }
-               printWarning(msg);
+            } catch (_e) {
+               // Layout files unavailable — skip validation, insert proceeds
             }
          }
       }
@@ -948,29 +935,18 @@ export async function runCli(args: string[]) {
       return null;
     };
 
-    // Pre-fetch schema and config once (avoid per-node I/O and AST traversal)
-    let validateDirForStrict: string | undefined = flags["validate-layouts-dir"] ? String(flags["validate-layouts-dir"]) : undefined;
-    if (!validateDirForStrict) {
-      const config = await loadUserConfig();
-      if (config.layoutsDir) validateDirForStrict = config.layoutsDir;
-      else validateDirForStrict = await getDefaultLayoutsDir();
-    }
-
+    // Pre-fetch schema from config once (avoid per-node I/O and CST traversal)
     let schema: Awaited<ReturnType<typeof getSchemaForClass>> | null = null;
     let textclassValue: string | null = null;
-    if (validateDirForStrict) {
+    const config = await loadUserConfig();
+    if (config.layoutsDir) {
       const textclassNode = query(ast, "textclass")[0];
       if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
         textclassValue = textclassNode.value;
         try {
-          schema = await getSchemaForClass(textclassValue, validateDirForStrict);
-        } catch (e: Error | unknown) {
-          const msg = `Schema validation skipped: could not load layouts for textclass '${textclassValue}' from '${validateDirForStrict}': ${(e as Error).message}`;
-          if (flags["validate-layouts-dir"]) {
-            printError("SCHEMA_ERROR", msg);
-            return;
-          }
-          printWarning(msg);
+          schema = await getSchemaForClass(textclassValue, config.layoutsDir);
+        } catch (_e) {
+          // Layout files unavailable — skip validation, insert proceeds
         }
       }
     }

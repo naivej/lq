@@ -27,50 +27,48 @@ When modifying a document, users should follow this safe workflow:
    - *Warning for `set`*: The `set` command replaces **all** children of a target node. If you target a `Section` layout that contains text *and* a label inset, `set` will destroy the label inset. To preserve inner nested insets, use a more precise selector to target only the `TextNode` itself (if supported), or rebuild the structure using `--raw`.
 
 ## Commands
-- **init**: `lq init [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>]`
-  - Without flags, prints the current configuration if it exists.
-  - Initializes or updates the user configuration file `~/.lq/config.json`. Auto-detects the layouts directory for the highest installed LyX version if `--layouts-dir` is not provided.
-  - `--refresh <mode>`: Configures automatic LyX buffer refresh after mutations. Modes:
-    - `none` (default): No automatic refresh. LyX detects changes via its own polling.
-    - `reload`: Reload the buffer after `lq` writes to disk. Fast; discards unsaved edits in LyX.
-    - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Requires a running LyX instance.
-  - `--track-changes <on|off>`: Enable or disable tracked changes for all mutations. When on:
-    - set: old text wrapped in `\change_deleted`, new text in `\change_inserted`
-    - delete: removed nodes wrapped in `\change_deleted`
-    - insert: new content wrapped in `\change_inserted`
-  - **Important**: You MUST NOT attempt to override the refresh or track-changes settings. The user configured them deliberately.
-- **schema**: `lq schema <file> [--layouts-dir <path>]`
+
+### Config
+- `lq init [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>]`
+  - Without flags
+    - Initializes the user configuration file `~/.lq/config.json` with default options. 
+    - Or prints the current configuration if it exists.
+  - `--layouts-dir <path>`: If not provided, auto-detects the highest installed LyX version's layouts directory.
+  - `--refresh <mode>` configures automatic LyX buffer refresh in opened `.lyx` files after mutations:
+    - `none` (default): No refresh. LyX detects external changes via its own polling and prompts the user to reload.
+    - `reload`: Reload the buffer after `lq` writes. Fast, but discards unsaved in-LyX edits.
+    - `save-reload`: Save unsaved edits first, then reload. Preserves everything.
+  - `--track-changes <on|off>`: Enable or disable tracked changes for all mutation commands. When on, set preserves old text in `\change_deleted` + new in `\change_inserted`, delete wraps removed nodes in `\change_deleted`, insert wraps new content in `\change_inserted`.
+
+### Query
+- `lq schema <file> [--layouts-dir <path>]`
   - Returns a list of all semantically valid layouts for the document's class, as well as global constructs.
   - Exposes categories: `documentLayouts`, `insetLayouts`, `insets`, and `inlineProperties`.
   - Global constructs supported include:
     - **insetLayouts**: `Plain Layout`
     - **insets**: `Note`, `ERT`, `Foot`, `Marginal`, `Branch`, `Box`, `Float`, `Wrap`, `Caption`, `Flex`, `Phantom`, `CommandInset`, `Formula`, `Graphics`, `External`, `Include`, `listings`, `Preview`, `Tabular`, `space`, `VSpace`, `Newline`, `Newpage`, `Separator`, `Line`, `Quotes`, `SpecialChar`, `IPA`, `IPAMacro`, `IPADeco`, `script`, `Argument`, `Info`, `FloatList`, `Index`, `Nomenclature`, `TOC`, `Ending`, `Accent`
     - **inlineProperties**: `change_inserted`, `change_deleted`, `change_unchanged`
-- **bib**: `lq bib <file> [options]`
+- `lq bib <file> [options]`
   - Extracts available citation keys from linked `.bib` bibliography files and outputs them as JSON.
   - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
   - Each citation includes `key`, `author`, `title`, and `year`.
-  - Options: `--search <term>`. Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
-- **dump**: `lq dump <file>`
+  - `--search <term>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
+- `lq dump <file>`
   - Outputs the full CST as a massive JSON document.
-- **read**: `lq read <file> <selector>`
+- `lq read <file> <selector>`
   - Outputs matching nodes and text content as JSON.
-- **set**: `lq set <file> <selector> <new text>`
-  - Overwrites the targeted nodes with new text content.
-  - Track-changes behavior is governed by config (see `lq init --track-changes`).
-- **delete**: `lq delete <file> <selector>`
+
+### Mutate
+- `lq set <file> <selector> <new text>`
+  - Overwrites the targeted nodes with new text content. No structure change (layouts, insets, properties).
+- `lq delete <file> <selector>`
   - Safely deletes the targeted nodes from the `.lyx` file.
-  - Track-changes behavior is governed by config (see `lq init --track-changes`). When enabled, wraps removed nodes in `\change_deleted` markers.
-- **insert**: `lq insert <file> <selector> <position> [options]`
+- `lq insert <file> <selector> <position> [options]`
   - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector.
   - Helpers (You must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
-    - `--raw <string>`: The power-user option. Provide exact, raw LyX syntax (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas. If the raw string is invalid LyX syntax, it will be safely rejected.
+    - `--raw <string>`: The power-user option. Provide exact, raw LyX syntax (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas. If the raw string is invalid LyX syntax, it will be safely rejected. Unknown inset types in `--raw` content produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
     - `--raw-file <path>`: Same as `--raw`, but reads the raw LyX string from a file. Use this to avoid shell escaping issues with complex LyX markup.
-  - Track-changes behavior is governed by config (see `lq init --track-changes`). When enabled, wraps inserted content in `\change_inserted`.
-  - Validation operates in two layers:
-    - **Mandatory (always active):** Core safety checks — unrecognized layout names, document layouts inside insets, insets in document body, core CST mutations. Rejected with hard errors.
-    - **Optional (`--validate-layouts-dir <path>`):** Extended schema checks — inset type validation against the full registry, cross-class layout validation, property validation. Requires `.layout` files. If the path is invalid and was explicitly provided, produces a hard error; if auto-detected, warns on stderr.
 
 # Best Practices
 
