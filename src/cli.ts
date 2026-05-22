@@ -371,13 +371,16 @@ function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted"): Node[] {
 export async function refreshPreStep(filePath: string, mode: "none" | "reload" | "save-reload"): Promise<boolean> {
   if (mode !== "save-reload") return true;
 
-  const absPath = path.resolve(filePath);
-  const ok = await sendLyxCommands([
-    `buffer-switch ${absPath}`,
-    "buffer-write",
-  ]);
+  const commands: string[] = [];
+  // buffer-switch ensures the correct file is active before saving.
+  // On Windows, skipped: the pipe protocol (Server.cpp) uses ':' as a
+  // delimiter, which conflicts with the drive letter in absolute paths.
+  if (Deno.build.os !== "windows") {
+    commands.push(`buffer-switch ${path.resolve(filePath)}`);
+  }
+  commands.push("buffer-write");
 
-  return ok;
+  return await sendLyxCommands(commands);
 }
 
 /**
@@ -387,11 +390,13 @@ export async function refreshPreStep(filePath: string, mode: "none" | "reload" |
 async function refreshPostStep(filePath: string, mode: "none" | "reload" | "save-reload"): Promise<void> {
   if (mode === "none") return;
 
-  const absPath = path.resolve(filePath);
-  await sendLyxCommands([
-    `buffer-switch ${absPath}`,
-    "buffer-reload",
-  ]);
+  const commands: string[] = [];
+  if (Deno.build.os !== "windows") {
+    commands.push(`buffer-switch ${path.resolve(filePath)}`);
+  }
+  commands.push("buffer-reload");
+
+  await sendLyxCommands(commands);
 }
 
 export async function runCli(args: string[]) {

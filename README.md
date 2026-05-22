@@ -11,10 +11,11 @@ Quick start
 - CLI + skills designed for **AI agents**.
 - **Cross-reference and citation** support.
 - **Tracked change** support.
-- **Auto reload** `lq` mutations in opened `.lyx` files using [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
+- **Auto refresh** `lq` mutations in opened `.lyx` files using [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
 
 ### Limitation
 - `lq` is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting. That said, all LyX syntax is supported, so typesetting with `lq` is possible in principle.
+- **Windows auto-refresh**: On Windows, LyXServer uses a named pipe protocol that delimits messages with `:`, which conflicts with the drive letter in Windows absolute paths (e.g. `C:\...`). As a result, `buffer-switch` cannot be sent through the pipe, and auto-refresh operates on LyX's active buffer rather than switching to the target file first. **Windows users are advised to open one `.lyx` file while using `lq`.** On Linux/macOS, `buffer-switch` works correctly and the target file is explicitly activated before refresh.
 
 ### Known issue & todo
 - Continue to optimise the lq-use skill in battle. 
