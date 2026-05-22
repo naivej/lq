@@ -78,9 +78,11 @@ When modifying a document, users should follow this safe workflow:
 4. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Any raw LaTeX (like equations inside `inset[Formula]`) is treated as pure string data. Do not try to parse the LaTeX syntax itself; simply target the `inset[Formula]` node and replace its text content.
 5. **Use `:contains` for Precision**: If structural selectors like `:nth-child(5)` feel brittle, use `:contains("unique phrase")` to precisely target the paragraph or inset you want to edit.
 6. **Be Token-Efficient**: `lq` operates on files that can be tens of thousands of lines long.
-   - **Never use `dump`** unless debugging — it serializes the entire CST as JSON, which can consume hundreds of thousands of tokens.
+   - **use `dump` VERY carefully** — it serializes the entire CST as JSON, which can consume hundreds of thousands of tokens.
    - **Always use `bib --search`** instead of bare `bib`. A `.bib` file can contain thousands of entries; `--search` filters server-side so only matching citations are returned.
    - **Use `read` with precise selectors** — `layout[Standard]` matches every standard paragraph. Narrow it down with `:contains`, `:first`, or `:nth-child`.
+7. **Make sure `lq` is configured**: Always run `lq init` first to set up / confirm configeration. But **NEVER change configreation** without clear instructions or consent from the user.
+8. **Don't push LyXServer errors**: If `lq` cannot connect LyXServer, stop immediately and suggest the user what to do.
 
 ## HOW-TO
 1. **Cross-Referencing**: Before inserting a cross-reference, find the exact label names. Labels are stored as text inside `CommandInset label` insets. Query all labels with:
