@@ -322,27 +322,42 @@ function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted"): Node[] {
   const authorId = 1; // Testing sequential ID instead of random large number
   
   const result: Node[] = [];
-  for (const n of nodes) {
-    if (n.type === "text") {
+  // Buffer consecutive text nodes to wrap them under a single change marker pair,
+  // reducing verbosity when a layout contains many text fragments.
+  let textBuffer: Node[] = [];
+  
+  function flushTextBuffer() {
+    if (textBuffer.length > 0) {
       result.push({ type: "property", key: `change_${type}`, value: `${authorId} ${ts}` });
-      result.push(n);
+      for (const tn of textBuffer) result.push(tn);
       result.push({ type: "property", key: "change_unchanged" });
-    } else if (n.type === "block") {
-      const b = n as BlockNode;
-      if (b.tag === "layout") {
-        b.children = wrapWithTracking(b.children, type);
-        result.push(b);
-      } else if (b.tag === "inset") {
-        result.push({ type: "property", key: `change_${type}`, value: `${authorId} ${ts}` });
-        result.push(b);
-        result.push({ type: "property", key: "change_unchanged" });
-      } else {
-        result.push(b);
-      }
-    } else {
-      result.push(n);
+      textBuffer = [];
     }
   }
+  
+  for (const n of nodes) {
+    if (n.type === "text") {
+      textBuffer.push(n);
+    } else {
+      flushTextBuffer();
+      if (n.type === "block") {
+        const b = n as BlockNode;
+        if (b.tag === "layout") {
+          b.children = wrapWithTracking(b.children, type);
+          result.push(b);
+        } else if (b.tag === "inset") {
+          result.push({ type: "property", key: `change_${type}`, value: `${authorId} ${ts}` });
+          result.push(b);
+          result.push({ type: "property", key: "change_unchanged" });
+        } else {
+          result.push(b);
+        }
+      } else {
+        result.push(n);
+      }
+    }
+  }
+  flushTextBuffer();
   return result;
 }
 

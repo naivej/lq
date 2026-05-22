@@ -83,7 +83,15 @@ When modifying a document, users should follow this safe workflow:
    - **Use `read` with precise selectors** — `layout[Standard]` matches every standard paragraph. Narrow it down with `:contains`, `:first`, or `:nth-child`.
 
 ## HOW-TO
-1. **Cross-Referencing**: Before inserting a cross-reference, find the exact label names by querying `lq read <file> "inset[CommandInset label] property[name]"`. This returns all valid targets (e.g., `sec:Intro`, `fig:1`). You can insert references to these using the `--raw` payload.
+1. **Cross-Referencing**: Before inserting a cross-reference, find the exact label names. Labels are stored as text inside `CommandInset label` insets. Query all labels with:
+   ```bash
+   lq read <file> "inset[CommandInset label]"
+   ```
+   To filter by prefix (e.g., all section labels): 
+   ```bash
+   lq read <file> "inset[CommandInset label]:contains('sec:')"
+   ```
+   Extract the label name from the returned JSON's `children` text nodes. Insert references using `--raw` with the correct label name.
 2. **List Items (Itemize, Enumerate, Description)**: Do NOT use `\item` — it is a LaTeX command, not a `.lyx` file format token. LyX never writes `\item` to `.lyx` files and would discard it as an "Unknown token". Instead, each list item is a **separate paragraph** with the list layout:
 
    ```

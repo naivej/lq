@@ -64,9 +64,9 @@ At its core, `lq` operates on a simple lifecycle:
 4. **Serialize**: Converts the modified CST back into a perfectly formatted `.lyx` file.
 
 ### The LyX-to-CST Mapping
-To effectively use the query engine, you need to understand how LyX syntax maps to the CST nodes:
-- **Block Nodes**: Structures like `\begin_layout Section` map to a `layout` tag with a `Section` argument. You select them using `layout[Section]`.
-- **Insets**: Structures like `\begin_inset Formula` map to an `inset` tag with a `Formula` argument. You select them using `inset[Formula]`.
+To effectively use the query engine, Users need to understand how LyX syntax maps to the CST nodes:
+- **Block Nodes**: Structures like `\begin_layout Section` map to a `layout` tag with a `Section` argument. Users select them using `layout[Section]`.
+- **Insets**: Structures like `\begin_inset Formula` map to an `inset` tag with a `Formula` argument. Users select them using `inset[Formula]`.
 - **Property Nodes**: Single-line settings like `\textclass article` map to property nodes. 
 - **Text Nodes**: The actual text content inside layouts and insets.
 
@@ -81,21 +81,24 @@ The query engine supports traversing the CST using standard CSS syntax:
 ### Safe Mutation Workflow
 When modifying a document, users should follow this safe workflow:
 1. **Check Schema**: Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
-2. **Test Blast Radius**: Run `lq read <file> <selector>` to verify your selector targets exactly what you intend.
+2. **Test Blast Radius**: Run `lq read <file> <selector>` to verify selector targets exactly what's intended.
    - *Blast Radius* refers to the number of nodes a selector matches. 
    - `insert` duplicates the payload once for each matched node.
    - `set` and `delete` apply to *all* matched nodes, an overly broad selector (e.g., `layout[Standard]`) could wipe out the entire document!
-   - *Warning for `set`*: The `set` command replaces **all** children of a target node. If you target a `Section` layout that contains text *and* a label inset, `set` will destroy the label inset. To preserve inner nested insets, use a more precise selector to target only the `TextNode` itself (if supported), or rebuild the structure using `--raw`.
+   - *Warning for `set`*: The `set` command replaces **all** children of a target node. If users target a `Section` layout that contains text *and* a label inset, `set` will destroy the label inset. To preserve inner nested insets, use a more precise selector to target only the `TextNode` itself (if supported), or rebuild the structure using `--raw`.
 
 ### Cross-Referencing & Labels
 To safely insert cross-references, users need to know the exact names of existing labels in the document.
-You can find all defined labels by querying the `name` property inside label insets:
-`lq read <file> "inset[CommandInset label] property[name]"`
-This will return a JSON list of all targetable labels (e.g., `sec:Introduction`, `fig:Result`). You can then inject references to them using `--raw` (e.g., `\begin_inset CommandInset ref\nLatexCommand ref\nreference "sec:Introduction"\n\end_inset`).
+They can find all defined labels by querying label insets. Labels are stored as text inside
+`\begin_inset CommandInset label` blocks, so use `:contains()` to filter:
+- `lq read <file> "inset[CommandInset label]"` — returns all labels (e.g., `sec:Introduction`, `fig:Result`)
+- `lq read <file> "inset[CommandInset label]:contains('sec:')"` — labels whose name contains "sec:"
+
+Parse the returned JSON to extract the label name from the `children` array. They can then inject references to them using `--raw` (e.g., `\begin_inset CommandInset ref\nLatexCommand ref\nreference "sec:Introduction"\n\end_inset`).
 
 ### Bibliography & Citations
 To correctly cite external literature, users need to know the available citation keys from the linked `.bib` files. (Only `.bib` files are supported — references to `.bst` style files or embedded bibliographies are ignored.)
-You can query or search the bibliography by `lq bib`, then inject citations using `--raw` (e.g., `\begin_inset CommandInset citation\nLatexCommand citet\nkey "Einstein1905"\nliteral "false"\n\end_inset`).
+Users can query or search the bibliography by `lq bib`, then inject citations using `--raw` (e.g., `\begin_inset CommandInset citation\nLatexCommand citet\nkey "Einstein1905"\nliteral "false"\n\end_inset`).
 
 ## Commands
 
@@ -136,7 +139,7 @@ You can query or search the bibliography by `lq bib`, then inject citations usin
   - Safely deletes the targeted nodes from the `.lyx` file.
 - `lq insert <file> <selector> <position> [options]`
   - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector.
-  - Helpers (You must provide exactly one generation strategy):
+  - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--raw <string>`: The power-user option. Provide exact, raw LyX syntax (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas and batch insertion. If the raw string is invalid LyX syntax, it will be safely rejected. Unknown inset types in `--raw` content produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
     - `--raw-file <path>`: Same as `--raw`, but reads the raw LyX string from a file. Use this to avoid shell escaping issues with complex LyX markup.
