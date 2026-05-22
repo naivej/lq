@@ -77,8 +77,34 @@ When modifying a document, users should follow this safe workflow:
 3. **Embrace the Git Workflow**: You are working in a version-controlled workspace. If you accidentally execute a destructive command that corrupts the file or modifies the wrong text, immediately run `git restore <file>` to undo your changes.
 4. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Any raw LaTeX (like equations inside `inset[Formula]`) is treated as pure string data. Do not try to parse the LaTeX syntax itself; simply target the `inset[Formula]` node and replace its text content.
 5. **Use `:contains` for Precision**: If structural selectors like `:nth-child(5)` feel brittle, use `:contains("unique phrase")` to precisely target the paragraph or inset you want to edit.
-6. **Cross-Referencing**: Before inserting a cross-reference, find the exact label names by querying `lq read <file> "inset[CommandInset label] property[name]"`. This returns all valid targets (e.g., `sec:Intro`, `fig:1`). You can insert references to these using the `--raw` payload.
-7. **Be Token-Efficient**: `lq` operates on files that can be tens of thousands of lines long.
+6. **Be Token-Efficient**: `lq` operates on files that can be tens of thousands of lines long.
    - **Never use `dump`** unless debugging — it serializes the entire CST as JSON, which can consume hundreds of thousands of tokens.
    - **Always use `bib --search`** instead of bare `bib`. A `.bib` file can contain thousands of entries; `--search` filters server-side so only matching citations are returned.
    - **Use `read` with precise selectors** — `layout[Standard]` matches every standard paragraph. Narrow it down with `:contains`, `:first`, or `:nth-child`.
+
+## HOW-TO
+1. **Cross-Referencing**: Before inserting a cross-reference, find the exact label names by querying `lq read <file> "inset[CommandInset label] property[name]"`. This returns all valid targets (e.g., `sec:Intro`, `fig:1`). You can insert references to these using the `--raw` payload.
+2. **List Items (Itemize, Enumerate, Description)**: Do NOT use `\item` — it is a LaTeX command, not a `.lyx` file format token. LyX never writes `\item` to `.lyx` files and would discard it as an "Unknown token". Instead, each list item is a **separate paragraph** with the list layout:
+
+   ```
+   \begin_layout Itemize
+   First bullet point.
+   \end_layout
+   \begin_layout Itemize
+   Second bullet point.
+   \end_layout
+   ```
+
+   To insert multiple list items at once with `--raw`:
+   ```bash
+   lq insert file.lyx "layout[Standard]:last" after --raw "
+   \begin_layout Itemize
+   First bullet point.
+   \end_layout
+   \begin_layout Itemize
+   Second bullet point.
+   \end_layout
+   "
+   ```
+
+   For nested lists, use `\begin_deeper` / `\end_deeper` around the nested items. For enumerated lists, use `\begin_layout Enumerate` instead. For description lists, use `\begin_layout Description`.
