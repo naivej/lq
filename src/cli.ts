@@ -553,11 +553,7 @@ export async function runCli(args: string[]) {
       if (!preOk) {
         printError("REFRESH_PRE_ERROR",
           "save-reload: Cannot connect to LyX to save unsaved edits.\n" +
-          "Writing the file now would permanently destroy unsaved changes.\n" +
-          "\n" +
-          "To proceed, either:\n" +
-          "  Save your document in LyX (Ctrl+S), then re-run the command.\n" +
-          "  Or edit ~/.lq/config.json and set \"refresh\" to \"reload\" or \"none\", then re-run."
+          "Writing the file now would permanently destroy unsaved changes."
         );
         return;
       }
