@@ -9,7 +9,11 @@ description: Read, edit, and manipulate lyx documents (.lyx files)
 
 ## Query Engine (CSS Selectors)
 
-`lq` reads a `.lyx` file and converts it into a structured Concrete Syntax Tree (CST). You can targets specific nodes in the CST using the query engine, which works like CSS selectors:
+`lq` reads a `.lyx` file and converts it into a structured Concrete Syntax Tree (CST). 
+- **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child. `layout[Section] layout[Standard]` returns nothing — Standard paragraphs don't live inside Section blocks. Use `:contains()` or positional selectors (`:first`, `:nth-child`) to navigate instead.
+- **No sibling combinators**: `~` and `+` are not supported. Use `:nth-child()` or multiple `read` commands to find adjacent nodes.
+
+You can targets specific nodes in the CST using the query engine, which works like CSS selectors:
 - **Tags**: `layout` (e.g., standard paragraphs, sections), `inset` (e.g., formulas, footnotes, figures), `property` (e.g. `\family roman`).
 - **Attributes**: Target specific names using `layout[Section]`, `inset[Formula]`, or `property[family]`.
 - **Descendants**: Space-separated paths like `layout[Section] inset[Formula]` (finds a Formula inside a Section).

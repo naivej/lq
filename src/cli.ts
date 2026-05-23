@@ -1048,14 +1048,9 @@ export async function runCli(args: string[]) {
               printError("INVALID_CONTEXT", `Cannot insert inset directly into the document body. Insets must be inside a layout (e.g. Standard).`);
               continue;
             }
-
-            // Quick check if the inset starts with any of our valid insets
-            const blockArgs = block.args;
-            const isValidInset = schema.insets.some(i => blockArgs === i || blockArgs.startsWith(i + " "));
-            if (!isValidInset) {
-              printError("INVALID_INSET", `Inset type '${block.args}' is not permitted. Valid insets are: ${schema.insets.join(", ")}`);
-              continue;
-            }
+            // Inset type validation is handled by validateRawInsets (warning-only).
+            // Unknown engine-level inset types produce a stderr warning but do
+            // NOT block insertion — matching LyX's own permissive read path.
           }
         } else if (nodeToInsert.type === "property") {
           if (!schema.inlineProperties.includes(nodeToInsert.key)) {

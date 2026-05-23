@@ -66,6 +66,7 @@ To effectively use the query engine, Users need to understand how LyX syntax map
 - **Insets**: Structures like `\begin_inset Formula` map to an `inset` tag with a `Formula` argument. Users select them using `inset[Formula]`.
 - **Property Nodes**: Single-line settings like `\textclass article` map to property nodes. 
 - **Text Nodes**: The actual text content inside layouts and insets.
+- **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child.
 
 ### Query Engine (CSS Selectors)
 The query engine supports traversing the CST using standard CSS syntax:
