@@ -726,12 +726,11 @@ export async function runCli(args: string[]) {
 
   // Mutation commands below
   
-  // Blast radius warning: if selector matches many nodes, warn to stderr.
-  // Threshold of 5 is a reasonable balance — above this, accidental
-  // mass mutations become likely. The mutation still proceeds.
+  // Blast radius warning: if selector matches more than 1 node, warn to
+  // stderr. The mutation still proceeds — this is a warning, not a blocker.
   if (["set", "delete", "insert"].includes(command) && nodes.length > 1) {
     const warnMsg = `Warning: selector matches ${nodes.length} nodes. ` +
-      `Use 'lq read --count ${filePath} "${selector}"' to check blast radius before mutating.`;
+      `Run 'lq read ${filePath} "${selector}"' to inspect them before mutating.`;
     try {
       await Deno.stderr.write(new TextEncoder().encode(warnMsg + "\n"));
     } catch { /* ignore */ }
