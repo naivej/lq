@@ -76,12 +76,8 @@ Arguments:
   <selector>  A CSS-like selector targeting nodes to mutate.
   <new text>  The new text content to apply to the matched nodes.
 
-Note:
-  Track-changes behavior is governed by the config file. Use 'lq init --track-changes on'
-  to enable tracked changes for all mutations.
-
 Warning:
-  The 'set' command applies to ALL matched nodes. If a targeted block has nested children (like an inset), they will be destroyed and replaced entirely by the new text.`,
+  If a targeted block has nested children (like an inset), they will be destroyed and replaced entirely by the new text.`,
 
   delete: `lq delete - Safely delete the targeted nodes from the LyX file.
 
@@ -90,11 +86,7 @@ Usage:
 
 Arguments:
   <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector targeting nodes to delete.
-
-Note:
-  Track-changes behavior is governed by the config file. Use 'lq init --track-changes on'
-  to wrap deletions in \\change_deleted markers instead of removing nodes.`,
+  <selector>  A CSS-like selector targeting nodes to delete.`,
 
   init: `lq init - Initialize or view the user configuration file.
 
@@ -142,15 +134,9 @@ Arguments:
 Options:
   --layout <name>              Name of the layout to insert (e.g., 'Standard').
   --text <content>             Text content for the new layout or text node.
-  --raw <string>               Raw LyX string to parse and insert.
-  --raw-file <path>            Read raw LyX string from a file (avoids shell escaping issues).
-
-Note:
-  Track-changes behavior is governed by the config file. Use 'lq init --track-changes on'
-  to wrap inserted content in \\change_inserted markers.
-
-Warning:
-  If the selector matches multiple nodes, the insertion will be duplicated for EVERY matched node.`
+  --raw-file <path>            Read raw LyX string from a file. Use this for complex
+                               structures like nested formulas and batch insertion.
+                               Avoids shell escaping issues with LyX markup.`
 };
 
 // Helper to load user config
@@ -861,27 +847,20 @@ export async function runCli(args: string[]) {
 
     // Parse flags
     const flags = parseArgs(restArgs.slice(1), {
-      string: ["layout", "text", "raw", "raw-file"],
+      string: ["layout", "text", "raw-file"],
     });
 
     let flagCount = 0;
-    if (flags.raw) flagCount++;
     if (flags["raw-file"]) flagCount++;
     if (flags.layout) flagCount++;
-    if (flags.text && !flags.layout) flagCount++;
 
     if (flagCount > 1) {
-      printError("FLAG_CONFLICT", "You cannot mix --raw/--raw-file with --layout or isolated --text. Please provide exactly one generation strategy.");
+      printError("FLAG_CONFLICT", "You cannot mix --raw-file with --layout. Please provide exactly one generation strategy.");
       return;
     }
 
-    if (flags.raw && flags["raw-file"]) {
-      printError("FLAG_CONFLICT", "You cannot provide both --raw and --raw-file. Choose one.");
-      return;
-    }
-
-    // Resolve --raw-file by reading the file content into flags.raw
-    let rawContent = flags.raw;
+    // Resolve --raw-file by reading the file content
+    let rawContent: string | undefined;
     if (flags["raw-file"]) {
       try {
         rawContent = await Deno.readTextFile(flags["raw-file"]);
@@ -899,7 +878,7 @@ export async function runCli(args: string[]) {
         const tempAst = parse(rawContent, true);
         const validNodes = tempAst.children.filter(c => c.type === "block" || c.type === "property");
         if (validNodes.length === 0) {
-          printError("INVALID_RAW", "The --raw string did not parse into any valid LyX blocks or properties. (e.g. expected \\begin_layout, got plain text)");
+          printError("INVALID_RAW", "The --raw-file content did not parse into any valid LyX blocks or properties. (e.g. expected \\begin_layout, got plain text)");
           return;
         }
 
@@ -953,7 +932,7 @@ export async function runCli(args: string[]) {
     }
 
     if (newNodesToInsert.length === 0) {
-      printError("MISSING_CONTENT", "You must provide --layout, --text, or --raw to insert.");
+      printError("MISSING_CONTENT", "You must provide --layout or --raw-file to insert.");
       return;
     }
 

@@ -63,8 +63,7 @@ description: Read, edit, and manipulate lyx documents (.lyx files)
   - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector. `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout. `before`/`after` insert a layout as a **sibling** of the target. Inserting a layout inside another layout via `prepend`/`append` is rejected.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
-    - `--raw <string>`: The power-user option. Provide exact, raw LyX syntax (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas and batch insertion. If the raw string is invalid LyX syntax, it will be safely rejected. Unknown inset types in `--raw` content produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
-    - `--raw-file <path>`: Same as `--raw`, but reads the raw LyX string from a file. Use this to avoid shell escaping issues with complex LyX markup.
+    - `--raw-file <path>`: The power-user option. Read raw LyX syntax from a file (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas and batch insertion. Avoids shell escaping issues. If the content is invalid LyX syntax, it will be safely rejected. Unknown inset types produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
 
 # Best Practices
 

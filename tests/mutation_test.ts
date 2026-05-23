@@ -88,27 +88,31 @@ Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
 
 Deno.test("Mutation Engine - Reject Inset in Document Body", async () => {
   const tempFile = await createTempFile("temp_inset_test.lyx");
+  const rawFile = await Deno.makeTempFile({ suffix: ".raw" });
   try {
-    // Attempt to insert an inset directly into the body (e.g. after Title)
-    const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--raw", "\\begin_inset Formula\nE=mc^2\n\\end_inset"]);
+    await Deno.writeTextFile(rawFile, "\\begin_inset Formula\nE=mc^2\n\\end_inset");
+    const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--raw-file", rawFile]);
     assertEquals(result.status, "error");
     assertEquals(result.code, "INVALID_CONTEXT");
     assertStringIncludes(result.message!, "Cannot insert inset directly into the document body");
   } finally {
     await Deno.remove(tempFile);
+    try { await Deno.remove(rawFile); } catch { /* ignore */ }
   }
 });
 
 Deno.test("Mutation Engine - Reject Invalid Raw Strings", async () => {
   const tempFile = await createTempFile("temp_raw_test.lyx");
+  const rawFile = await Deno.makeTempFile({ suffix: ".raw" });
   try {
-    // Attempt to insert plain text using --raw
-    const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--raw", "Just plain text"]);
+    await Deno.writeTextFile(rawFile, "Just plain text");
+    const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--raw-file", rawFile]);
     assertEquals(result.status, "error");
     assertEquals(result.code, "INVALID_RAW");
     assertStringIncludes(result.message!, "did not parse into any valid LyX blocks or properties");
   } finally {
     await Deno.remove(tempFile);
+    try { await Deno.remove(rawFile); } catch { /* ignore */ }
   }
 });
 

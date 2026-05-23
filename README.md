@@ -30,8 +30,8 @@ When `lq` mutates document structure with the `insert` command, it enforces sema
 
 **Checks that always run (no config needed):**
 - **Core CST guards**: `document`, `body`, and `header` cannot be mutated directly.
-- **Malformed `--raw` syntax** is rejected (doesn't parse as valid LyX).
-- **Unknown inset types in `--raw`** produce a warning to stderr but don't block the insertion. This uses a hardcoded registry of known LyX engine inset types (sourced from LyX's `InsetCode.h`, available globally regardless of textclass) and matches LyX's own permissive read path.
+- **Malformed `--raw-file` syntax** is rejected (doesn't parse as valid LyX).
+- **Unknown inset types in `--raw-file`** produce a warning to stderr but don't block the insertion. This uses a hardcoded registry of known LyX engine inset types (sourced from LyX's `InsetCode.h`, available globally regardless of textclass) and matches LyX's own permissive read path.
 
 **Checks that require `.layout` files** (enabled when `~/.lq/config.json` has a `layoutsDir`, silently skipped otherwise):
 - **Layout name**: Unrecognized layout names are rejected with the list of valid alternatives.
@@ -109,8 +109,8 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
   - `--layouts-dir <path>`: If not provided, auto-detects the highest installed LyX version's layouts directory.
   - `--refresh <mode>` configures automatic LyX buffer refresh in opened `.lyx` files after mutations:
     - `none` (default): No refresh. LyX detects external changes via its own polling and prompts the user to reload.
-    - `reload`: Reload the buffer after `lq` writes. Fast, but discards unsaved in-LyX edits.
-    - `save-reload`: Save unsaved edits first, then reload. Preserves everything.
+    - `reload`: Reload the buffer after `lq` writes, fail silently if LyXserver disconnects. Fast, but discards unsaved in-LyX edits.
+    - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Throw an error and abort if LyXserver disconnects
   - `--track-changes <on|off>`: Enable or disable tracked changes for all mutation commands. When on, set preserves old text in `\change_deleted` + new in `\change_inserted`, delete wraps removed nodes in `\change_deleted`, insert wraps new content in `\change_inserted`.
 
 ### Query
@@ -142,8 +142,7 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
   - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector. `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout. `before`/`after` insert a layout as a **sibling** of the target. Inserting a layout inside another layout via `prepend`/`append` is rejected.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
-    - `--raw <string>`: The power-user option. Provide exact, raw LyX syntax (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas and batch insertion. If the raw string is invalid LyX syntax, it will be safely rejected. Unknown inset types in `--raw` content produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
-    - `--raw-file <path>`: Same as `--raw`, but reads the raw LyX string from a file. Use this to avoid shell escaping issues with complex LyX markup.
+    - `--raw-file <path>`: The power-user option. Read raw LyX syntax from a file (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas and batch insertion. Avoids shell escaping issues. If the content is invalid LyX syntax, it will be safely rejected. Unknown inset types produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
 
 ## Development
 

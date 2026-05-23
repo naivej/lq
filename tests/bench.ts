@@ -112,15 +112,27 @@ async function benchMutate(
   args: string[],
 ): Promise<void> {
   const tmp = await copyFixture(fixture);
+  // If args contain --raw, write the content to a temp file and use --raw-file
+  const processedArgs = [...args];
+  let rawTmp: string | null = null;
+  const rawFileIdx = processedArgs.indexOf("--raw");
+  if (rawFileIdx !== -1) {
+    const rawContent = processedArgs[rawFileIdx + 1];
+    rawTmp = await Deno.makeTempFile({ suffix: ".raw" });
+    await Deno.writeTextFile(rawTmp, rawContent);
+    processedArgs[rawFileIdx] = "--raw-file";
+    processedArgs[rawFileIdx + 1] = rawTmp;
+  }
   try {
-    const { success } = await run([args[0], tmp, ...args.slice(1)]);
-    if (!success) throw new Error(`Mutation failed: lq ${args.join(" ")}`);
+    const { success } = await run([processedArgs[0], tmp, ...processedArgs.slice(1)]);
+    if (!success) throw new Error(`Mutation failed: lq ${processedArgs.join(" ")}`);
     // Verify the file is still valid LyX after mutation
     const verify = lq(["read", tmp, "layout"]);
     const { code } = await verify.output();
     if (code !== 0) throw new Error("Mutation left file unreadable");
   } finally {
     await Deno.remove(tmp).catch(() => {});
+    if (rawTmp) await Deno.remove(rawTmp).catch(() => {});
   }
 }
 
