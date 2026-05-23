@@ -30,11 +30,16 @@ Run 'lq <command> --help' for more information on a specific command.`,
   read: `lq read - Output matching nodes and text content as JSON.
 
 Usage:
-  lq read <file> <selector>
+  lq read <file> <selector> [options]
 
 Arguments:
   <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector (e.g., 'layout[Section]', ':contains("text")'). Note: :contains is exact and case-sensitive.`,
+  <selector>  A CSS-like selector (e.g., 'layout[Section]', ':contains("text")').
+              Note: :contains is exact and case-sensitive.
+
+Options:
+  --count     Return only the match count as JSON ({\"count\": N}), omitting the data array.
+              Useful for checking blast radius before mutations without parsing large output.`,
 
   dump: `lq dump - Output the full CST as a massive JSON document.
 
@@ -536,7 +541,12 @@ export async function runCli(args: string[]) {
     return;
   }
 
-  const [command, filePath, selector, ...restArgs] = cleanArgs;
+  // Extract --count flag early (before positional arg destructuring)
+  // so it doesn't get mistaken for the file path.
+  const countOnly = cleanArgs.includes("--count");
+  const positionalArgs = cleanArgs.filter(a => a !== "--count");
+  
+  const [command, filePath, selector, ...restArgs] = positionalArgs;
   
   if (command !== "init" && !filePath.endsWith(".lyx")) {
     printError("INVALID_EXTENSION", "Target file must have a .lyx extension.");
@@ -713,7 +723,11 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "read") {
-    printJson({ status: "success", data: nodes, count: nodes.length });
+    if (countOnly) {
+      printJson({ status: "success", count: nodes.length });
+    } else {
+      printJson({ status: "success", data: nodes, count: nodes.length });
+    }
     return;
   }
 
@@ -726,6 +740,17 @@ export async function runCli(args: string[]) {
 
   // Mutation commands below
   
+  // Blast radius warning: if selector matches many nodes, warn to stderr.
+  // Threshold of 5 is a reasonable balance — above this, accidental
+  // mass mutations become likely. The mutation still proceeds.
+  if (["set", "delete", "insert"].includes(command) && nodes.length > 1) {
+    const warnMsg = `Warning: selector matches ${nodes.length} nodes. ` +
+      `Use 'lq read --count ${filePath} "${selector}"' to check blast radius before mutating.`;
+    try {
+      await Deno.stderr.write(new TextEncoder().encode(warnMsg + "\n"));
+    } catch { /* ignore */ }
+  }
+
   if (command === "set") {
     const flags = parseArgs(restArgs, { string: [] });
     if (nodes.length === 0) {
@@ -997,6 +1022,16 @@ export async function runCli(args: string[]) {
           if (nodeToInsert.type === "block") {
             const block = nodeToInsert as BlockNode;
             if (block.tag === "layout" && block.args) {
+              // Guard: prepend/append must not nest a layout inside another layout.
+              // Only text nodes and insets are valid children of document layouts.
+              if ((position === "prepend" || position === "append") &&
+                  targetParentBlock && targetParentBlock.tag === "layout") {
+                printError("INVALID_CONTEXT",
+                  `Cannot insert layout '${block.args}' inside another layout. ` +
+                  `Use 'before' or 'after' to insert as a sibling.`);
+                continue;
+              }
+
               // Walk ancestor chain to determine if we're inside an inset
               let isInsetContext = false;
             if (targetParentBlock && targetParentBlock.tag === "inset") {

@@ -39,7 +39,7 @@ When `lq` mutates document structure with the `insert` command, it enforces sema
 - **Layout name**: Unrecognized layout names are rejected with the list of valid alternatives.
 - **Context boundaries**: Document layouts (e.g., `Section`) cannot be inserted inside insets (e.g., `Foot`); only `Plain Layout` is allowed within insets. Inset-only layouts cannot be inserted into the document body. Insets must be inside a layout, not at the body level.
 - **Cross-class**: Layouts from other document classes (e.g., `Frame` in an `article` document) are rejected.
-- **Inset types and inline properties**: Checked against the document class schema (both global AND textclass-specific) — rejected if not valid for this textclass. (Distinct from the warning-only `--raw` check above, which uses the engine-level registry.)
+- **Inset types and inline properties**: Checked against the document class schema (both global AND textclass-specific) — rejected if not valid for this textclass.
 
 Underpinning the schema:
 - **Dynamic Document Class Resolution**: `lq` queries the document's header (`\textclass`) to determine the class (e.g., `article`, `book`) and loads the corresponding `.layout` file.
@@ -80,13 +80,15 @@ The query engine supports traversing the CST using standard CSS syntax:
 - **Text content**: `:contains("some text")` (Recursively and case-sensitively searches node children for text)
 
 ### Safe Mutation Workflow
-When modifying a document, users should follow this safe workflow:
-1. **Check Schema**: Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
-2. **Test Blast Radius**: Run `lq read <file> <selector>` to verify selector targets exactly what's intended.
-   - *Blast Radius* refers to the number of nodes a selector matches. 
+Mutations apply to all matched nodes of a selector. Specifically,
    - `insert` duplicates the payload once for each matched node.
-   - `set` and `delete` apply to *all* matched nodes, an overly broad selector (e.g., `layout[Standard]`) could wipe out the entire document!
-   - *Warning for `set`*: The `set` command replaces **all** children of a target node. If users target a `Section` layout that contains text *and* a label inset, `set` will destroy the label inset. To preserve inner nested insets, use a more precise selector to target only the `TextNode` itself (if supported), or rebuild the structure using `--raw`.
+   - `set` and `delete` apply to *all* matched nodes — an overly broad selector (e.g., `layout[Standard]`) could wipe out the entire document!
+   - The `set` command replaces **all** children of a target node. If you target a `Section` layout that contains text *and* a label inset, `set` will destroy the label inset. To preserve inner nested insets, use a more precise selector or rebuild the structure using `--raw`.
+   - If there are more than 1 match, a warning is emitted to stderr. Use `lq read --count <file> <selector>` before mutating to check how many nodes will be affected.
+
+When modifying a document, users should follow this safe workflow:
+1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
+2. **Test Blast Radius (i.e. the number of nodes a selector matches)**: Run `lq read --count <file> <selector>` to verify how many nodes the selector matches. Then `lq read <file> <selector>` to verify selector targets exactly what's intended.
 
 ### Cross-Referencing & Labels
 To safely insert cross-references, users need to know the exact names of existing labels in the document.
@@ -130,8 +132,10 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
   - `--search <term>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
 - `lq dump <file>`
   - Outputs the full CST as a massive JSON document.
-- `lq read <file> <selector>`
+- `lq read <file> <selector> [options]`
   - Outputs matching nodes and text content as JSON.
+  - Options:
+    - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
 
 ### Mutate
 - `lq set <file> <selector> <new text>`
@@ -139,7 +143,7 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 - `lq delete <file> <selector>`
   - Safely deletes the targeted nodes from the `.lyx` file.
 - `lq insert <file> <selector> <position> [options]`
-  - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector.
+  - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector. `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout. `before`/`after` insert a layout as a **sibling** of the target. Inserting a layout inside another layout via `prepend`/`append` is rejected.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--raw <string>`: The power-user option. Provide exact, raw LyX syntax (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas and batch insertion. If the raw string is invalid LyX syntax, it will be safely rejected. Unknown inset types in `--raw` content produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
