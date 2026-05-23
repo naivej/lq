@@ -755,9 +755,18 @@ export async function runCli(args: string[]) {
         node.value = newValue;
       } else if (node.type === "block") {
         if (trackChanges) {
+          const ts = Math.floor(Date.now() / 1000).toString();
+          const aid = 1;
+          // Wrap ALL old children under a single \change_deleted pair
+          // rather than recursing per-text-node. Preserves pre-existing
+          // change markers cleanly inside a single deletion wrapper.
           node.children = [
-            ...wrapWithTracking(node.children, "deleted"),
-            ...wrapWithTracking([{ type: "text", text: newValue }], "inserted")
+            { type: "property", key: "change_deleted", value: `${aid} ${ts}` },
+            ...node.children,
+            { type: "property", key: "change_unchanged" },
+            { type: "property", key: "change_inserted", value: `${aid} ${ts}` },
+            { type: "text", text: newValue },
+            { type: "property", key: "change_unchanged" },
           ];
         } else {
           node.children = [{ type: "text", text: newValue }];
