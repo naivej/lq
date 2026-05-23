@@ -18,7 +18,7 @@ description: Read, edit, and manipulate lyx documents (.lyx files)
 
 ## Context-Aware Strict Validation
 
-`lq` features strict context validation. It will actively reject mutations that target core CST boundaries like `body` or `document`. It will also reject `insert` commands if you try to put a layout like `Section` inside an inset like `Foot`, or if you use an unrecognized layout. Unknown inset types in `--raw` content produce a warning to stderr but do NOT block the insertion — match LyX's permissive read path. Always check both stdout (for errors) and stderr (for warnings).
+`lq` features strict context validation. It will actively reject mutations that target core CST boundaries like `body` or `document`. It will also reject `insert` commands if you try to put a layout like `Section` inside an inset like `Foot`, or if you use an unrecognized layout. Unknown inset types in `--raw-file` content produce a warning to stderr but do NOT block the insertion — match LyX's permissive read path. Always check both stdout (for errors) and stderr (for warnings).
 
 ## Commands
 
@@ -73,7 +73,7 @@ description: Read, edit, and manipulate lyx documents (.lyx files)
 4. **Be Token-Efficient**: `lq` operates on files that can be tens of thousands of lines long.
    - **use `dump` VERY carefully** — it serializes the entire CST as JSON, which can consume hundreds of thousands of tokens.
    - **Always use `bib --search`** instead of bare `bib`. A `.bib` file can contain thousands of entries; `--search` filters server-side so only matching citations are returned.
-   - **Use `read` with precise selectors** — `layout[Standard]` matches every standard paragraph. Narrow it down with `:contains`, `:first`, or `:nth-child`.
+   - **Use `lq read --count` first** — `layout[Standard]` matches every standard paragraph. Check the count before reading full data or mutating.
 5. **Make sure `lq` is configured**: Always run `lq init` first to set up / confirm configeration. But **NEVER change configreation** without clear instructions or consent from the user.
 6. **Stop for LyXServer errors**: If `lq` cannot connect LyXServer, stop immediately and ask the user to turn on LyXServer or turn off auto refresh.
 
@@ -83,7 +83,7 @@ Mutations apply to all matched nodes of a selector. Specifically,
    - `insert` duplicates the payload once for each matched node.
    - `set` and `delete` apply to *all* matched nodes — an overly broad selector (e.g., `layout[Standard]`) could wipe out the entire document!
    - The `set` command replaces **all** children of a target node. If you target a `Section` layout that contains text *and* a label inset, `set` will destroy the label inset. To preserve inner nested insets, use a more precise selector or rebuild the structure using `--raw`.
-   - If there are more than 1 match, a warning is emitted to stderr. Use `lq read --count <file> <selector>` before mutating to check how many nodes will be affected.
+   - If there are more than 1 match, a warning is emitted to stderr with the count.
 
 When modifying a document, users should follow this safe workflow:
 1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
@@ -110,16 +110,10 @@ When modifying a document, users should follow this safe workflow:
    \end_layout
    ```
 
-   To insert multiple list items at once with `--raw`:
+   To insert multiple list items at once with `--raw-file`:
    ```bash
-   lq insert file.lyx "layout[Standard]:last" after --raw "
-   \begin_layout Itemize
-   First bullet point.
-   \end_layout
-   \begin_layout Itemize
-   Second bullet point.
-   \end_layout
-   "
+   # Write the content to a temp file, then:
+   lq insert file.lyx "layout[Standard]:last" after --raw-file /tmp/items.raw
    ```
 
    For nested lists, use `\begin_deeper` / `\end_deeper` around the nested items. For enumerated lists, use `\begin_layout Enumerate` instead. For description lists, use `\begin_layout Description`.
