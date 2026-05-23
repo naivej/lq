@@ -3,8 +3,8 @@
 `lq` is a standalone CLI tool designed to parse, query, and mutate LyX documents  (`.lyx` files) using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
 
 Quick start
-- Download the (fat) binary, then `lq`
-- Or install deno, clone this repo, then `deno run -A main.ts` or `deno task build`
+- Download the (fat) binary, then run `lq`
+- Or install deno, clone this repo, then run `deno run -A main.ts` or build the binary for your platform `deno task build`
 
 ### Highlight
 - `lq` mutates `.lyx` files in the same way as LyX (verified by LyX source code).
@@ -15,12 +15,10 @@ Quick start
 
 ### Limitation
 - `lq` is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting. That said, all LyX syntax is supported, so typesetting with `lq` is possible in principle.
-- **Windows auto-refresh**: On Windows, LyXServer uses a named pipe protocol that delimits messages with `:`, which conflicts with the drive letter in Windows absolute paths (e.g. `C:\...`). As a result, `buffer-switch` cannot be sent through the pipe, and auto-refresh operates on LyX's active buffer rather than switching to the target file first. **Windows users are advised to open one `.lyx` file while using `lq`.** On Linux/macOS, `buffer-switch` works correctly and the target file is explicitly activated before refresh.
+- **Windows auto-refresh**: Before auto-refresh, we use LyX function `buffer-switch` to ensure that mutations are reloaded into the correct target file, rather than the one that users are working on in the GUI. This however does not work on Windows, because LyXServer uses a named pipe protocol that delimits messages with `:`, which conflicts with the drive letter in Windows absolute paths (e.g. `C:\...`). As a result, `buffer-switch` cannot be sent through the pipe, and auto-refresh operates on LyX's active buffer rather than switching to the target file first. **Windows users are advised to open only one `.lyx` file while using `lq`.**
 
-### Known issue & todo
-- Continue to optimise the lq-use skill in battle. 
-- **Deferred: `--strict` mode** would format `lq`-generated content to match LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization). Those are purely cosmetic and LyX reads files fine without them. However, currently `lq` can cause formatting-only diffs the next time LyX saves.
-- **Inset type validation is warning-only:** This matches LyX's permissive read path. Unknown inset types in `--raw` content produce a warning but don't block the operation.
+### Known issue
+- Some LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization) are not enforced by `lq`. Those are purely cosmetic and LyX reads files fine without them. As a result, open a `lq` edited file in LyX can cause formatting-only diffs.
 
 ## Design Philosophy & Architecture
 
@@ -52,9 +50,7 @@ While LyX is a frontend for LaTeX, `lq` operates entirely independently of the L
 - **LyX as the Translator**: By strictly adhering to the schema defined in the LyX `.layout` files, `lq` ensures that the resulting `.lyx` file is structurally sound. When the user opens the file, the LyX engine handles the final translation to LaTeX.
 
 ### Git-Driven Workflow (No Dry-Run)
-`lq` intentionally omits a `--dry-run` flag. It is designed under the assumption that the workspace is version-controlled via `git`. 
-- To safely test the "blast radius" of a selector before modifying a file, users should use the `read` command. 
-- If a destructive command (`delete`, `set`, or `insert`) modifies unintended nodes, users should rely on `git restore <file>` to undo the changes.
+`lq` intentionally omits a `--dry-run` flag. It is designed under the assumption that the workspace is version-controlled via `git`, and users should rely on `git restore <file>` to undo unwanted changes.
 
 ## How This Tool Works
 
