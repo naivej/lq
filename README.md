@@ -28,6 +28,8 @@ Quick start
 
 ### Context-Aware Strict Validation
 When `lq` mutates document structure with the `insert` command, it enforces semantic rules to prevent corrupting `.lyx` files.
+- **Global Constructs**: Core engine constructs (Insets like `Formula`, `Note`, or inline properties like `change_inserted`) are mapped globally to provide a complete menu of legal operations regardless of textclass.
+- **Dynamic Document Class Resolution**: `lq` queries the document's header (`\textclass`) to determine the class (e.g., `article`, `book`) and loads the corresponding `.layout` file.
 
 **Checks that always run (no config needed):**
 - **Core CST guards**: `document`, `body`, and `header` cannot be mutated directly.
@@ -39,10 +41,6 @@ When `lq` mutates document structure with the `insert` command, it enforces sema
 - **Context boundaries**: Document layouts (e.g., `Section`) cannot be inserted inside insets (e.g., `Foot`); only `Plain Layout` is allowed within insets. Insets must be inside a layout, not at the body level.
 - **Cross-class**: Layouts from other document classes (e.g., `Frame` in an `article` document) are rejected.
 - **Inline properties**: Unknown property keys (e.g., `\item` in wrong context) are rejected with the list of valid alternatives.
-
-Underpinning the schema:
-- **Dynamic Document Class Resolution**: `lq` queries the document's header (`\textclass`) to determine the class (e.g., `article`, `book`) and loads the corresponding `.layout` file.
-- **Global Constructs**: Core engine constructs (Insets like `Formula`, `Note`, or inline properties like `change_inserted`) are mapped globally to provide a complete menu of legal operations regardless of textclass.
 
 ### LaTeX Independence
 While LyX is a frontend for LaTeX, `lq` operates entirely independently of the LaTeX layer:
