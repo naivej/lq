@@ -22,7 +22,7 @@ You can targets specific nodes in the CST using the query engine, which works li
 
 ## Context-Aware Strict Validation
 
-`lq` features strict context validation. It will actively reject mutations that target core CST boundaries like `body` or `document`. It will also reject `insert` commands if you try to put a layout like `Section` inside an inset like `Foot`, or if you use an unrecognized layout. Unknown inset types in `--raw-file` content produce a warning to stderr but do NOT block the insertion — match LyX's permissive read path. Always check both stdout (for errors) and stderr (for warnings).
+`lq` features strict context validation. It will actively reject mutations that target core CST boundaries like `body` or `document`. It will also reject `insert` commands if you try to put a layout like `Section` inside an inset like `Foot`, or if you use an unrecognized layout. Unknown inset types produce a warning to stderr but do NOT block the insertion. Always check both stdout (for errors) and stderr (for warnings).
 
 ## Commands
 
@@ -69,7 +69,7 @@ You can targets specific nodes in the CST using the query engine, which works li
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
     - `--ref <label> [--ref-cmd <command>]`: Insert a cross-reference inset. Valid `--ref-cmd` values: `ref` (default), `eqref`, `pageref`, `vpageref`, `vref`, `nameref`, `formatted`, `labelonly`.
-    - `--raw-file <path>`: The power-user option. Read raw LyX syntax from a file and parse it into CST nodes. Use for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params) If the content is invalid LyX syntax, it will be safely rejected. Unknown inset types produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
+    - `--raw-file <path>`: The power-user option for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params). Read raw LyX syntax from a file and parse it into CST nodes.
 
 # Best Practices
 

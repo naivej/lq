@@ -32,13 +32,13 @@ When `lq` mutates document structure with the `insert` command, it enforces sema
 **Checks that always run (no config needed):**
 - **Core CST guards**: `document`, `body`, and `header` cannot be mutated directly.
 - **Malformed `--raw-file` syntax** is rejected (doesn't parse as valid LyX).
-- **Unknown inset types in `--raw-file`** produce a warning to stderr but don't block the insertion. This uses a hardcoded registry of known LyX engine inset types (sourced from LyX's `InsetCode.h`, available globally regardless of textclass) and matches LyX's own permissive read path.
+- **Unknown inset types in `--raw-file`** produce a warning to stderr but don't block the insertion. This uses a hardcoded registry of known LyX engine inset types (sourced from LyX's `InsetCode.h`; There is no inset at the textclass level) and matches LyX's own permissive read path.
 
 **Checks that require `.layout` files** (enabled when `~/.lq/config.json` has a `layoutsDir`, silently skipped otherwise):
 - **Layout name**: Unrecognized layout names are rejected with the list of valid alternatives.
-- **Context boundaries**: Document layouts (e.g., `Section`) cannot be inserted inside insets (e.g., `Foot`); only `Plain Layout` is allowed within insets. Inset-only layouts cannot be inserted into the document body. Insets must be inside a layout, not at the body level.
+- **Context boundaries**: Document layouts (e.g., `Section`) cannot be inserted inside insets (e.g., `Foot`); only `Plain Layout` is allowed within insets. Insets must be inside a layout, not at the body level.
 - **Cross-class**: Layouts from other document classes (e.g., `Frame` in an `article` document) are rejected.
-- **Inset types and inline properties**: Checked against the document class schema (both global AND textclass-specific) — rejected if not valid for this textclass.
+- **Inline properties**: Unknown property keys (e.g., `\item` in wrong context) are rejected with the list of valid alternatives.
 
 Underpinning the schema:
 - **Dynamic Document Class Resolution**: `lq` queries the document's header (`\textclass`) to determine the class (e.g., `article`, `book`) and loads the corresponding `.layout` file.
@@ -63,8 +63,8 @@ At its core, `lq` operates on a simple lifecycle:
 
 ### The LyX-to-CST Mapping
 To effectively use the query engine, Users need to understand how LyX syntax maps to the CST nodes:
-- **Block Nodes**: Structures like `\begin_layout Section` map to a `layout` tag with a `Section` argument. Users select them using `layout[Section]`.
-- **Insets**: Structures like `\begin_inset Formula` map to an `inset` tag with a `Formula` argument. Users select them using `inset[Formula]`.
+- **Layout Nodes**: Structures like `\begin_layout Section` map to a `layout` tag with a `Section` argument. Users select them using `layout[Section]`.
+- **Inset Nodes**: Structures like `\begin_inset Formula` map to an `inset` tag with a `Formula` argument. Users select them using `inset[Formula]`.
 - **Property Nodes**: Single-line settings like `\textclass article` map to property nodes. 
 - **Text Nodes**: The actual text content inside layouts and insets.
 - **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child.
@@ -74,7 +74,7 @@ The query engine supports traversing the CST using standard CSS syntax:
 - **Tags**: `layout`, `inset`, `property`
 - **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`
 - **Descendants**: `layout[Section] inset[Formula]` (Finds a Formula inside a Section)
-- **Pseudo-classes**: `:first`, `:last`, `:nth-child(an+b)` (supports `odd`/`even`)
+- **Pseudo-classes**: `:first`, `:last`, `:nth-child(an+b)` (supports `odd`/`even`). Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 - **Text content**: `:contains("some text")` (Recursively and case-sensitively searches node children for text)
 
 ### Safe Mutation Workflow
@@ -146,7 +146,7 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
     - `--ref <label> [--ref-cmd <command>]`: Insert a cross-reference inset. Valid `--ref-cmd` values: `ref` (default), `eqref`, `pageref`, `vpageref`, `vref`, `nameref`, `formatted`, `labelonly`.
-    - `--raw-file <path>`: The power-user option. Read raw LyX syntax from a file and parse it into CST nodes. Use for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params) If the content is invalid LyX syntax, it will be safely rejected. Unknown inset types produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
+    - `--raw-file <path>`: The power-user option for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params). Read raw LyX syntax from a file and parse it into CST nodes.
 
 ## Development
 
