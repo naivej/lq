@@ -9,7 +9,7 @@
 import { assert } from "@std/assert";
 import { refreshPreStep } from "../src/cli.ts";
 
-Deno.test("Refresh - save-reload pre-step connects when LyXServer available", async () => {
+Deno.test("Refresh - save-reload pre-step connects when LyXServer available", { timeout: 10000 }, async () => {
   // When LyX is running with LyXServer enabled, the pre-step should succeed.
   // When LyX is not running, sendLyxCommands returns false and the pre-step
   // blocks the mutation (REFRESH_PRE_ERROR). This test verifies the function
@@ -20,7 +20,7 @@ Deno.test("Refresh - save-reload pre-step connects when LyXServer available", as
   assert(typeof ok === "boolean", "refreshPreStep must return a boolean");
 });
 
-Deno.test("Refresh - reload mode has no pre-step", async () => {
+Deno.test("Refresh - reload mode has no pre-step", { timeout: 5000 }, async () => {
   // reload mode intentionally discards unsaved edits — no pre-step needed.
   // If the guard were removed, this would call sendLyxCommands, which returns
   // false without LyX, and the test would fail.
@@ -28,7 +28,7 @@ Deno.test("Refresh - reload mode has no pre-step", async () => {
   assert(ok, "reload mode should not require a pre-step");
 });
 
-Deno.test("Refresh - none mode has no pre-step", async () => {
+Deno.test("Refresh - none mode has no pre-step", { timeout: 5000 }, async () => {
   const ok = await refreshPreStep("/tmp/test.lyx", "none");
   assert(ok, "none mode should not require a pre-step");
 });

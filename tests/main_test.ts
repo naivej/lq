@@ -3,7 +3,7 @@ import { expandGlob } from "@std/fs";
 import { parse } from "../src/parser.ts";
 import { serialize } from "../src/serializer.ts";
 
-Deno.test("Lossless Round-Trip Parsing Test", async (t) => {
+Deno.test("Lossless Round-Trip Parsing Test", { timeout: 30000 }, async (t) => {
   for await (const file of expandGlob("tests/fixtures/**/*.lyx")) {
     await t.step(file.name, async () => {
       const originalText = await Deno.readTextFile(file.path);

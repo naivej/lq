@@ -149,10 +149,15 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 
 ## Development
 
-- **Run tests:** `deno test -A` (Tests require read access to the fixtures and layout files)
+Requires **Deno 2.8+**.
+
+- **Run tests:** `deno test -A` (Tests require read access to the fixtures and layout files; I/O-heavy tests have per-test timeouts)
+- **Test coverage:** `deno task coverage` (generates per-function coverage report)
 - **Benchmark:** `deno bench -A --no-check tests/bench.ts`
+- **CPU profiling:** `deno task profile <args...>` (outputs .cpuprofile, SVG flamegraph, and Markdown report)
 - **Watch execution:** `deno task dev`
 - **Build binary:** `deno task build` (or `deno task build:all` for all platforms)
+- **Release:** `deno task release:patch` or `deno task release:minor` (bumps version in `deno.json` via `deno bump-version`)
 - **Compatibility**: 
   - Developed and verified against **LyX 2.4 and LyX 2.5**.
   - Developed for MacOS/Linux/Windows, tested on Windows.
