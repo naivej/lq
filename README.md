@@ -83,7 +83,7 @@ Mutations apply to all matched nodes of a selector. Specifically,
    - If there are more than 1 match, a warning is emitted to stderr. Use `lq read --count <file> <selector>` before mutating to check how many nodes will be affected.
 
 When modifying a document, users should follow this safe workflow:
-1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
+1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what are legally allowed in the specific document.
 2. **Test Blast Radius (i.e. the number of nodes a selector matches)**: Run `lq read --count <file> <selector>` to verify how many nodes the selector matches. Then `lq read <file> <selector>` to verify selector targets exactly what's intended.
 
 ### Cross-Referencing & Labels
