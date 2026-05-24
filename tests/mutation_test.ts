@@ -2,6 +2,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import * as path from "@std/path";
 import { parse } from "../src/parser.ts";
 import { BlockNode, TextNode } from "../src/ast.ts";
+import { CliResult, runCliTest } from "./helpers.ts";
 
 const FIXTURE_DIR = "tests/fixtures";
 
@@ -11,30 +12,6 @@ async function createTempFile(name: string): Promise<string> {
   const tempPath = path.join(FIXTURE_DIR, name);
   await Deno.copyFile(sourcePath, tempPath);
   return tempPath;
-}
-
-// Define a type for the expected JSON response
-export interface CliResult {
-  status: "success" | "error";
-  code?: string;
-  message?: string;
-  inserted_nodes?: number;
-  data?: unknown[]; // Changed from any to unknown[]
-}
-
-export async function runCliTest(args: string[]): Promise<CliResult> {
-  const command = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", "main.ts", ...args],
-    stdout: "piped",
-    stderr: "piped",
-  });
-  const { stdout } = await command.output();
-  const outputStr = new TextDecoder().decode(stdout).trim();
-  try {
-    return JSON.parse(outputStr);
-  } catch (_e) {
-    return { status: "error", message: "Failed to parse CLI output: " + outputStr };
-  }
 }
 
 Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
@@ -165,8 +142,8 @@ Deno.test("Mutation Engine - Reject Unrecognized Layout Name", async () => {
 Deno.test("Bib Engine - Extract Citations", async () => {
   const result = await runCliTest(["bib", path.join("tests", "fixtures", "my_template.lyx")]);
   assertEquals(result.status, "success");
-  assertEquals(result.data!.length, 15);
-  const firstCit = result.data![0] as { key: string, year: string };
+  assertEquals((result.data as unknown[]).length, 15);
+  const firstCit = (result.data as unknown[])[0] as { key: string, year: string };
   assertEquals(firstCit.key, "Mena2000");
   assertEquals(firstCit.year, "2000");
 });

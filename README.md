@@ -151,7 +151,7 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 
 Requires **Deno 2.8+**.
 
-- **Run tests:** `deno test -A` (Tests require read access to the fixtures and layout files; I/O-heavy tests have per-test timeouts)
+- **Run tests:** `deno test -A` (28 tests across 6 test files; I/O-heavy tests have per-test timeouts)
 - **Test coverage:** `deno task coverage` (generates per-function coverage report)
 - **Benchmark:** `deno bench -A --no-check tests/bench.ts`
 - **CPU profiling:** `deno task profile <args...>` (outputs .cpuprofile, SVG flamegraph, and Markdown report)
