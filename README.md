@@ -168,4 +168,4 @@ Requires **Deno 2.8+**.
 
 MIT
 
-Co-Author: GitHub Copilot powered by Gemeni 3.1 Pro
+Co-Author: GitHub Copilot powered by Gemeni 3.1 Pro (Thank you google for Vertex free trial!) and DeepSeek V4 Pro
