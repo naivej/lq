@@ -34,37 +34,37 @@ You can targets specific nodes in the CST using the query engine, which works li
   - `--layouts-dir <path>`: If not provided, auto-detects the highest installed LyX version's layouts directory.
   - `--refresh <mode>` configures automatic LyX buffer refresh in opened `.lyx` files after mutations:
     - `none` (default): No refresh. LyX detects external changes via its own polling and prompts the user to reload.
-    - `reload`: Reload the buffer after `lq` writes. Fast, but discards unsaved in-LyX edits.
-    - `save-reload`: Save unsaved edits first, then reload. Preserves everything.
-  - `--track-changes <on|off>`: Enable or disable tracked changes for all mutation commands. When on, set preserves old text in `\change_deleted` + new in `\change_inserted`, delete wraps removed nodes in `\change_deleted`, insert wraps new content in `\change_inserted`.
+    - `reload`: Reload the buffer after `lq` writes, fail silently if LyXserver disconnects. Fast, but discards unsaved in-LyX edits.
+    - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Throw an error and abort if LyXserver disconnects
+  - `--track-changes <on|off>`: Enable or disable (default) tracked changes for all mutation commands. When on, set preserves old text in `\change_deleted` + new in `\change_inserted`, delete wraps removed nodes in `\change_deleted`, insert wraps new content in `\change_inserted`.
 
 ### Query
 - `lq schema <file> [--layouts-dir <path>]`
-  - Returns a list of all semantically valid layouts for the document's class, as well as global constructs.
-  - Exposes categories: `documentLayouts`, `insetLayouts`, `insets`, and `inlineProperties`.
-  - Global constructs supported include:
+  - `--layouts-dir <path>`: overrides the config.
+  - Returns a list of all semantically valid layouts for the document's class, as well as global constructs, across 4 categories: `documentLayouts`, `insetLayouts`, `insets`, and `inlineProperties`. Global constructs include:
     - **insetLayouts**: `Plain Layout`
     - **insets**: `Note`, `ERT`, `Foot`, `Marginal`, `Branch`, `Box`, `Float`, `Wrap`, `Caption`, `Flex`, `Phantom`, `CommandInset`, `Formula`, `Graphics`, `External`, `Include`, `listings`, `Preview`, `Tabular`, `space`, `VSpace`, `Newline`, `Newpage`, `Separator`, `Line`, `Quotes`, `SpecialChar`, `IPA`, `IPAMacro`, `IPADeco`, `script`, `Argument`, `Info`, `FloatList`, `Index`, `Nomenclature`, `TOC`, `Ending`, `Accent`
     - **inlineProperties**: `change_inserted`, `change_deleted`, `change_unchanged`
-- `lq bib <file> [options]`
+- `lq bib <file> [--search <term>]`
   - Extracts available citation keys from linked `.bib` bibliography files and outputs them as JSON.
   - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
   - Each citation includes `key`, `author`, `title`, and `year`.
   - `--search <term>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
 - `lq dump <file>`
   - Outputs the full CST as a massive JSON document.
-- `lq read <file> <selector> [options]`
+- `lq read <file> <selector> [--count]`
   - Outputs matching nodes and text content as JSON.
-  - Options:
-    - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
+  - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
 
 ### Mutate
 - `lq set <file> <selector> <new text>`
-  - Overwrites the targeted nodes with new text content. No structure change (layouts, insets, properties).
+  - Overwrites the targeted nodes with new text content.
 - `lq delete <file> <selector>`
-  - Safely deletes the targeted nodes from the `.lyx` file.
-- `lq insert <file> <selector> <position> [options]`
-  - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector. `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout. `before`/`after` insert a layout as a **sibling** of the target. Inserting a layout inside another layout via `prepend`/`append` is rejected.
+  - Deletes the targeted nodes.
+- `lq insert <file> <selector> <position> [helper]`
+  - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector.
+    - `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout.
+    - `before`/`after` insert a layout as a **sibling** of the target.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.

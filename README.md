@@ -135,9 +135,11 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 - `lq set <file> <selector> <new text>`
   - Overwrites the targeted nodes with new text content.
 - `lq delete <file> <selector>`
-  - Deletes the targeted nodes from the `.lyx` file.
+  - Deletes the targeted nodes.
 - `lq insert <file> <selector> <position> [helper]`
-  - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector. `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout. `before`/`after` insert a layout as a **sibling** of the target. Inserting a layout inside another layout via `prepend`/`append` is rejected.
+  - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector.
+    - `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout.
+    - `before`/`after` insert a layout as a **sibling** of the target.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
