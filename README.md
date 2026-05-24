@@ -115,9 +115,8 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 
 ### Query
 - `lq schema <file> [--layouts-dir <path>]`
-  - Returns a list of all semantically valid layouts for the document's class, as well as global constructs.
-  - Exposes categories: `documentLayouts`, `insetLayouts`, `insets`, and `inlineProperties`.
-  - Global constructs supported include:
+  - `--layouts-dir <path>`: overrides the config.
+  - Returns a list of all semantically valid layouts for the document's class, as well as global constructs, across 4 categories: `documentLayouts`, `insetLayouts`, `insets`, and `inlineProperties`. Global constructs include:
     - **insetLayouts**: `Plain Layout`
     - **insets**: `Note`, `ERT`, `Foot`, `Marginal`, `Branch`, `Box`, `Float`, `Wrap`, `Caption`, `Flex`, `Phantom`, `CommandInset`, `Formula`, `Graphics`, `External`, `Include`, `listings`, `Preview`, `Tabular`, `space`, `VSpace`, `Newline`, `Newpage`, `Separator`, `Line`, `Quotes`, `SpecialChar`, `IPA`, `IPAMacro`, `IPADeco`, `script`, `Argument`, `Info`, `FloatList`, `Index`, `Nomenclature`, `TOC`, `Ending`, `Accent`
     - **inlineProperties**: `change_inserted`, `change_deleted`, `change_unchanged`
