@@ -145,7 +145,9 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
   - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector. `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout. `before`/`after` insert a layout as a **sibling** of the target. Inserting a layout inside another layout via `prepend`/`append` is rejected.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
-    - `--raw-file <path>`: The power-user option. Read raw LyX syntax from a file (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas and batch insertion. Avoids shell escaping issues. If the content is invalid LyX syntax, it will be safely rejected. Unknown inset types produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
+    - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
+    - `--ref <label> [--ref-cmd <command>]`: Insert a cross-reference inset. Valid `--ref-cmd` values: `ref` (default), `eqref`, `pageref`, `vpageref`, `vref`, `nameref`, `formatted`, `labelonly`.
+    - `--raw-file <path>`: The power-user option. Read raw LyX syntax from a file and parse it into CST nodes. Use for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params) If the content is invalid LyX syntax, it will be safely rejected. Unknown inset types produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
 
 ## Development
 

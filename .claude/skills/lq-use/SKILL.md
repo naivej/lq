@@ -67,7 +67,9 @@ You can targets specific nodes in the CST using the query engine, which works li
   - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector. `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout. `before`/`after` insert a layout as a **sibling** of the target. Inserting a layout inside another layout via `prepend`/`append` is rejected.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
-    - `--raw-file <path>`: The power-user option. Read raw LyX syntax from a file (e.g., `\begin_layout Itemize\nFoo\n\end_layout`). `lq` will parse it into CST nodes. Useful for injecting complex structures like nested formulas and batch insertion. Avoids shell escaping issues. If the content is invalid LyX syntax, it will be safely rejected. Unknown inset types produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
+    - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
+    - `--ref <label> [--ref-cmd <command>]`: Insert a cross-reference inset. Valid `--ref-cmd` values: `ref` (default), `eqref`, `pageref`, `vpageref`, `vref`, `nameref`, `formatted`, `labelonly`.
+    - `--raw-file <path>`: The power-user option. Read raw LyX syntax from a file and parse it into CST nodes. Use for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params) If the content is invalid LyX syntax, it will be safely rejected. Unknown inset types produce a warning to stderr but do not block the insertion — this matches LyX's own permissive read path.
 
 # Best Practices
 
@@ -102,9 +104,39 @@ When modifying a document, users should follow this safe workflow:
    ```bash
    lq read <file> "inset[CommandInset label]:contains('sec:')"
    ```
-   Extract the label name from the returned JSON's `children` text nodes. Insert references using `--raw` with the correct label name.
-2. **List Items (Itemize, Enumerate, Description)**: Do NOT use `\item` — it is a LaTeX command, not a `.lyx` file format token. LyX never writes `\item` to `.lyx` files and would discard it as an "Unknown token". Instead, each list item is a **separate paragraph** with the list layout:
+   Extract the label name from the returned JSON's `children` text nodes.
 
+   **Complex references via `--raw-file`**: When you need non-default params (`plural`, `caps`, `noprefix`, `nolink`, `tuple`), write the full inset to a temp file:
+   ```
+   \begin_inset CommandInset ref
+   LatexCommand vref
+   reference "sec:Section_label"
+   plural "true"
+   caps "false"
+   noprefix "false"
+   nolink "false"
+   tuple "range"
+   \end_inset
+   ```
+   See the reference syntax table below for all param defaults.
+
+2. **Citations**: Before inserting a citation, find citation keys with:
+   ```bash
+   lq bib <file> --search "author name"
+   ```
+
+   **Complex citations via `--raw-file`**: When you need `before`/`after` text, multi-citation lists, or `literal` mode, write the full inset to a temp file:
+   ```
+   \begin_inset CommandInset citation
+   LatexCommand citet
+   key "Einstein1905"
+   literal "false"
+   after "p. 42"
+   \end_inset
+   ```
+   See the citation syntax table below for all param defaults.
+
+3. **List Items (Itemize, Enumerate, Description)**: Do NOT use `\item` — it is a LaTeX command, not a `.lyx` file format token. LyX never writes `\item` to `.lyx` files and would discard it as an "Unknown token". Instead, each list item is a **separate paragraph** with the list layout:
    ```
    \begin_layout Itemize
    First bullet point.
@@ -116,8 +148,60 @@ When modifying a document, users should follow this safe workflow:
 
    To insert multiple list items at once with `--raw-file`:
    ```bash
-   # Write the content to a temp file, then:
    lq insert file.lyx "layout[Standard]:last" after --raw-file /tmp/items.raw
    ```
 
    For nested lists, use `\begin_deeper` / `\end_deeper` around the nested items. For enumerated lists, use `\begin_layout Enumerate` instead. For description lists, use `\begin_layout Description`.
+
+# LyX Syntax Reference
+
+## Citation Inset (`CommandInset citation`)
+
+```
+\begin_inset CommandInset citation
+LatexCommand citet
+key "Einstein1905"
+literal "false"
+after ""
+before ""
+\end_inset
+```
+
+| Param | Default | Notes |
+|-------|---------|-------|
+| `key` | *(required)* | BibTeX citation key |
+| `literal` | `"false"` | `"true"` bypasses cite engine formatting |
+| `after` | `""` | Text after citation, e.g. `"p. 42"` |
+| `before` | `""` | Text before citation, e.g. `"see "` |
+| `pretextlist` | `""` | Multi-citation preamble |
+| `posttextlist` | `""` | Multi-citation postamble |
+
+Omit params that use the default — LyX only writes non-default values.
+
+## Cross-Reference Inset (`CommandInset ref`)
+
+```
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "sec:Section_label"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "list"
+\end_inset
+```
+
+| Param | Default | Notes |
+|-------|---------|-------|
+| `reference` | *(required)* | Label name |
+| `plural` | `"false"` | "Section" → "Sections" |
+| `caps` | `"false"` | Capitalize prefix |
+| `noprefix` | `"false"` | Hide "Section"/"Figure" prefix |
+| `nolink` | `"false"` | No hyperlink |
+| `tuple` | `"list"` | `"list"` or `"range"` for multi-refs |
+
+The `plural`/`caps`/`noprefix`/`nolink`/`tuple` params are LyX-internal — they affect GUI display, not LaTeX output.
+
+## More Examples
+Use `lq init` to auto-detect LyX installation's layouts directory. The official templates are at `../templates/**/*.lyx` relative to the layouts directory. Read them to see real-world examples of LyX syntax for different constructs.

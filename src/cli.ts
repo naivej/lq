@@ -133,10 +133,17 @@ Arguments:
 
 Options:
   --layout <name>              Name of the layout to insert (e.g., 'Standard').
-  --text <content>             Text content for the new layout or text node.
+  --text <content>             Text content for the new layout (required with --layout).
   --raw-file <path>            Read raw LyX string from a file. Use this for complex
                                structures like nested formulas and batch insertion.
-                               Avoids shell escaping issues with LyX markup.`
+  --cite <key>                 Insert a citation inset for the given BibTeX key.
+  --cite-cmd <command>         Citation command: cite, citet (default),
+                               citep, citeauthor, citeyear, citeyearpar, citebyear,
+                               footcite, autocite, citetitle, fullcite, footfullcite,
+                               nocite, keyonly.
+  --ref <label>                Insert a cross-reference inset for the given label.
+  --ref-cmd <command>          Reference command: ref (default), eqref,
+                               pageref, vpageref, vref, nameref, formatted, labelonly.`
 };
 
 // Helper to load user config
@@ -855,15 +862,17 @@ export async function runCli(args: string[]) {
 
     // Parse flags
     const flags = parseArgs(restArgs.slice(1), {
-      string: ["layout", "text", "raw-file"],
+      string: ["layout", "text", "raw-file", "cite", "cite-cmd", "ref", "ref-cmd"],
     });
 
     let flagCount = 0;
     if (flags["raw-file"]) flagCount++;
     if (flags.layout) flagCount++;
+    if (flags.cite) flagCount++;
+    if (flags.ref) flagCount++;
 
     if (flagCount > 1) {
-      printError("FLAG_CONFLICT", "You cannot mix --raw-file with --layout. Please provide exactly one generation strategy.");
+      printError("FLAG_CONFLICT", "You cannot mix --raw-file, --layout, --cite, or --ref. Please provide exactly one generation strategy.");
       return;
     }
 
@@ -934,13 +943,57 @@ export async function runCli(args: string[]) {
         printError("MISSING_ARGS", "A non-empty --text argument is required when inserting a new --layout to prevent empty blocks.");
         return;
       }
+    } else if (flags.cite) {
+      const citeCmd = flags["cite-cmd"] || "citet";
+      const validCiteCmds = ["cite", "citet", "citep", "citeauthor", "citeyear",
+        "citeyearpar", "citebyear", "footcite", "autocite", "citetitle",
+        "fullcite", "footfullcite", "nocite", "keyonly"];
+      if (!validCiteCmds.includes(citeCmd)) {
+        printError("INVALID_FLAG", `Invalid --cite-cmd '${citeCmd}'. Valid values: ${validCiteCmds.join(", ")}`);
+        return;
+      }
+      newNodesToInsert.push({
+        type: "block",
+        tag: "inset",
+        args: "CommandInset citation",
+        isBeginVariant: true,
+        children: [
+          { type: "text", text: `LatexCommand ${citeCmd}` },
+          { type: "text", text: `key "${flags.cite}"` },
+          { type: "text", text: `literal "false"` },
+        ],
+      });
+    } else if (flags.ref) {
+      const refCmd = flags["ref-cmd"] || "ref";
+      const validRefCmds = ["ref", "eqref", "pageref", "vpageref", "vref",
+        "nameref", "formatted", "labelonly"];
+      if (!validRefCmds.includes(refCmd)) {
+        printError("INVALID_FLAG", `Invalid --ref-cmd '${refCmd}'. Valid values: ${validRefCmds.join(", ")}`);
+        return;
+      }
+      newNodesToInsert.push({
+        type: "block",
+        tag: "inset",
+        args: "CommandInset ref",
+        isBeginVariant: true,
+        children: [
+          { type: "text", text: `LatexCommand ${refCmd}` },
+          { type: "text", text: `reference "${flags.ref}"` },
+          // LyX defaults for internal params
+          { type: "text", text: `plural "false"` },
+          { type: "text", text: `caps "false"` },
+          { type: "text", text: `noprefix "false"` },
+          { type: "text", text: `nolink "false"` },
+          { type: "text", text: `tuple "list"` },
+        ],
+      });
     } else if (flags.text) {
       printError("TEXT_ONLY_INSERT", "Cannot insert bare text. You must wrap text in a layout using the --layout flag (e.g., --layout 'Standard' --text 'foo').");
       return;
     }
 
     if (newNodesToInsert.length === 0) {
-      printError("MISSING_CONTENT", "You must provide --layout or --raw-file to insert.");
+      printError("MISSING_CONTENT", "You must provide --layout, --raw-file, --cite, or --ref to insert.");
       return;
     }
 
