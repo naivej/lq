@@ -133,10 +133,10 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 
 ### Mutate
 - `lq set <file> <selector> <new text>`
-  - Overwrites the targeted nodes with new text content. No structure change (layouts, insets, properties).
+  - Overwrites the targeted nodes with new text content.
 - `lq delete <file> <selector>`
-  - Safely deletes the targeted nodes from the `.lyx` file.
-- `lq insert <file> <selector> <position> [options]`
+  - Deletes the targeted nodes from the `.lyx` file.
+- `lq insert <file> <selector> <position> [helper]`
   - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector. `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout. `before`/`after` insert a layout as a **sibling** of the target. Inserting a layout inside another layout via `prepend`/`append` is rejected.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
