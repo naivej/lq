@@ -11,7 +11,7 @@ Quick start
 - CLI + skills designed for **AI agents**.
 - **Cross-reference and citation** support.
 - **Tracked change** support.
-- **Auto refresh** `lq` mutations in opened `.lyx` files using [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
+- **Auto refresh** opened `.lyx` files using [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
 
 ### Limitation
 - `lq` is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting. That said, all LyX syntax is supported, so typesetting with `lq` is possible in principle.
