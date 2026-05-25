@@ -127,8 +127,8 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
   - `--search <text>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
 - `lq dump <file> [<selector>] [--depth <n>]`
   - Outputs the CST as a JSON document.
-  - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
-  - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
+  - `selector`: Scope the dump to matching nodes. Omit to dump the whole document.
+  - `--depth <n>`: `0` shows only the root node; `1` shows direct children; `N` descend N levels from root; omit for the full subtree.
 - `lq read <file> <selector> [--count]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
