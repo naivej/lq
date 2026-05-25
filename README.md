@@ -40,7 +40,7 @@ When `lq` mutates document structure with the `insert` command, it enforces sema
 - **Layout name**: Unrecognized layout names are rejected with the list of valid alternatives.
 - **Context boundaries**: Document layouts (e.g., `Section`) cannot be inserted inside insets (e.g., `Foot`); only `Plain Layout` is allowed within insets. Insets must be inside a layout, not at the body level.
 - **Cross-class**: Layouts from other document classes (e.g., `Frame` in an `article` document) are rejected.
-- **Inline properties**: Unknown property keys (e.g., `\item` in wrong context) are rejected with the list of valid alternatives.
+- **Inline properties**: Unknown property keys are rejected with the list of valid alternatives.
 
 ### LaTeX Independence
 While LyX is a frontend for LaTeX, `lq` operates entirely independently of the LaTeX layer:
@@ -72,7 +72,7 @@ The query engine supports traversing the CST using standard CSS syntax:
 - **Tags**: `layout`, `inset`, `property`.
 - **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`.
 - **Descendants**: `layout[Section] inset[Formula]` (Finds a Formula inside a Section).
-- **Pseudo-classes**: `:first`, `:last`, `:nth-child(an+b)` (supports `odd`/`even`). `:not(selector)` excludes nodes that have any descendant matching the inner selector. (Example: `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula.) Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
+- **Pseudo-classes**: `:first`, `:last`, `:nth-child(an+b)` (Or use `odd` for 2n+1, `even` for 2n). `:not(selector)` excludes nodes that have any descendant matching the inner selector. (Example: `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula.) Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 - **Text content**: `:contains("text")` searches recursively and case-sensitively node children for text.
 
 ### Safe Mutation Workflow
@@ -114,16 +114,16 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 
 ### Query
 - `lq schema <file> [--layouts-dir <path>]`
-  - `--layouts-dir <path>`: overrides the config.
   - Returns a list of all semantically valid layouts for the document's class, as well as global constructs, across 4 categories: `documentLayouts`, `insetLayouts`, `insets`, and `inlineProperties`. Global constructs include:
     - **insetLayouts**: `Plain Layout`
     - **insets**: `Note`, `ERT`, `Foot`, `Marginal`, `Branch`, `Box`, `Float`, `Wrap`, `Caption`, `Flex`, `Phantom`, `CommandInset`, `Formula`, `Graphics`, `External`, `Include`, `listings`, `Preview`, `Tabular`, `space`, `VSpace`, `Newline`, `Newpage`, `Separator`, `Line`, `Quotes`, `SpecialChar`, `IPA`, `IPAMacro`, `IPADeco`, `script`, `Argument`, `Info`, `FloatList`, `Index`, `Nomenclature`, `TOC`, `Ending`, `Accent`
     - **inlineProperties**: `change_inserted`, `change_deleted`, `change_unchanged`
-- `lq bib <file> [--search <term>]`
+  - `--layouts-dir <path>`: overrides the config.
+- `lq bib <file> [--search <text>]`
   - Extracts available citation keys from linked `.bib` bibliography files and outputs them as JSON.
   - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
   - Each citation includes `key`, `author`, `title`, and `year`.
-  - `--search <term>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
+  - `--search <text>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
 - `lq dump <file> [--depth <n>]`
   - Outputs the CST up to depth n (an arbitrary non-negative integer) as a JSON document. `--depth 0` shows only the document node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
 - `lq read <file> <selector> [--count]`
@@ -140,7 +140,7 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
   - Positions:
     - `before`/`after`: insert a layout as a **sibling** of the target.
     - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
-    - `split-after("text")`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in the target block.
+    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in the target block.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.

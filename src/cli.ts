@@ -138,8 +138,8 @@ Usage:
 Arguments:
   <file>      The path to the .lyx file.
   <selector>  A CSS-like selector targeting a reference node.
-  <position>  Where to insert ('before', 'after', 'prepend', 'append', 'split-after("match")').
-              split-after("match") splits a text node right after the exact,
+  <position>  Where to insert ('before', 'after', 'prepend', 'append', 'split-after <match>').
+              split-after <match> splits a text node right after the exact,
               case-sensitive substring and inserts new content at that point.
               Only proceeds if the match appears exactly once in the block.
 
@@ -969,36 +969,24 @@ export async function runCli(args: string[]) {
 
     let position = restArgs[0];
     
-    // split-after("text") — parse match string from parentheses, like :contains() syntax
+    // split-after <text> — match string is the next positional arg
     let splitMatch: string | undefined;
-    const splitAfterMatch = position?.match(/^split-after\(("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\)$/);
-    if (splitAfterMatch) {
-      position = "split-after";
-      let val = splitAfterMatch[1];
-      // Unquote: remove surrounding quotes
-      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
-        val = val.substring(1, val.length - 1);
-      }
-      if (val === "") {
-        printError("MISSING_ARGS", "split-after() requires a non-empty match string, e.g. split-after(\"monetary policy\")");
+    if (position === "split-after") {
+      splitMatch = restArgs[1];
+      if (!splitMatch || splitMatch === "") {
+        printError("MISSING_ARGS", "split-after requires a non-empty match string, e.g. split-after monetary policy");
         return;
       }
-      splitMatch = val;
     }
 
     if (!["before", "after", "prepend", "append", "split-after"].includes(position)) {
-      printError("INVALID_POSITION", "Position must be 'before', 'after', 'prepend', 'append', or 'split-after(\"match\").'");
+      printError("INVALID_POSITION", "Position must be 'before', 'after', 'prepend', 'append', or 'split-after <match>'.");
       return;
     }
 
-    // split-after requires the match string to be parsed from the position arg
-    if (position === "split-after" && !splitMatch) {
-      printError("MISSING_ARGS", "split-after requires a match string, e.g. split-after(\"monetary policy\")");
-      return;
-    }
-
-    // Parse flags
-    const flags = parseArgs(restArgs.slice(1), {
+    // Parse flags (skip position and optional split-after match arg)
+    const flagArgs = position === "split-after" ? restArgs.slice(2) : restArgs.slice(1);
+    const flags = parseArgs(flagArgs, {
       string: ["layout", "text", "raw-file", "cite", "cite-cmd", "ref", "ref-cmd", "label", "footnote"],
     });
 
