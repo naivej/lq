@@ -27,7 +27,7 @@ Quick start
 `lq` is built on a "Lossless DOM" architecture. It parses `.lyx` files into a Concrete Syntax Tree (CST) rather than an Abstract Syntax Tree (AST). This ensures that perfectly valid but idiosyncratic LyX formatting (such as trailing whitespaces in specific tags or exact newline placement) is preserved exactly. The core rule of the project is that `serialize(parse(file)) === file_text` must result in a 0-byte difference.
 
 ### Context-Aware Strict Validation
-When `lq` mutates document structure with the `insert` command, it enforces semantic rules to prevent corrupting `.lyx` files.
+When `lq` mutates document structure with the `insert` command, it enforces semantic rules to prevent corrupting `.lyx` files at two scales:
 - **Global Constructs**: Core engine constructs (Insets like `Formula`, `Note`, or inline properties like `change_inserted`) are mapped globally to provide a complete menu of legal operations regardless of textclass.
 - **Dynamic Document Class Resolution**: `lq` queries the document's header (`\textclass`) to determine the class (e.g., `article`, `book`) and loads the corresponding `.layout` file.
 
@@ -69,17 +69,17 @@ To effectively use the query engine, Users need to understand how LyX syntax map
 
 ### Query Engine (CSS Selectors)
 The query engine supports traversing the CST using standard CSS syntax:
-- **Tags**: `layout`, `inset`, `property`
-- **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`
-- **Descendants**: `layout[Section] inset[Formula]` (Finds a Formula inside a Section)
+- **Tags**: `layout`, `inset`, `property`.
+- **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`.
+- **Descendants**: `layout[Section] inset[Formula]` (Finds a Formula inside a Section).
 - **Pseudo-classes**: `:first`, `:last`, `:nth-child(an+b)` (supports `odd`/`even`). `:not(selector)` excludes nodes that have any descendant matching the inner selector. (Example: `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula.) Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
-- **Text content**: `:contains("text")` (Recursively and case-sensitively searches node children for text)
+- **Text content**: `:contains("text")` searches recursively and case-sensitively node children for text.
 
 ### Safe Mutation Workflow
 Mutations apply to all matched nodes of a selector. Specifically,
    - `insert` duplicates the payload once for each matched node.
    - `set` and `delete` apply to *all* matched nodes — an overly broad selector (e.g., `layout[Standard]`) could wipe out the entire document!
-   - If there are more than 1 match, a warning is emitted to stderr. Use `lq read --count <file> <selector>` before mutating to check how many nodes will be affected.
+   - If there are more than 1 match, a warning is emitted to stderr.
 
 When modifying a document, users should follow this safe workflow:
 1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what are legally allowed in the specific document.
