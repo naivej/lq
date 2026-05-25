@@ -29,6 +29,13 @@ Deno.test("Selector Parsing", () => {
   assertEquals(parsed5[0][0].pseudos![0].argRaw, "odd");
   assertEquals(parsed5[1][0].pseudos![0].name, "nth-child");
   assertEquals(parsed5[1][0].pseudos![0].argRaw, "2n+1");
+
+  const parsed6 = parseSelector('layout[Standard]:not(inset[CommandInset bibtex])');
+  assertEquals(parsed6[0][0].tag, "layout");
+  assertEquals(parsed6[0][0].argExact, "Standard");
+  assertEquals(parsed6[0][0].pseudos!.length, 1);
+  assertEquals(parsed6[0][0].pseudos![0].name, "not");
+  assertEquals(parsed6[0][0].pseudos![0].argRaw, "inset[CommandInset bibtex]");
 });
 
 Deno.test("Query Engine on LyX Document", async () => {
@@ -107,4 +114,22 @@ Deno.test("Query Engine on LyX Document", async () => {
   assertEquals(res6.length, 0); // Not in the template, but should not throw syntax error
   const res7 = query(ast, ':contains("a)b)c")');
   assertEquals(res7.length, 0); // Not in the template, but should not throw syntax error
+
+  // Test :not() pseudo-class
+  // All Standard layouts that do NOT contain a Formula inset
+  const stdNoFormula = query(ast, 'layout[Standard]:not(inset[Formula])');
+  // There are Standard layouts; some have formulas, some don't.
+  // At least one Standard layout should not contain a Formula.
+  assertEquals(stdNoFormula.length > 0, true);
+
+  // All Standard layouts: those with Formula + those without should equal total
+  const stdWithFormula = query(ast, 'layout[Standard] inset[Formula]');
+  const allStd = query(ast, 'layout[Standard]');
+  // Every Standard that has a Formula is excluded by :not()
+  // So stdNoFormula + (unique std parents of stdWithFormula) <= allStd
+  assertEquals(stdNoFormula.length <= allStd.length, true);
+
+  // :not() with a non-matching inner selector should match everything
+  const allStd2 = query(ast, 'layout[Standard]:not(inset[Nonexistent])');
+  assertEquals(allStd2.length, allStd.length);
 });

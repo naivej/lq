@@ -41,13 +41,18 @@ Options:
   --count     Return only the match count as JSON ({\"count\": N}), omitting the data array.
               Useful for checking blast radius before mutations without parsing large output.`,
 
-  dump: `lq dump - Output the full CST as a massive JSON document.
+  dump: `lq dump - Output the full CST as a JSON document. Optionally limit depth.
 
 Usage:
-  lq dump <file>
+  lq dump <file> [options]
 
 Arguments:
-  <file>      The path to the .lyx file.`,
+  <file>      The path to the .lyx file.
+
+Options:
+  --depth <n>  Limit CST output to n levels deep (0 = document node only).
+               Omit for the full CST. If n exceeds the document depth, the
+               full CST is shown with a warning.`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
 
@@ -69,15 +74,19 @@ Options:
   set: `lq set - Overwrite the targeted nodes with new text content.
 
 Usage:
-  lq set <file> <selector> <new text>
+  lq set <file> <selector> <new text> [options]
 
 Arguments:
   <file>      The path to the .lyx file.
   <selector>  A CSS-like selector targeting nodes to mutate.
   <new text>  The new text content to apply to the matched nodes.
 
-Warning:
-  If a targeted block has nested children (like an inset), they will be destroyed and replaced entirely by the new text.`,
+Options:
+  --replace-all  Replace ALL children of the target block, not just text nodes.
+                 Use when you want to rebuild a block from scratch.
+
+By default, lq set preserves non-text children (insets, properties) and replaces
+only text nodes. Use --replace-all to wipe everything.`,
 
   delete: `lq delete - Safely delete the targeted nodes from the LyX file.
 
@@ -143,7 +152,10 @@ Options:
                                nocite, keyonly.
   --ref <label>                Insert a cross-reference inset for the given label.
   --ref-cmd <command>          Reference command: ref (default), eqref,
-                               pageref, vpageref, vref, nameref, formatted, labelonly.`
+                               pageref, vpageref, vref, nameref, formatted, labelonly.
+  --label <name>               Insert a label inset with the given name.
+  --footnote <text>            Insert a footnote inset containing a Plain Layout
+                               with the given text.`
 };
 
 // Helper to load user config
@@ -299,6 +311,60 @@ function validateRawInsets(doc: DocumentNode): string[] {
   }
   walk(doc.children);
   return warnings;
+}
+
+/** Compute the maximum depth of the CST (document = level 0). */
+function computeMaxDepth(doc: DocumentNode, currentDepth: number): number {
+  let maxDepth = currentDepth;
+  for (const child of doc.children) {
+    if (child.type === "block") {
+      const childDoc: DocumentNode = { type: "document", children: (child as BlockNode).children };
+      const childDepth = computeMaxDepth(childDoc, currentDepth + 1);
+      if (childDepth > maxDepth) maxDepth = childDepth;
+    }
+  }
+  return maxDepth;
+}
+
+/** Deep-clone the CST, truncating children at the given depth limit. */
+function truncateAtDepth(doc: DocumentNode, maxDepth: number, currentDepth: number): unknown {
+  if (currentDepth >= maxDepth) {
+    // At cutoff: replace children with a count indicator
+    const childCount = doc.children.length;
+    // Count block children for a more useful summary
+    const blockCount = doc.children.filter(c => c.type === "block").length;
+    const textCount = doc.children.filter(c => c.type === "text").length;
+    const propCount = doc.children.filter(c => c.type === "property").length;
+    const parts: string[] = [];
+    if (blockCount > 0) parts.push(`${blockCount} blocks`);
+    if (textCount > 0) parts.push(`${textCount} text nodes`);
+    if (propCount > 0) parts.push(`${propCount} properties`);
+    if (parts.length === 0) parts.push(`${childCount} children`);
+    return { type: "document", children: [`... (${parts.join(", ")})`] };
+  }
+  
+  return {
+    type: "document",
+    children: doc.children.map(child => {
+      if (child.type === "block") {
+        const block = child as BlockNode;
+        const truncatedDoc = truncateAtDepth(
+          { type: "document", children: block.children },
+          maxDepth,
+          currentDepth + 1
+        ) as { type: string; children: unknown[] };
+        return {
+          type: block.type,
+          tag: block.tag,
+          args: block.args,
+          isBeginVariant: block.isBeginVariant,
+          children: truncatedDoc.children,
+        };
+      }
+      // Text and property nodes are leaf nodes — always shown
+      return child;
+    }),
+  };
 }
 
 
@@ -585,7 +651,31 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "dump") {
-    printJson({ status: "success", data: ast });
+    // Dump may have --depth before the selector destructuring consumes it.
+    // Parse from selector + restArgs to catch both "--depth N" patterns.
+    const dumpArgs = selector ? [selector, ...restArgs] : restArgs;
+    const dumpFlags = parseArgs(dumpArgs, { string: ["depth"] });
+    const depthStr = dumpFlags["depth"];
+    
+    if (depthStr !== undefined) {
+      const depth = parseInt(depthStr, 10);
+      if (isNaN(depth) || depth < 0) {
+        printError("INVALID_FLAG", "--depth must be a non-negative integer.");
+        return;
+      }
+      
+      // Compute actual max depth of document
+      const maxDepth = computeMaxDepth(ast, 0);
+      if (depth > maxDepth) {
+        printWarning(`Depth ${depth} exceeds document depth (${maxDepth}). Showing full CST.`);
+        printJson({ status: "success", data: ast });
+      } else {
+        const truncated = truncateAtDepth(ast, depth, 0);
+        printJson({ status: "success", data: truncated });
+      }
+    } else {
+      printJson({ status: "success", data: ast });
+    }
     return;
   }
 
@@ -744,7 +834,8 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "set") {
-    const flags = parseArgs(restArgs, { string: [] });
+    const flags = parseArgs(restArgs, { boolean: ["replace-all"] });
+    const replaceAll = flags["replace-all"] === true;
     if (nodes.length === 0) {
       printError("NO_MATCH", "Selector matched no nodes to set.");
       return;
@@ -764,19 +855,38 @@ export async function runCli(args: string[]) {
         if (trackChanges) {
           const ts = Math.floor(Date.now() / 1000).toString();
           const aid = 1;
-          // Wrap ALL old children under a single \change_deleted pair
-          // rather than recursing per-text-node. Preserves pre-existing
-          // change markers cleanly inside a single deletion wrapper.
-          node.children = [
-            { type: "property", key: "change_deleted", value: `${aid} ${ts}` },
-            ...node.children,
-            { type: "property", key: "change_unchanged" },
-            { type: "property", key: "change_inserted", value: `${aid} ${ts}` },
-            { type: "text", text: newValue },
-            { type: "property", key: "change_unchanged" },
-          ];
+          if (replaceAll) {
+            // Old destructive behavior: wrap ALL old children under change_deleted
+            node.children = [
+              { type: "property", key: "change_deleted", value: `${aid} ${ts}` },
+              ...node.children,
+              { type: "property", key: "change_unchanged" },
+              { type: "property", key: "change_inserted", value: `${aid} ${ts}` },
+              { type: "text", text: newValue },
+              { type: "property", key: "change_unchanged" },
+            ];
+          } else {
+            // Default: preserve non-text children, replace only text nodes
+            const nonTextChildren = node.children.filter(c => c.type !== "text");
+            const oldTextNodes = node.children.filter(c => c.type === "text");
+            node.children = [
+              { type: "property", key: "change_deleted", value: `${aid} ${ts}` },
+              ...oldTextNodes,
+              { type: "property", key: "change_unchanged" },
+              { type: "property", key: "change_inserted", value: `${aid} ${ts}` },
+              { type: "text", text: newValue },
+              { type: "property", key: "change_unchanged" },
+              ...nonTextChildren,
+            ];
+          }
         } else {
-          node.children = [{ type: "text", text: newValue }];
+          if (replaceAll) {
+            node.children = [{ type: "text", text: newValue }];
+          } else {
+            // Default: preserve non-text children, replace only text nodes
+            const nonTextChildren = node.children.filter(c => c.type !== "text");
+            node.children = [{ type: "text", text: newValue }, ...nonTextChildren];
+          }
         }
       } else if (node.type === "text") {
         node.text = newValue;
@@ -862,7 +972,7 @@ export async function runCli(args: string[]) {
 
     // Parse flags
     const flags = parseArgs(restArgs.slice(1), {
-      string: ["layout", "text", "raw-file", "cite", "cite-cmd", "ref", "ref-cmd"],
+      string: ["layout", "text", "raw-file", "cite", "cite-cmd", "ref", "ref-cmd", "label", "footnote"],
     });
 
     let flagCount = 0;
@@ -870,9 +980,11 @@ export async function runCli(args: string[]) {
     if (flags.layout) flagCount++;
     if (flags.cite) flagCount++;
     if (flags.ref) flagCount++;
+    if (flags.label) flagCount++;
+    if (flags.footnote) flagCount++;
 
     if (flagCount > 1) {
-      printError("FLAG_CONFLICT", "You cannot mix --raw-file, --layout, --cite, or --ref. Please provide exactly one generation strategy.");
+      printError("FLAG_CONFLICT", "You cannot mix --raw-file, --layout, --cite, --ref, --label, or --footnote. Please provide exactly one generation strategy.");
       return;
     }
 
@@ -987,13 +1099,40 @@ export async function runCli(args: string[]) {
           { type: "text", text: `tuple "list"` },
         ],
       });
+    } else if (flags.label) {
+      newNodesToInsert.push({
+        type: "block",
+        tag: "inset",
+        args: "CommandInset label",
+        isBeginVariant: true,
+        children: [
+          { type: "text", text: "LatexCommand label" },
+          { type: "text", text: `name "${flags.label}"` },
+        ],
+      });
+    } else if (flags.footnote) {
+      newNodesToInsert.push({
+        type: "block",
+        tag: "inset",
+        args: "Foot",
+        isBeginVariant: true,
+        children: [
+          {
+            type: "block",
+            tag: "layout",
+            args: "Plain Layout",
+            isBeginVariant: true,
+            children: [{ type: "text", text: flags.footnote }],
+          },
+        ],
+      });
     } else if (flags.text) {
       printError("TEXT_ONLY_INSERT", "Cannot insert bare text. You must wrap text in a layout using the --layout flag (e.g., --layout 'Standard' --text 'foo').");
       return;
     }
 
     if (newNodesToInsert.length === 0) {
-      printError("MISSING_CONTENT", "You must provide --layout, --raw-file, --cite, or --ref to insert.");
+      printError("MISSING_CONTENT", "You must provide --layout, --raw-file, --cite, --ref, --label, or --footnote to insert.");
       return;
     }
 
@@ -1045,6 +1184,11 @@ export async function runCli(args: string[]) {
         if (!ctx) continue;
         targetParentBlock = ctx.parentBlock;
       }
+
+      // Track how many items we've inserted at this target, so multi-block
+      // payloads maintain correct order (each subsequent block advances the
+      // insertion index).
+      let insertedSoFar = 0;
 
       // Per-node validation for each block in the payload
       for (const nodeToInsert of newNodesToInsert) {
@@ -1138,14 +1282,18 @@ export async function runCli(args: string[]) {
         } else {
           if (ctx) {
             if (position === "before") {
-              if (isLayoutBlock) ctx.list.splice(ctx.index, 0, copy, spacer);
-              else ctx.list.splice(ctx.index, 0, copy);
+              const insertIdx = ctx.index + insertedSoFar;
+              if (isLayoutBlock) ctx.list.splice(insertIdx, 0, copy, spacer);
+              else ctx.list.splice(insertIdx, 0, copy);
             } else {
-              if (isLayoutBlock) ctx.list.splice(ctx.index + 1, 0, spacer, copy);
-              else ctx.list.splice(ctx.index + 1, 0, copy);
+              const insertIdx = ctx.index + 1 + insertedSoFar;
+              if (isLayoutBlock) ctx.list.splice(insertIdx, 0, spacer, copy);
+              else ctx.list.splice(insertIdx, 0, copy);
             }
           }
         }
+        // Track items inserted: layout blocks insert 2 items (block + spacer), others 1
+        insertedSoFar += isLayoutBlock ? 2 : 1;
         insertedBlocks++;
       }
       insertedCount++;

@@ -72,14 +72,13 @@ The query engine supports traversing the CST using standard CSS syntax:
 - **Tags**: `layout`, `inset`, `property`
 - **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`
 - **Descendants**: `layout[Section] inset[Formula]` (Finds a Formula inside a Section)
-- **Pseudo-classes**: `:first`, `:last`, `:nth-child(an+b)` (supports `odd`/`even`). Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
+- **Pseudo-classes**: `:first`, `:last`, `:nth-child(an+b)` (supports `odd`/`even`). `:not(selector)` excludes nodes that have any descendant matching the inner selector. (Example: `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula.) Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 - **Text content**: `:contains("some text")` (Recursively and case-sensitively searches node children for text)
 
 ### Safe Mutation Workflow
 Mutations apply to all matched nodes of a selector. Specifically,
    - `insert` duplicates the payload once for each matched node.
    - `set` and `delete` apply to *all* matched nodes — an overly broad selector (e.g., `layout[Standard]`) could wipe out the entire document!
-   - The `set` command replaces **all** children of a target node. If you target a `Section` layout that contains text *and* a label inset, `set` will destroy the label inset. To preserve inner nested insets, use a more precise selector or rebuild the structure using `--raw`.
    - If there are more than 1 match, a warning is emitted to stderr. Use `lq read --count <file> <selector>` before mutating to check how many nodes will be affected.
 
 When modifying a document, users should follow this safe workflow:
@@ -125,15 +124,15 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
   - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
   - Each citation includes `key`, `author`, `title`, and `year`.
   - `--search <term>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
-- `lq dump <file>`
-  - Outputs the full CST as a massive JSON document.
+- `lq dump <file> [--depth <n>]`
+  - Outputs the CST up to depth n (an arbitrary non-negative integer) as a JSON document. `--depth 0` shows only the document node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
 - `lq read <file> <selector> [--count]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
 
 ### Mutate
-- `lq set <file> <selector> <new text>`
-  - Overwrites the targeted nodes with new text content.
+- `lq set <file> <selector> <new text> [--replace-all]`
+  - Replaces text content within the targeted nodes. By default, preserves non-text children (insets, properties) — use `--replace-all` to wipe all children and rebuild from scratch.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq insert <file> <selector> <position> [helper]`
@@ -144,6 +143,8 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
     - `--ref <label> [--ref-cmd <command>]`: Insert a cross-reference inset. Valid `--ref-cmd` values: `ref` (default), `eqref`, `pageref`, `vpageref`, `vref`, `nameref`, `formatted`, `labelonly`.
+    - `--label <name>`: Insert a label inset (`CommandInset label`) with the given name.
+    - `--footnote <text>`: Insert a footnote inset (`Foot`) containing a `Plain Layout` with the given text.
     - `--raw-file <path>`: The power-user option for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params). Read raw LyX syntax from a file and parse it into CST nodes.
 
 ## Development

@@ -1,7 +1,7 @@
 import { DocumentNode, Node } from "./ast.ts";
 
 export interface PseudoClass {
-  name: "first" | "last" | "nth" | "contains" | "nth-child";
+  name: "first" | "last" | "nth" | "contains" | "nth-child" | "not";
   argRaw?: string;
 }
 
@@ -50,11 +50,20 @@ export function parseSelector(selector: string): SelectorPart[][] {
           const pName = pMatch[1];
           const pArg = pMatch[2] ? pMatch[2].trim() : undefined;
           
-          if (!["first", "last", "nth", "nth-child", "contains"].includes(pName)) {
+          if (!["first", "last", "nth", "nth-child", "contains", "not"].includes(pName)) {
             throw new Error(`Unsupported pseudo-class: :${pName}`);
           }
           
-          pseudos.push({ name: pName as "first" | "last" | "nth" | "contains" | "nth-child", argRaw: pArg });
+          if (pName === "not") {
+            // :not(selector) — the arg is a selector part (tag + optional [args]).
+            // Validate that it parses as a valid SelectorPart.
+            if (!pArg) throw new Error(":not() requires a selector argument, e.g. :not(inset[Formula])");
+            // Quick validation: try to parse it as a selector part
+            const innerParts = pArg.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?$/);
+            if (!innerParts) throw new Error(`Invalid selector inside :not(): ${pArg}`);
+          }
+          
+          pseudos.push({ name: pName as PseudoClass["name"], argRaw: pArg });
           matchedLength += pMatch[0].length;
         }
         
@@ -79,6 +88,27 @@ function nodeContainsText(node: Node, searchStr: string): boolean {
     }
   }
   return false;
+}
+
+/** Parse a single selector part string (e.g. "inset[CommandInset bibtex]") into a SelectorPart. */
+function parseSelectorPart(raw: string): SelectorPart {
+  const tagMatch = raw.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?$/);
+  if (!tagMatch) throw new Error(`Invalid selector inside :not(): ${raw}`);
+  
+  const tag = tagMatch[1];
+  const rawArg = tagMatch[2];
+
+  let argExact: string | undefined = undefined;
+  if (rawArg) {
+    const attrMatch = rawArg.match(/^(?:[a-zA-Z0-9_-]+=['"]?([^'"]+)['"]?|['"]?([^'"]+)['"]?)$/);
+    if (attrMatch) {
+      argExact = attrMatch[1] !== undefined ? attrMatch[1] : attrMatch[2];
+    } else {
+      argExact = rawArg;
+    }
+  }
+
+  return { tag, argExact };
 }
 
 function matchNode(node: Node, part: SelectorPart): boolean {
@@ -128,6 +158,17 @@ function matchNode(node: Node, part: SelectorPart): boolean {
         } else {
           return false;
         }
+      }
+      
+      if (p.name === "not" && p.argRaw !== undefined) {
+        // :not(selector) — exclude this node if any descendant matches the inner selector.
+        // Parse the inner selector as a SelectorPart.
+        const innerPart = parseSelectorPart(p.argRaw);
+        if (node.type === "block") {
+          const matches = findDescendants(node.children, innerPart);
+          if (matches.length > 0) return false;
+        }
+        // For non-block nodes, :not() always passes (there are no descendants to check).
       }
     }
   }
