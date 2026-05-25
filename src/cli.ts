@@ -1301,17 +1301,17 @@ export async function runCli(args: string[]) {
           if (!targetParentBlock) continue;
           // Collect all descendant text nodes and count matches of splitMatch
           const allTextNodes: { node: Node & { type: "text" }; parentList: Node[]; index: number }[] = [];
-          const collectTextNodes = (children: Node[], parentList: Node[]) => {
+          const collectTextNodes = (children: Node[]) => {
             for (let i = 0; i < children.length; i++) {
               const c = children[i];
               if (c.type === "text") {
                 allTextNodes.push({ node: c, parentList: children, index: i });
               } else if (c.type === "block") {
-                collectTextNodes((c as BlockNode).children, (c as BlockNode).children);
+                collectTextNodes((c as BlockNode).children);
               }
             }
           };
-          collectTextNodes(targetParentBlock.children, targetParentBlock.children);
+          collectTextNodes(targetParentBlock.children);
 
           let totalMatches = 0;
           let matchedTextNode: (typeof allTextNodes)[0] | null = null;
