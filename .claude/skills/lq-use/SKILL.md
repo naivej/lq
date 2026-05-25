@@ -17,8 +17,8 @@ You can targets specific nodes in the CST using the query engine, which works li
 - **Tags**: `layout` (e.g., standard paragraphs, sections), `inset` (e.g., formulas, footnotes, figures), `property` (e.g. `\family roman`).
 - **Attributes**: Target specific names using `layout[Section]`, `inset[Formula]`, or `property[family]`.
 - **Descendants**: Space-separated paths like `layout[Section] inset[Formula]` (finds a Formula inside a Section).
-- **Pseudo-classes**: Target specific matches using `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`). Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
-- **Text Content**: Find exact strings using `:contains("specific text")`. It searches recursively through deeply nested insets and is strictly case-sensitive.
+- **Pseudo-classes**: Target specific matches using `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`). `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula). Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
+- **Text Content**: Find exact strings using `:contains("text")`. It searches recursively through deeply nested insets and is strictly case-sensitive.
 
 ## Context-Aware Strict Validation
 
@@ -50,25 +50,29 @@ You can targets specific nodes in the CST using the query engine, which works li
   - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
   - Each citation includes `key`, `author`, `title`, and `year`.
   - `--search <term>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
-- `lq dump <file>`
-  - Outputs the full CST as a massive JSON document.
+- `lq dump <file> [--depth <n>]`
+  - Outputs the CST up to depth n (an arbitrary non-negative integer) as a JSON document. `--depth 0` shows only the document node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
 - `lq read <file> <selector> [--count]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
 
 ### Mutate
-- `lq set <file> <selector> <new text>`
-  - Overwrites the targeted nodes with new text content.
+- `lq set <file> <selector> <new text> [--replace-all]`
+  - Replaces text content within the targeted nodes. By default, preserves non-text children (insets, properties) — use `--replace-all` to wipe all children and rebuild from scratch.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq insert <file> <selector> <position> [helper]`
-  - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector.
-    - `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout.
-    - `before`/`after` insert a layout as a **sibling** of the target.
+  - Insert new blocks or properties relative to a selector.
+  - Positions:
+    - `before`/`after`: insert a layout as a **sibling** of the target.
+    - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
+    - `split-after("text")`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in the target block.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
     - `--ref <label> [--ref-cmd <command>]`: Insert a cross-reference inset. Valid `--ref-cmd` values: `ref` (default), `eqref`, `pageref`, `vpageref`, `vref`, `nameref`, `formatted`, `labelonly`.
+    - `--label <name>`: Insert a label inset (`CommandInset label`) with the given name.
+    - `--footnote <text>`: Insert a footnote inset (`Foot`) containing a `Plain Layout` with the given text.
     - `--raw-file <path>`: The power-user option for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params). Read raw LyX syntax from a file and parse it into CST nodes.
 
 # Best Practices
@@ -77,7 +81,7 @@ You can targets specific nodes in the CST using the query engine, which works li
 2. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Any raw LaTeX (like equations inside `inset[Formula]`) is treated as pure string data. Do not try to parse the LaTeX syntax itself; simply target the `inset[Formula]` node and replace its text content.
 3. **Use `:contains` for Precision**: If structural selectors like `:nth-child(5)` feel brittle, use `:contains("unique phrase")` to precisely target the paragraph or inset you want to edit.
 4. **Be Token-Efficient**: `lq` operates on files that can be tens of thousands of lines long.
-   - **use `dump` VERY carefully** — it serializes the entire CST as JSON, which can consume hundreds of thousands of tokens.
+   - **Use `dump --depth n`** instead of bare `dump`. A full CST dump can consume hundreds of thousands of tokens; depth-limited output gives you the document outline without the noise.
    - **Always use `bib --search`** instead of bare `bib`. A `.bib` file can contain thousands of entries; `--search` filters server-side so only matching citations are returned.
    - **Use `lq read --count` first** — `layout[Standard]` matches every standard paragraph. Check the count before reading full data or mutating.
 5. **Make sure `lq` is configured**: Always run `lq init` first to set up / confirm configeration. But **NEVER change configreation** without clear instructions or consent from the user.
@@ -88,7 +92,6 @@ You can targets specific nodes in the CST using the query engine, which works li
 Mutations apply to all matched nodes of a selector. Specifically,
    - `insert` duplicates the payload once for each matched node.
    - `set` and `delete` apply to *all* matched nodes — an overly broad selector (e.g., `layout[Standard]`) could wipe out the entire document!
-   - The `set` command replaces **all** children of a target node. If you target a `Section` layout that contains text *and* a label inset, `set` will destroy the label inset. To preserve inner nested insets, use a more precise selector or rebuild the structure using `--raw`.
    - If there are more than 1 match, a warning is emitted to stderr with the count.
 
 When modifying a document, users should follow this safe workflow:

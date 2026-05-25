@@ -138,7 +138,10 @@ Usage:
 Arguments:
   <file>      The path to the .lyx file.
   <selector>  A CSS-like selector targeting a reference node.
-  <position>  Where to insert ('before', 'after', 'prepend', 'append').
+  <position>  Where to insert ('before', 'after', 'prepend', 'append', 'split-after("match")').
+              split-after("match") splits a text node right after the exact,
+              case-sensitive substring and inserts new content at that point.
+              Only proceeds if the match appears exactly once in the block.
 
 Options:
   --layout <name>              Name of the layout to insert (e.g., 'Standard').
@@ -964,9 +967,33 @@ export async function runCli(args: string[]) {
       return;
     }
 
-    const position = restArgs[0];
-    if (!["before", "after", "prepend", "append"].includes(position)) {
-      printError("INVALID_POSITION", "Position must be 'before', 'after', 'prepend', or 'append'.");
+    let position = restArgs[0];
+    
+    // split-after("text") — parse match string from parentheses, like :contains() syntax
+    let splitMatch: string | undefined;
+    const splitAfterMatch = position?.match(/^split-after\(("(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*')\)$/);
+    if (splitAfterMatch) {
+      position = "split-after";
+      let val = splitAfterMatch[1];
+      // Unquote: remove surrounding quotes
+      if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.substring(1, val.length - 1);
+      }
+      if (val === "") {
+        printError("MISSING_ARGS", "split-after() requires a non-empty match string, e.g. split-after(\"monetary policy\")");
+        return;
+      }
+      splitMatch = val;
+    }
+
+    if (!["before", "after", "prepend", "append", "split-after"].includes(position)) {
+      printError("INVALID_POSITION", "Position must be 'before', 'after', 'prepend', 'append', or 'split-after(\"match\").'");
+      return;
+    }
+
+    // split-after requires the match string to be parsed from the position arg
+    if (position === "split-after" && !splitMatch) {
+      printError("MISSING_ARGS", "split-after requires a match string, e.g. split-after(\"monetary policy\")");
       return;
     }
 
@@ -1171,9 +1198,9 @@ export async function runCli(args: string[]) {
       let targetParentBlock: BlockNode | null = null;
       let ctx: { list: Node[]; index: number; parentBlock: BlockNode | null } | null = null;
 
-      if (position === "prepend" || position === "append") {
+      if (position === "prepend" || position === "append" || position === "split-after") {
         if (targetNode.type !== "block") {
-          printError("INVALID_TARGET", "Cannot prepend or append to a non-block node.");
+          printError("INVALID_TARGET", `Cannot ${position} to a non-block node.`);
           continue;
         }
         targetParentBlock = targetNode as BlockNode;
@@ -1206,9 +1233,9 @@ export async function runCli(args: string[]) {
           if (nodeToInsert.type === "block") {
             const block = nodeToInsert as BlockNode;
             if (block.tag === "layout" && block.args) {
-              // Guard: prepend/append must not nest a layout inside another layout.
+              // Guard: prepend/append/split-after must not nest a layout inside another layout.
               // Only text nodes and insets are valid children of document layouts.
-              if ((position === "prepend" || position === "append") &&
+              if ((position === "prepend" || position === "append" || position === "split-after") &&
                   targetParentBlock && targetParentBlock.tag === "layout") {
                 printError("INVALID_CONTEXT",
                   `Cannot insert layout '${block.args}' inside another layout. ` +
@@ -1270,7 +1297,75 @@ export async function runCli(args: string[]) {
         const spacer: Node = { type: "text", text: "" };
         const copy = structuredClone(nodeToInsert);
 
-        if (position === "prepend" || position === "append") {
+        if (position === "split-after") {
+          if (!targetParentBlock) continue;
+          // Collect all descendant text nodes and count matches of splitMatch
+          const allTextNodes: { node: Node & { type: "text" }; parentList: Node[]; index: number }[] = [];
+          const collectTextNodes = (children: Node[], parentList: Node[]) => {
+            for (let i = 0; i < children.length; i++) {
+              const c = children[i];
+              if (c.type === "text") {
+                allTextNodes.push({ node: c, parentList: children, index: i });
+              } else if (c.type === "block") {
+                collectTextNodes((c as BlockNode).children, (c as BlockNode).children);
+              }
+            }
+          };
+          collectTextNodes(targetParentBlock.children, targetParentBlock.children);
+
+          let totalMatches = 0;
+          let matchedTextNode: (typeof allTextNodes)[0] | null = null;
+          let matchOffset = -1;
+
+          for (const tn of allTextNodes) {
+            let searchFrom = 0;
+            while ((searchFrom = tn.node.text.indexOf(splitMatch!, searchFrom)) !== -1) {
+              totalMatches++;
+              if (!matchedTextNode) {
+                matchedTextNode = tn;
+                matchOffset = searchFrom;
+              }
+              searchFrom++; // continue searching for additional matches
+            }
+          }
+
+          if (totalMatches === 0) {
+            printError("SPLIT_NO_MATCH", `split-after: substring '${splitMatch}' not found in matched block.`);
+            continue;
+          }
+          if (totalMatches > 1) {
+            printError("SPLIT_AMBIGUOUS", `split-after: substring '${splitMatch}' appears ${totalMatches} times in matched block. Use a more specific selector or a longer match string.`);
+            continue;
+          }
+
+          // Split the text node: first half includes the match, second half is everything after
+          const fullText = matchedTextNode!.node.text;
+          const splitEnd = matchOffset + splitMatch!.length;
+          const before = fullText.substring(0, splitEnd);
+          const after = fullText.substring(splitEnd);
+
+          // Replace the original text node with: before + [new nodes] + after (if non-empty)
+          const parentList = matchedTextNode!.parentList;
+          const textIdx = matchedTextNode!.index;
+          const replacementNodes: Node[] = [{ type: "text", text: before }];
+
+          if (trackChanges) {
+            ensureAuthorInHeader(ast);
+            if (nodeToInsert.type === "block") {
+              const tracked = structuredClone(nodeToInsert);
+              tracked.children = wrapWithTracking(tracked.children, "inserted");
+              replacementNodes.push(tracked);
+            }
+          } else {
+            replacementNodes.push(copy);
+          }
+
+          if (after.length > 0) {
+            replacementNodes.push({ type: "text", text: after });
+          }
+
+          parentList.splice(textIdx, 1, ...replacementNodes);
+        } else if (position === "prepend" || position === "append") {
           if (!targetParentBlock) continue;
           if (position === "prepend") {
             if (isLayoutBlock) targetParentBlock.children.unshift(copy, spacer);

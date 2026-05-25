@@ -73,7 +73,7 @@ The query engine supports traversing the CST using standard CSS syntax:
 - **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`
 - **Descendants**: `layout[Section] inset[Formula]` (Finds a Formula inside a Section)
 - **Pseudo-classes**: `:first`, `:last`, `:nth-child(an+b)` (supports `odd`/`even`). `:not(selector)` excludes nodes that have any descendant matching the inner selector. (Example: `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula.) Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
-- **Text content**: `:contains("some text")` (Recursively and case-sensitively searches node children for text)
+- **Text content**: `:contains("text")` (Recursively and case-sensitively searches node children for text)
 
 ### Safe Mutation Workflow
 Mutations apply to all matched nodes of a selector. Specifically,
@@ -136,9 +136,11 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq insert <file> <selector> <position> [helper]`
-  - Insert new blocks or properties `before`, `after`, `prepend`, or `append` to a selector.
-    - `prepend`/`append` insert as **children** of the target, used for adding insets or text inside a layout.
-    - `before`/`after` insert a layout as a **sibling** of the target.
+  - Insert new blocks or properties relative to a selector.
+  - Positions:
+    - `before`/`after`: insert a layout as a **sibling** of the target.
+    - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
+    - `split-after("text")`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in the target block.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
