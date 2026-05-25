@@ -41,18 +41,19 @@ Options:
   --count     Return only the match count as JSON ({\"count\": N}), omitting the data array.
               Useful for checking blast radius before mutations without parsing large output.`,
 
-  dump: `lq dump - Output the full CST as a JSON document. Optionally limit depth.
+  dump: `lq dump - Output the CST (optionally scoped to a selector) as JSON.
 
 Usage:
-  lq dump <file> [options]
+  lq dump <file> [<selector>] [options]
 
 Arguments:
   <file>      The path to the .lyx file.
+  <selector>  Optional CSS selector to dump a subtree instead of the whole document.
 
 Options:
-  --depth <n>  Limit CST output to n levels deep (0 = document node only).
-               Omit for the full CST. If n exceeds the document depth, the
-               full CST is shown with a warning.`,
+  --depth <n>  Limit CST output to n levels deep (0 = root node only).
+               Omit for the full CST. If n exceeds the subtree depth, the
+               full subtree is shown with a warning.`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
 
@@ -660,6 +661,31 @@ export async function runCli(args: string[]) {
     const dumpFlags = parseArgs(dumpArgs, { string: ["depth"] });
     const depthStr = dumpFlags["depth"];
     
+    // If selector is present and not a flag, use it to target a subtree
+    const dumpSelector = (selector && !selector.startsWith("--")) ? selector : undefined;
+    
+    let roots: Node[] = []; // default: empty, will use ast directly
+    let useFullAst = true;
+    if (dumpSelector) {
+      try {
+        roots = query(ast, dumpSelector);
+      } catch (e: Error | unknown) {
+        printError("INVALID_SELECTOR", (e as Error).message);
+        return;
+      }
+      if (roots.length === 0) {
+        printError("NO_MATCH", "Selector matched no nodes to dump.");
+        return;
+      }
+      useFullAst = false;
+    }
+    
+    // Wrap each matched node as a document root for depth-limited output
+    const wrapAsDoc = (node: Node): DocumentNode => ({
+      type: "document",
+      children: [structuredClone(node)],
+    });
+    
     if (depthStr !== undefined) {
       const depth = parseInt(depthStr, 10);
       if (isNaN(depth) || depth < 0) {
@@ -667,17 +693,35 @@ export async function runCli(args: string[]) {
         return;
       }
       
-      // Compute actual max depth of document
-      const maxDepth = computeMaxDepth(ast, 0);
-      if (depth > maxDepth) {
-        printWarning(`Depth ${depth} exceeds document depth (${maxDepth}). Showing full CST.`);
-        printJson({ status: "success", data: ast });
+      if (useFullAst) {
+        const maxDepth = computeMaxDepth(ast, 0);
+        if (depth > maxDepth) {
+          printWarning(`Depth ${depth} exceeds document depth (${maxDepth}). Showing full CST.`);
+          printJson({ status: "success", data: ast });
+        } else {
+          printJson({ status: "success", data: truncateAtDepth(ast, depth, 0) });
+        }
       } else {
-        const truncated = truncateAtDepth(ast, depth, 0);
-        printJson({ status: "success", data: truncated });
+        const results = roots.map(root => {
+          const doc = wrapAsDoc(root);
+          const maxDepth = computeMaxDepth(doc, 0);
+          if (depth > maxDepth) {
+            printWarning(`Depth ${depth} exceeds subtree depth (${maxDepth}). Showing full subtree.`);
+            return doc;
+          }
+          return truncateAtDepth(doc, depth, 0);
+        });
+        const data = roots.length === 1 ? results[0] : results;
+        printJson({ status: "success", count: roots.length, data });
       }
     } else {
-      printJson({ status: "success", data: ast });
+      if (useFullAst) {
+        printJson({ status: "success", data: ast });
+      } else {
+        const docs = roots.map(wrapAsDoc);
+        const data = roots.length === 1 ? docs[0] : docs;
+        printJson({ status: "success", count: roots.length, data });
+      }
     }
     return;
   }

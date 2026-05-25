@@ -18,7 +18,8 @@ Quick start
 - **Windows auto-refresh**: Before auto-refresh, we use LyX function `buffer-switch` to ensure that mutations are reloaded into the correct target file, rather than the one that users are working on in the GUI. This however does not work on Windows, because LyXServer uses a named pipe protocol that delimits messages with `:`, which conflicts with the drive letter in Windows absolute paths (e.g. `C:\...`). As a result, `buffer-switch` cannot be sent through the pipe, and auto-refresh operates on LyX's active buffer rather than switching to the target file first. **Windows users are advised to open only one `.lyx` file while using `lq`.**
 - LyXServer currently can not report cursor location in an opened `.lyx` file. Thus it might be difficult to communicate with AI agent about exactly what you want to edit. The best way for now is probably using `:contains("some text")`.
 
-### Known issue
+### Known issue & TODO
+- Table and Figure helpers? (config: float, etc.)
 - Some LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization) are not enforced by `lq`. Those are purely cosmetic and LyX reads files fine without them. As a result, open a `lq` edited file in LyX can cause formatting-only diffs.
 
 ## Design Philosophy & Architecture
@@ -124,8 +125,10 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
   - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
   - Each citation includes `key`, `author`, `title`, and `year`.
   - `--search <text>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
-- `lq dump <file> [--depth <n>]`
-  - Outputs the CST up to depth n (an arbitrary non-negative integer) as a JSON document. `--depth 0` shows only the document node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
+- `lq dump <file> [<selector>] [--depth <n>]`
+  - Outputs the CST as a JSON document.
+  - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
+  - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
 - `lq read <file> <selector> [--count]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.

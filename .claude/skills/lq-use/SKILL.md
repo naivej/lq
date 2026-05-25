@@ -50,8 +50,10 @@ You can targets specific nodes in the CST using the query engine, which works li
   - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
   - Each citation includes `key`, `author`, `title`, and `year`.
   - `--search <text>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
-- `lq dump <file> [--depth <n>]`
-  - Outputs the CST up to depth n (an arbitrary non-negative integer) as a JSON document. `--depth 0` shows only the document node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
+- `lq dump <file> [<selector>] [--depth <n>]`
+  - Outputs the CST as a JSON document.
+  - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
+  - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
 - `lq read <file> <selector> [--count]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
