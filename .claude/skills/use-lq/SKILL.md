@@ -1,5 +1,5 @@
 ---
-name: lq-use
+name: use-lq
 description: Read, edit, and manipulate lyx documents (.lyx files)
 ---
 
