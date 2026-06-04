@@ -208,5 +208,24 @@ tuple "list"
 
 The `plural`/`caps`/`noprefix`/`nolink`/`tuple` params are LyX-internal — they affect GUI display, not LaTeX output.
 
+## LyX note
+
+```
+\begin_layout Standard
+\begin_inset Note Note
+status open
+
+\begin_layout Plain Layout
+I like to use lyx note
+\end_layout
+
+\end_inset
+
+
+\end_layout
+```
+
+LyX notes are for internal notes that will not appear in the output. You should skip LyX note when reading the LyX document, and MUST NOT edit existing ones. You can add new notes to store metadata or comments.
+
 ## More Examples
 Use `lq init` to auto-detect LyX installation's layouts directory. The official templates are at `../templates/**/*.lyx` relative to the layouts directory. Read them to see real-world examples of LyX syntax for different constructs.
