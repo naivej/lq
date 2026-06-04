@@ -208,24 +208,17 @@ tuple "list"
 
 The `plural`/`caps`/`noprefix`/`nolink`/`tuple` params are LyX-internal — they affect GUI display, not LaTeX output.
 
-## LyX note
+## Note Insets
 
-```
-\begin_layout Standard
-\begin_inset Note Note
-status open
+The `Note` inset family has three subtypes. All use `\begin_inset Note <subtype>`:
 
-\begin_layout Plain Layout
-I like to use lyx note
-\end_layout
+| Syntax | LyX UI Name | Output |
+|---|---|---|
+| `\begin_inset Note Note` | **LyX Note** | Internal notes that will not appear in LaTex or PDF output |
+| `\begin_inset Note Comment` | **Comment** | Internal notes that will appear in LaTex but not in PDF output |
+| `\begin_inset Note Greyedout` | **Greyed Out** | This note will appear in the output as text in a color |
 
-\end_inset
-
-
-\end_layout
-```
-
-LyX notes are for internal notes that will not appear in the output. You should skip LyX note when reading the LyX document, and MUST NOT edit existing ones. You can add new notes to store metadata or comments.
+You should skip these notes when reading the LyX document, and MUST NOT edit existing ones. You can add new notes to store metadata or comments.
 
 ## More Examples
-Use `lq init` to auto-detect LyX installation's layouts directory. The official templates are at `../templates/**/*.lyx` relative to the layouts directory. Read them to see real-world examples of LyX syntax for different constructs.
+Use official templates at `path/to/lyx/templates/**/*.lyx` and official help files at `path/to/lyx/Resources/doc/*.lyx` to understand more about LyX syntax.
