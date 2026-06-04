@@ -3,8 +3,6 @@
     "dev": "deno run --watch main.ts",
     "build": "deno compile -A --output bin/lq main.ts",
     "build:all": "deno compile -A --target x86_64-pc-windows-msvc --output bin/lq.exe main.ts && deno compile -A --target x86_64-apple-darwin --output bin/lq-mac main.ts && deno compile -A --target x86_64-unknown-linux-gnu --output bin/lq-linux main.ts",
-    "build:bundle": "deno compile --unstable --bundle --minify -A --output bin/lq main.ts",
-    "build:bundle:all": "deno compile --unstable --bundle --minify -A --target x86_64-pc-windows-msvc --output bin/lq.exe main.ts && deno compile --unstable --bundle --minify -A --target x86_64-apple-darwin --output bin/lq-mac main.ts && deno compile --unstable --bundle --minify -A --target x86_64-unknown-linux-gnu --output bin/lq-linux main.ts",
     "profile": "deno run --cpu-prof --cpu-prof-flamegraph --cpu-prof-md -A main.ts",
     "coverage": "deno test --coverage=cov -A && deno coverage cov"
   },
