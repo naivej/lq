@@ -79,7 +79,7 @@ You can targets specific nodes in the CST using the query engine, which works li
 
 # Best Practices
 
-1. **Embrace the Git Workflow**: You are working in a version-controlled workspace. If you accidentally execute a destructive command that corrupts the file or modifies the wrong text, immediately run `git restore <file>` to undo your changes.
+1. **Embrace the Git Workflow**: You should work in a version-controlled workspace. `git stage` and `git restore` is essentially the dry run. `git commit` for checkpoints / milestones so you can undo unwanted changes.
 2. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Any raw LaTeX (like equations inside `inset[Formula]`) is treated as pure string data. Do not try to parse the LaTeX syntax itself; simply target the `inset[Formula]` node and replace its text content.
 3. **Use `:contains` for Precision**: If structural selectors like `:nth-child(5)` feel brittle, use `:contains("unique phrase")` to precisely target the paragraph or inset you want to edit.
 4. **Be Token-Efficient**: `lq` operates on files that can be tens of thousands of lines long.
