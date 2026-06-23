@@ -2,8 +2,12 @@
  * CLI interface tests — coverage for help, error paths, dump, read --count,
  * bib --search, set/delete success paths, and init validation.
  *
- * Uses the runCliTest helper from mutation_test.ts for JSON-output commands
- * and a raw helper for --help (which outputs plain text).
+ * Uses runCliTest/runCliRaw from helpers.ts, which isolate tests from the
+ * developer's local ~/.lq/config.json by creating a temp config with:
+ *   refresh: "none"
+ *   trackChanges: false
+ *
+ * Run from lq/ directory: deno test -A tests/cli_test.ts
  */
 
 import { assertEquals, assertStringIncludes, assertGreater } from "@std/assert";

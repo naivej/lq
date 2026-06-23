@@ -1,3 +1,14 @@
+/**
+ * Mutation Engine tests — insert, delete, set, and bib mutation paths.
+ *
+ * Uses runCliTest from helpers.ts, which isolates tests from the developer's
+ * local ~/.lq/config.json by creating a temp config with:
+ *   refresh: "none"
+ *   trackChanges: false
+ *
+ * Run from lq/ directory: deno test -A tests/mutation_test.ts
+ */
+
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import * as path from "@std/path";
 import { parse } from "../src/parser.ts";
