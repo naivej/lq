@@ -4,7 +4,7 @@ import { query } from "./query.ts";
 import { getSchemaForClass } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
-import { Node, BlockNode, DocumentNode } from "./ast.ts";
+import { Node, BlockNode, DocumentNode, PropertyNode } from "./ast.ts";
 import { validateInsetType } from "./inset_registry.ts";
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
@@ -382,6 +382,24 @@ function ensureAuthorInHeader(ast: DocumentNode, authorId: number = 1, authorNam
   const hasAuthor = header.children.some((c: Node) => c.type === "property" && c.key === "author" && c.value?.includes(authorId.toString()));
   if (!hasAuthor) {
     header.children.push({ type: "property", key: "author", value: `${authorId} "${authorName}"` });
+  }
+}
+
+// Ensure \tracking_changes true is set in the header so LyX does not auto-accept
+// tracked changes on file open. Without this, \change_deleted and \change_inserted
+// markers are silently stripped by LyX.
+function ensureTrackingChangesInHeader(ast: DocumentNode): void {
+  const docBlock = ast.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "document") as BlockNode;
+  if (!docBlock) return;
+  const header = docBlock.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "header") as BlockNode;
+  if (!header) return;
+  
+  const existing = header.children.find((c: Node) => c.type === "property" && c.key === "tracking_changes") as PropertyNode | undefined;
+  if (existing) {
+    // Overwrite any existing value (e.g. false) to true
+    existing.value = "true";
+  } else {
+    header.children.push({ type: "property", key: "tracking_changes", value: "true" });
   }
 }
 
@@ -940,7 +958,10 @@ export async function runCli(args: string[]) {
       }
     }
     
-    if (trackChanges) ensureAuthorInHeader(ast);
+    if (trackChanges) {
+      ensureAuthorInHeader(ast);
+      ensureTrackingChangesInHeader(ast);
+    }
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
     await refreshPostStep(filePath, refreshMode);
@@ -957,6 +978,7 @@ export async function runCli(args: string[]) {
     if (trackChanges) {
       // Track-changes mode: wrap matched nodes in change_deleted markers instead of removing them
       ensureAuthorInHeader(ast);
+      ensureTrackingChangesInHeader(ast);
       const nodesToMark = new Set(nodes);
 
       const markAsDeleted = (children: Node[]) => {
@@ -1253,6 +1275,7 @@ export async function runCli(args: string[]) {
       for (const nodeToInsert of newNodesToInsert) {
         if (trackChanges) {
           ensureAuthorInHeader(ast);
+          ensureTrackingChangesInHeader(ast);
           if (nodeToInsert.type === "block") {
             nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted");
           } else {
@@ -1383,6 +1406,7 @@ export async function runCli(args: string[]) {
 
           if (trackChanges) {
             ensureAuthorInHeader(ast);
+            ensureTrackingChangesInHeader(ast);
             if (nodeToInsert.type === "block") {
               const tracked = structuredClone(nodeToInsert);
               tracked.children = wrapWithTracking(tracked.children, "inserted");
