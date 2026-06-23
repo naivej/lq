@@ -1288,16 +1288,6 @@ export async function runCli(args: string[]) {
           if (nodeToInsert.type === "block") {
             const block = nodeToInsert as BlockNode;
             if (block.tag === "layout" && block.args) {
-              // Guard: prepend/append/split-after must not nest a layout inside another layout.
-              // Only text nodes and insets are valid children of document layouts.
-              if ((position === "prepend" || position === "append" || position === "split-after") &&
-                  targetParentBlock && targetParentBlock.tag === "layout") {
-                printError("INVALID_CONTEXT",
-                  `Cannot insert layout '${block.args}' inside another layout. ` +
-                  `Use 'before' or 'after' to insert as a sibling.`);
-                continue;
-              }
-
               // Walk ancestor chain to determine if we're inside an inset
               let isInsetContext = false;
             if (targetParentBlock && targetParentBlock.tag === "inset") {
@@ -1330,20 +1320,36 @@ export async function runCli(args: string[]) {
                 continue;
               }
             }
-          } else if (block.tag === "inset" && block.args) {
-            const isDocumentContext = targetParentBlock && targetParentBlock.tag === "body";
-            if (isDocumentContext) {
-              printError("INVALID_CONTEXT", `Cannot insert inset directly into the document body. Insets must be inside a layout (e.g. Standard).`);
-              continue;
-            }
-            // Inset type validation is handled by validateRawInsets (warning-only).
-            // Unknown engine-level inset types produce a stderr warning but do
-            // NOT block insertion — matching LyX's own permissive read path.
           }
         } else if (nodeToInsert.type === "property") {
           if (!schema.inlineProperties.includes(nodeToInsert.key)) {
             printError("INVALID_PROPERTY", `Property '${nodeToInsert.key}' is not permitted. Valid inline properties are: ${schema.inlineProperties.join(", ")}`);
             continue;
+          }
+        }
+      }
+
+      // --- Schema-independent structural guards (always run) ---
+      for (const nodeToInsert of newNodesToInsert) {
+        if (nodeToInsert.type === "block") {
+          const block = nodeToInsert as BlockNode;
+          // Guard: prepend/append/split-after must not nest a layout inside another layout.
+          // Only text nodes and insets are valid children of document layouts.
+          if (block.tag === "layout" && block.args &&
+              (position === "prepend" || position === "append" || position === "split-after") &&
+              targetParentBlock && targetParentBlock.tag === "layout") {
+            printError("INVALID_CONTEXT",
+              `Cannot insert layout '${block.args}' inside another layout. ` +
+              `Use 'before' or 'after' to insert as a sibling.`);
+            continue;
+          }
+          // Guard: insets cannot be inserted directly into the document body.
+          if (block.tag === "inset" && block.args) {
+            const isDocumentContext = targetParentBlock && targetParentBlock.tag === "body";
+            if (isDocumentContext) {
+              printError("INVALID_CONTEXT", `Cannot insert inset directly into the document body. Insets must be inside a layout (e.g. Standard).`);
+              continue;
+            }
           }
         }
       }

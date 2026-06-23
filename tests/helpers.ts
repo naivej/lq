@@ -28,8 +28,10 @@ export interface CliResult {
 /**
  * Test config values — safe defaults that make mutation tests deterministic
  * regardless of the developer's local ~/.lq/config.json settings.
+ * layoutsDir is inherited from the user's real config (if available) so that
+ * schema-dependent validation tests still work.
  */
-const TEST_CONFIG = {
+const TEST_CONFIG_BASE = {
   refresh: "none",
   trackChanges: false,
 };
@@ -42,9 +44,23 @@ async function getTestHome(): Promise<string> {
   const tmp = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";
   _testHome = `${tmp}/lq_test_home_${Deno.pid}`;
   await Deno.mkdir(`${_testHome}/.lq`, { recursive: true });
+
+  // Inherit layoutsDir from user's real config so schema validation works.
+  // Only refresh and trackChanges are overridden with safe test defaults.
+  let layoutsDir: string | undefined;
+  try {
+    const realHome = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+    if (realHome) {
+      const realConfig = JSON.parse(
+        await Deno.readTextFile(`${realHome}/.lq/config.json`),
+      );
+      if (realConfig.layoutsDir) layoutsDir = realConfig.layoutsDir;
+    }
+  } catch { /* no user config, that's fine */ }
+
   await Deno.writeTextFile(
     `${_testHome}/.lq/config.json`,
-    JSON.stringify(TEST_CONFIG),
+    JSON.stringify({ ...TEST_CONFIG_BASE, ...(layoutsDir ? { layoutsDir } : {}) }),
   );
   return _testHome;
 }
@@ -52,9 +68,9 @@ async function getTestHome(): Promise<string> {
 /** Env vars that redirect lq to the isolated test config. */
 async function testEnv(): Promise<Record<string, string>> {
   const home = await getTestHome();
-  return Deno.build.os === "windows"
-    ? { USERPROFILE: home }
-    : { HOME: home };
+  // Override both HOME and USERPROFILE — on Windows with Git Bash, HOME
+  // takes priority over USERPROFILE, so we must set both to be safe.
+  return { HOME: home, USERPROFILE: home };
 }
 
 /**
@@ -111,6 +127,61 @@ export async function runCliWithEnv(args: string[], env: Record<string, string>)
     stdout: "piped",
     stderr: "piped",
     env: { ...Deno.env.toObject(), ...baseEnv, ...env },
+  });
+  const { stdout } = await command.output();
+  const outputStr = new TextDecoder().decode(stdout).trim();
+  try {
+    return JSON.parse(outputStr);
+  } catch (_e) {
+    return { status: "error", message: "Failed to parse CLI output: " + outputStr };
+  }
+}
+
+/**
+ * Run lq CLI with a custom test config. Overrides are merged on top of the
+ * base test config (refresh=none, trackChanges=false). Each unique config
+ * gets its own temp home so different tests don't interfere.
+ *
+ * Example:
+ *   runCliWithConfig(["set", file, "layout[Title]", "New"], { trackChanges: true })
+ */
+export async function runCliWithConfig(
+  args: string[],
+  overrides: Partial<{ refresh: string; trackChanges: boolean }>,
+): Promise<CliResult> {
+  const tmp = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";
+  const key = JSON.stringify(overrides);
+  const hash = Array.from(new TextEncoder().encode(key))
+    .reduce((h, b) => ((h << 5) - h + b) | 0, 0).toString(36);
+  const home = `${tmp}/lq_test_config_${hash}_${Deno.pid}`;
+
+  // Inherit layoutsDir from user's real config
+  let layoutsDir: string | undefined;
+  try {
+    const realHome = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+    if (realHome) {
+      const realConfig = JSON.parse(await Deno.readTextFile(`${realHome}/.lq/config.json`));
+      if (realConfig.layoutsDir) layoutsDir = realConfig.layoutsDir;
+    }
+  } catch { /* no user config */ }
+
+  await Deno.mkdir(`${home}/.lq`, { recursive: true });
+  await Deno.writeTextFile(
+    `${home}/.lq/config.json`,
+    JSON.stringify({
+      refresh: "none",
+      trackChanges: false,
+      ...(layoutsDir ? { layoutsDir } : {}),
+      ...overrides,
+    }),
+  );
+
+  const env = { HOME: home, USERPROFILE: home };
+  const command = new Deno.Command(Deno.execPath(), {
+    args: ["run", "-A", "main.ts", ...args],
+    stdout: "piped",
+    stderr: "piped",
+    env: { ...Deno.env.toObject(), ...env },
   });
   const { stdout } = await command.output();
   const outputStr = new TextDecoder().decode(stdout).trim();

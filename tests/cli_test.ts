@@ -11,7 +11,7 @@
  */
 
 import { assertEquals, assertStringIncludes, assertGreater } from "@std/assert";
-import { runCliTest, runCliRaw, runCliWithEnv, createTempFixture } from "./helpers.ts";
+import { runCliTest, runCliRaw, runCliWithEnv, runCliWithConfig, createTempFixture } from "./helpers.ts";
 
 const FIXTURE = "tests/fixtures/my_template.lyx";
 
@@ -189,5 +189,90 @@ Deno.test("CLI - init success with fake home", { timeout: 10000 }, async () => {
   } finally {
     try { await Deno.remove(tmpHome, { recursive: true }); } catch { /* ignore */ }
     try { await Deno.remove(layoutsDir, { recursive: true }); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 12. trackChanges: true — set wraps old in \change_deleted, new in \change_inserted
+// ---------------------------------------------------------------------------
+Deno.test("CLI - set with trackChanges", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_tc_set.lyx");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Title]", "Tracked Title"],
+      { trackChanges: true },
+    );
+    assertEquals(result.status, "success");
+
+    // Read back and verify change markers
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_deleted");
+    assertStringIncludes(text, "\\change_inserted");
+    assertStringIncludes(text, "Tracked Title");
+    // Header should have tracking_changes true AND author
+    assertStringIncludes(text, "\\tracking_changes true");
+    assertStringIncludes(text, "\\author 1 \"lq-agent\"");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 13. trackChanges: true — delete wraps in \change_deleted instead of removing
+// ---------------------------------------------------------------------------
+Deno.test("CLI - delete with trackChanges", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_tc_delete.lyx");
+  try {
+    // Count Standard layouts before
+    const before = await runCliWithConfig(
+      ["read", "--count", tempFile, "layout[Standard]"],
+      { trackChanges: true },
+    );
+    const countBefore = (before as unknown as Record<string, unknown>).count as number;
+
+    // Delete the first Standard layout with trackChanges
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard]:first"],
+      { trackChanges: true },
+    );
+    assertEquals(result.status, "success");
+
+    // With trackChanges, the node is NOT removed — it's wrapped in change_deleted.
+    // So count should stay the same.
+    const after = await runCliWithConfig(
+      ["read", "--count", tempFile, "layout[Standard]"],
+      { trackChanges: true },
+    );
+    assertEquals((after as unknown as Record<string, unknown>).count, countBefore);
+
+    // Verify markers are in the file
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_deleted");
+    assertStringIncludes(text, "\\tracking_changes true");
+    assertStringIncludes(text, "\\author 1 \"lq-agent\"");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 14. trackChanges: true — insert wraps new content in \change_inserted
+// ---------------------------------------------------------------------------
+Deno.test("CLI - insert with trackChanges", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_tc_insert.lyx");
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Title]", "after", "--layout", "Standard", "--text", "Tracked Insert"],
+      { trackChanges: true },
+    );
+    assertEquals(result.status, "success");
+
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_inserted");
+    assertStringIncludes(text, "Tracked Insert");
+    assertStringIncludes(text, "\\tracking_changes true");
+    assertStringIncludes(text, "\\author 1 \"lq-agent\"");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
