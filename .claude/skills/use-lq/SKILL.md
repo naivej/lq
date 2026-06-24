@@ -101,9 +101,13 @@ Mutations apply to all matched nodes of a selector. Specifically,
    - `set` and `delete` apply to *all* matched nodes — an overly broad selector (e.g., `layout[Standard]`) could wipe out the entire document!
    - If there are more than 1 match, a warning is emitted to stderr with the count.
 
-When modifying a document, users should follow this safe workflow:
+When modifying a document, follow this safe workflow:
 1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
 2. **Test Blast Radius (i.e. the number of nodes a selector matches)**: Run `lq read --count <file> <selector>` to verify how many nodes the selector matches. Then `lq read <file> <selector>` to verify selector targets exactly what's intended.
+3. **Choose the right mutation strategy**:
+   - **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`.
+   - **Full replacement** (title change, rewrite paragraph): Use plain `lq set` or `lq set --replace-all`.
+   - **Structural change** (add/remove/move sections): Use `lq insert` / `lq delete`.
 
 ## HOW-TO
 1. **Cross-Referencing**: Before inserting a cross-reference, find the exact label names. Labels are stored as text inside `CommandInset label` insets. Query all labels with:
