@@ -35,8 +35,8 @@ Usage:
 
 Arguments:
   <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector (e.g., 'layout[Section]', ':contains("text")').
-              Note: :contains is exact and case-sensitive.
+  <selector>  A CSS-like selector (e.g., 'layout[Section]', 'layout:contains("text")').
+              Pseudo-classes (:first, :contains(), etc.) must follow a tag.
 
 Options:
   --count     Return only the match count as JSON ({\"count\": N}), omitting the data array.
