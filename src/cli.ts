@@ -412,19 +412,15 @@ function ensureTrackingChangesInHeader(ast: DocumentNode): void {
   }
 }
 
-/** Recursively extract visible text from a node's descendants.
- *  Inside insets, only text from nested layouts (e.g. Plain Layout in Foot)
- *  is extracted — direct text/property children of insets (payloads like
- *  LatexCommand, key, status) are skipped as metadata. */
+/** Recursively extract text from a node's descendants.
+ *  Insets emit their selector as a placeholder marker — we do NOT recurse
+ *  into them.  This keeps body-text scans clean and prevents concatenation
+ *  artifacts.  To see an inset's content, query the inset directly. */
 function extractAllText(node: Node): string {
   if (node.type === "text") return node.text;
   if (node.type === "block") {
     if (node.tag === "inset") {
-      // Only extract text from layout children inside insets
-      return node.children
-        .filter(c => c.type === "block" && c.tag === "layout")
-        .map(extractAllText)
-        .join("");
+      return " inset[" + (node.args || "").trim() + "] ";
     }
     return node.children.map(extractAllText).join("");
   }
@@ -967,8 +963,28 @@ export async function runCli(args: string[]) {
     } else if (textOnly) {
       const texts: string[] = [];
       for (const node of nodes) {
-        const t = extractAllText(node).trim();
-        if (t.length > 0) texts.push(t);
+        // Prefix each matched node with its own selector so the user
+        // can copy-paste it directly into the next command.
+        const prefix = node.type === "block"
+          ? node.tag + "[" + ((node.args || "").trim()) + "]"
+          : "";
+        let text: string;
+        if (node.type === "block" && node.tag === "inset") {
+          // Direct inset match (e.g. lq read ... "inset[Foot]" --text-only):
+          // extract from nested layouts so the user sees the inset's content.
+          text = node.children
+            .filter(c => c.type === "block" && c.tag === "layout")
+            .map(c => {
+              const layout = c as BlockNode;
+              return "layout[" + ((layout.args || "").trim()) + "] " +
+                extractAllText(layout).trim();
+            })
+            .join("\n");
+        } else {
+          text = extractAllText(node).trim();
+        }
+        const combined = prefix ? prefix + " " + text : text;
+        if (combined.length > 0) texts.push(combined);
       }
       const output = texts.join("\n\n") + "\n";
       // Warn if output is large (consistent with blast-radius warning for mutations)
