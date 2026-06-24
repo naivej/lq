@@ -20,11 +20,12 @@ Deno.test("Selector Parsing", () => {
   assertEquals(parsed3[0][0].pseudos![1].name, "contains");
   assertEquals(parsed3[0][0].pseudos![1].argRaw, '"hello"');
 
-  const parsed4 = parseSelector(':contains("[")');
+  const parsed4 = parseSelector('layout:contains("[")');
+  assertEquals(parsed4[0][0].tag, "layout");
   assertEquals(parsed4[0][0].pseudos![0].name, "contains");
   assertEquals(parsed4[0][0].pseudos![0].argRaw, '"["');
 
-  const parsed5 = parseSelector(':nth-child(odd), :nth-child( 2n+1 )');
+  const parsed5 = parseSelector('layout:nth-child(odd), layout:nth-child( 2n+1 )');
   assertEquals(parsed5[0][0].pseudos![0].name, "nth-child");
   assertEquals(parsed5[0][0].pseudos![0].argRaw, "odd");
   assertEquals(parsed5[1][0].pseudos![0].name, "nth-child");
@@ -36,6 +37,23 @@ Deno.test("Selector Parsing", () => {
   assertEquals(parsed6[0][0].pseudos!.length, 1);
   assertEquals(parsed6[0][0].pseudos![0].name, "not");
   assertEquals(parsed6[0][0].pseudos![0].argRaw, "inset[CommandInset bibtex]");
+
+  // Comma inside :contains() should NOT split into multiple selectors
+  const parsed7 = parseSelector("layout:contains('hello, world')");
+  assertEquals(parsed7.length, 1); // One selector group, not two
+  assertEquals(parsed7[0][0].pseudos![0].argRaw, "'hello, world'");
+
+  // Comma SEPARATOR outside :contains() still splits into groups
+  const parsed8 = parseSelector("layout[A], layout[B]");
+  assertEquals(parsed8.length, 2);
+
+  // Bare pseudo-classes are rejected
+  let bareErr = "";
+  try { parseSelector(':contains("text")'); } catch (e) { bareErr = (e as Error).message; }
+  assertEquals(bareErr.includes("must follow a tag"), true);
+
+  try { parseSelector(':first'); } catch (e) { bareErr = (e as Error).message; }
+  assertEquals(bareErr.includes("must follow a tag"), true);
 });
 
 Deno.test("Query Engine on LyX Document", async () => {
@@ -104,15 +122,14 @@ Deno.test("Query Engine on LyX Document", async () => {
     assertEquals(res4[0].tag, "layout");
   }
 
-  // Test Standalone :contains
-  const res5 = query(ast, ':contains("tracked changes")');
-  // It should match the document, the body, and the layout Standard because it is recursive now.
-  assertEquals(res5.length, 3);
+  // Test :contains with tag (bare contains no longer allowed)
+  const res5 = query(ast, 'layout:contains("tracked changes")');
+  assertEquals(res5.length, 1); // Only the layout, not body/document
 
   // Test :contains with parentheses inside string literals
-  const res6 = query(ast, ':contains("nickel(0)")');
+  const res6 = query(ast, 'layout:contains("nickel(0)")');
   assertEquals(res6.length, 0); // Not in the template, but should not throw syntax error
-  const res7 = query(ast, ':contains("a)b)c")');
+  const res7 = query(ast, 'layout:contains("a)b)c")');
   assertEquals(res7.length, 0); // Not in the template, but should not throw syntax error
 
   // Test :not() pseudo-class

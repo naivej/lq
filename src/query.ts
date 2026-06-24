@@ -69,11 +69,20 @@ function parseSelectorPart(raw: string): SelectorPart {
   const pseudoString = raw.substring(tagMatch[0].length);
   const pseudos = parsePseudoClasses(pseudoString);
 
+  // Pseudo-classes must follow a tag — bare :contains(), :first, etc.
+  // match garbage (body, text nodes) and are never useful.
+  if (pseudos.length > 0 && !tag) {
+    throw new Error(
+      "Pseudo-classes must follow a tag. Use layout, inset, or property before pseudo-classes."
+    );
+  }
+
   return { tag, argExact, pseudos: pseudos.length > 0 ? pseudos : undefined };
 }
 
-/** Split a selector string by whitespace, respecting brackets, quotes, and paren depth. */
-function splitSelectorByWhitespace(sel: string): string[] {
+/** Split a string by a separator character, respecting brackets, quotes, and paren depth.
+ *  Used for both whitespace-splitting selector parts and comma-splitting selector groups. */
+function splitRespectingDelimiters(str: string, sep: string): string[] {
   const parts: string[] = [];
   let current = "";
   let parenDepth = 0;
@@ -81,8 +90,8 @@ function splitSelectorByWhitespace(sel: string): string[] {
   let inDoubleQuote = false;
   let inSingleQuote = false;
 
-  for (let i = 0; i < sel.length; i++) {
-    const ch = sel[i];
+  for (let i = 0; i < str.length; i++) {
+    const ch = str[i];
     if (inDoubleQuote) {
       current += ch;
       if (ch === '"') inDoubleQuote = false;
@@ -107,7 +116,7 @@ function splitSelectorByWhitespace(sel: string): string[] {
     } else if (ch === ')') {
       current += ch;
       parenDepth--;
-    } else if (ch === ' ' || ch === '\t' || ch === '\n') {
+    } else if (ch === sep) {
       if (parenDepth === 0 && !inBracket) {
         if (current.length > 0) {
           parts.push(current);
@@ -124,8 +133,22 @@ function splitSelectorByWhitespace(sel: string): string[] {
   return parts;
 }
 
+/** Split a selector string by whitespace, respecting brackets, quotes, and paren depth. */
+function splitSelectorByWhitespace(sel: string): string[] {
+  const result: string[] = [];
+  // Split by space, tab, and newline — each treated as a separate separator
+  for (const part of splitRespectingDelimiters(sel, " ")) {
+    for (const sub of splitRespectingDelimiters(part, "\t")) {
+      for (const sub2 of splitRespectingDelimiters(sub, "\n")) {
+        if (sub2.length > 0) result.push(sub2);
+      }
+    }
+  }
+  return result;
+}
+
 export function parseSelector(selector: string): SelectorPart[][] {
-  return selector.split(",").map((sel) => {
+  return splitRespectingDelimiters(selector, ",").map((sel) => {
     // Validate bracket balance
     const unquoted = sel.replace(/"[^"]*"/g, "").replace(/'[^']*'/g, "");
     if ((unquoted.match(/\[/g) || []).length !== (unquoted.match(/\]/g) || []).length) throw new Error(`Unclosed bracket in selector part: ${sel}`);
@@ -151,6 +174,14 @@ export function parseSelector(selector: string): SelectorPart[][] {
 
       const pseudoString = part.substring(tagMatch[0].length);
       const pseudos = parsePseudoClasses(pseudoString);
+
+      // Pseudo-classes must follow a tag — bare :contains(), :first, etc.
+      // match garbage (body, text nodes) and are never useful.
+      if (pseudos.length > 0 && !tag) {
+        throw new Error(
+          "Pseudo-classes must follow a tag. Use layout, inset, or property before pseudo-classes."
+        );
+      }
 
       return { tag, argExact, pseudos };
     });
