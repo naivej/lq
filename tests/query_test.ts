@@ -176,4 +176,16 @@ Deno.test("Query Engine on LyX Document", async () => {
   let adjParseError = false;
   try { parseSelector('layout:adjacent()'); } catch { adjParseError = true; }
   assertEquals(adjParseError, true);
+
+  // :not() with bare pseudo-class in inner selector
+  const notContains = query(ast, 'layout:not(:contains("Section"))');
+  assertEquals(notContains.length > 0, true); // Should parse and return results
+
+  // :adjacent() with bare pseudo-class in inner selector
+  const adjContains = query(ast, 'layout:adjacent(:contains("Section"))');
+  assertEquals(adjContains.length > 0, true); // Should parse and return results
+
+  // Combinator test: :not() with inner :contains() and outer tag
+  const notInnerContains = query(ast, 'layout[Standard]:not(:contains("tracked changes"))');
+  assertEquals(notInnerContains.length > 0, true); // Parses, excludes the one with tracked changes
 });

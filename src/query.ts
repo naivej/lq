@@ -31,7 +31,9 @@ function parsePseudoClasses(suffix: string): PseudoClass[] {
 
     if (pName === "not" || pName === "adjacent") {
       if (!pArg) throw new Error(`:${pName}() requires a selector argument, e.g. :${pName}(layout[Section])`);
-      try { parseSelectorPart(pArg); } catch {
+      // Allow bare pseudo-classes in inner selectors — :not(:contains('TODO'))
+      // is valid even though :contains('TODO') has no tag at the top level.
+      try { parseSelectorPart(pArg, true); } catch {
         throw new Error(`Invalid selector inside :${pName}(): ${pArg}`);
       }
     }
@@ -47,8 +49,10 @@ function parsePseudoClasses(suffix: string): PseudoClass[] {
   return pseudos;
 }
 
-/** Parse a single selector part string (e.g. "inset[CommandInset bibtex]") into a SelectorPart. */
-function parseSelectorPart(raw: string): SelectorPart {
+/** Parse a single selector part string (e.g. "inset[CommandInset bibtex]") into a SelectorPart.
+ *  Set allowBarePseudo to true when validating inner selectors inside :not()/:adjacent(),
+ *  where bare pseudo-classes like :contains('text') are valid match criteria. */
+function parseSelectorPart(raw: string, allowBarePseudo = false): SelectorPart {
   const tagMatch = raw.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?/);
   if (!tagMatch) throw new Error(`Invalid selector: ${raw}`);
 
@@ -69,9 +73,10 @@ function parseSelectorPart(raw: string): SelectorPart {
   const pseudoString = raw.substring(tagMatch[0].length);
   const pseudos = parsePseudoClasses(pseudoString);
 
-  // Pseudo-classes must follow a tag — bare :contains(), :first, etc.
-  // match garbage (body, text nodes) and are never useful.
-  if (pseudos.length > 0 && !tag) {
+  // Pseudo-classes must follow a tag at the top level — bare :contains(),
+  // :first, etc. match garbage (body, text nodes).  Skip this check when
+  // validating inner selectors for :not()/:adjacent().
+  if (pseudos.length > 0 && !tag && !allowBarePseudo) {
     throw new Error(
       "Pseudo-classes must follow a tag. Use layout, inset, or property before pseudo-classes."
     );
@@ -252,8 +257,9 @@ function matchNode(node: Node, part: SelectorPart): boolean {
       
       if (p.name === "not" && p.argRaw !== undefined) {
         // :not(selector) — exclude this node if any descendant matches the inner selector.
-        // Parse the inner selector as a SelectorPart.
-        const innerPart = parseSelectorPart(p.argRaw);
+        // Parse the inner selector as a SelectorPart.  Allow bare pseudo-classes
+        // in the inner selector (e.g. :not(:contains('TODO'))).
+        const innerPart = parseSelectorPart(p.argRaw, true);
         if (node.type === "block") {
           const matches = findDescendants(node.children, innerPart);
           if (matches.length > 0) return false;
@@ -367,7 +373,8 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
           } else if (p.name === "adjacent" && p.argRaw !== undefined) {
             // :adjacent(selector) — keep nodes whose immediately preceding sibling
             // matches the inner selector. Applied as a post-filter like :first/:last.
-            const innerPart = parseSelectorPart(p.argRaw);
+            // Allow bare pseudo-classes in the inner selector.
+            const innerPart = parseSelectorPart(p.argRaw, true);
             nextNodes = nextNodes.filter(n => {
               const ctx = getSiblingContext(n, rootChildren);
               if (!ctx || ctx.index === 0) return false;

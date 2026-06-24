@@ -41,9 +41,10 @@ Arguments:
 Options:
   --count     Return only the match count as JSON ({\"count\": N}), omitting the data array.
               Useful for checking blast radius before mutations without parsing large output.
-  --text-only Output just the concatenated text content of matched nodes as plain text
-              (double newline between nodes). Useful for proofreading and scanning.
-              Mutually exclusive with --count.`,
+  --text-only Output the text content of matched nodes as plain text with structural
+              annotations. Each matched node gets a tag[args] prefix (e.g. layout[Standard]),
+              and insets appear as inline markers (e.g. inset[Foot]). Double newline
+              between nodes. Useful for proofreading. Mutually exclusive with --count.`,
 
   dump: `lq dump - Output the CST (optionally scoped to a selector) as JSON.
 

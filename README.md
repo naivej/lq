@@ -98,11 +98,11 @@ They can find all defined labels by querying label insets. Labels are stored as 
 - `lq read <file> "inset[CommandInset label]"` — returns all labels (e.g., `sec:Introduction`, `fig:Result`)
 - `lq read <file> "inset[CommandInset label]:contains('sec:')"` — labels whose name contains "sec:"
 
-Parse the returned JSON to extract the label name from the `children` array. To inject references, use `--raw` (e.g., `\begin_inset CommandInset ref\nLatexCommand ref\nreference "sec:Introduction"\n\end_inset`).
+Parse the returned JSON to extract the label name from the `children` array. To inject references, use `--ref` (e.g., `lq insert <file> "layout[Standard]" append --ref "sec:Introduction"`). For non-default reference params, use `--raw-file`.
 
 ### Bibliography & Citations
 To correctly cite external literature, users need to know the available citation keys from the linked `.bib` files. (Only `.bib` files are supported — references to `.bst` style files or embedded bibliographies are ignored.)
-Users can query or search the bibliography by `lq bib`, then inject citations using `--raw` (e.g., `\begin_inset CommandInset citation\nLatexCommand citet\nkey "Einstein1905"\nliteral "false"\n\end_inset`).
+Users can query or search the bibliography by `lq bib`, then inject citations using `--cite` (e.g., `lq insert <file> "layout[Standard]" append --cite "Einstein1905"`). For non-default citation params, use `--raw-file`.
 
 ## Commands
 
