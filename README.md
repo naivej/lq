@@ -12,7 +12,6 @@ Quick start
 - **Cross-reference and citation** support.
 - **Tracked change** support.
 - **Auto refresh** opened `.lyx` files using [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
-- **Parse cache** — file-content-hash cache in `~/.lq/cache/` avoids re-parsing unchanged files. Write-through keeps mutations fast — only the first command in a session pays the parse cost.
 
 ### Limitation
 - `lq` is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting. That said, all LyX syntax is supported, so typesetting with `lq` is possible in principle.
@@ -22,6 +21,7 @@ Quick start
 ### Known issue & TODO
 - Table and Figure helpers? (config: float, etc.)
 - Maybe we need dry run after all?
+- Daemon mode?
 - Some LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization) are not enforced by `lq`. Those are purely cosmetic and LyX reads files fine without them. As a result, open a `lq` edited file in LyX can cause formatting-only diffs.
 
 ## Design Philosophy & Architecture

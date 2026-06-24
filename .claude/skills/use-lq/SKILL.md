@@ -17,12 +17,12 @@ You can targets specific nodes in the CST using the query engine, which works li
 - **Tags**: `layout` (e.g., standard paragraphs, sections), `inset` (e.g., formulas, footnotes, figures), `property` (e.g. `\family roman`).
 - **Attributes**: Target specific names using `layout[Section]`, `inset[Formula]`, or `property[family]`.
 - **Descendants**: Space-separated paths like `layout[Section] inset[Formula]` (finds a Formula inside a Section).
-- **Pseudo-classes**: 
-  - Target specific matches using `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`).
+- **Pseudo-classes** to target specific matches (must follow a tag e.g., `layout:contains("text")`, `inset:first`):
+  - `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`).
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
+  - `:contains("text")` searches recursively and case-sensitively node children for text.
   - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
-- **Text Content**: Find exact strings using `:contains("text")`. It searches recursively through deeply nested insets and is strictly case-sensitive. Pseudo-classes must follow a tag (e.g., `layout:contains("text")`, `inset:first`).
 
 ## Context-Aware Strict Validation
 
@@ -64,7 +64,7 @@ You can targets specific nodes in the CST using the query engine, which works li
 - `lq read <file> <selector> [--count] [--text-only]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
-  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes as plain text with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Double newline between nodes. Useful for proofreading.
+  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes as plain text with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Double newline between nodes.
 
 ### Mutate
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
