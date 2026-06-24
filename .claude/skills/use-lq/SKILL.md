@@ -22,7 +22,7 @@ You can targets specific nodes in the CST using the query engine, which works li
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
   - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
-- **Text Content**: Find exact strings using `:contains("text")`. It searches recursively through deeply nested insets and is strictly case-sensitive.
+- **Text Content**: Find exact strings using `:contains("text")`. It searches recursively through deeply nested insets and is strictly case-sensitive. Pseudo-classes must follow a tag (e.g., `layout:contains("text")`, `inset:first`).
 
 ## Context-Aware Strict Validation
 
@@ -64,7 +64,7 @@ You can targets specific nodes in the CST using the query engine, which works li
 - `lq read <file> <selector> [--count] [--text-only]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
-  - `--text-only` (Mutually exclusive with `--count`): Output just the concatenated text content from `layout` blocks (double newline between nodes) and skips inset metadata like `LatexCommand`, `key`, `status`.
+  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes as plain text with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Double newline between nodes. Useful for proofreading.
 
 ### Mutate
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
@@ -98,7 +98,7 @@ You can targets specific nodes in the CST using the query engine, which works li
    | See the document outline | `lq dump <file> --depth 2` |
    | Scan all body text | `lq read <file> "layout" --text-only` |
    | Get just section headings | `lq read <file> "layout[Section]" --text-only` |
-   | Find a specific paragraph by content | `lq read <file> ":contains('unique phrase')" --text-only` |
+   | Find a specific paragraph by content | `lq read <file> "layout:contains('unique phrase')" --text-only` |
    | Check how many nodes a selector matches | `lq read <file> "<selector>" --count` |
    | Inspect a specific node's CST | `lq read <file> "<precise selector>"` |
    | Deep-debug a node's children | `lq dump <file> "<selector>"` |

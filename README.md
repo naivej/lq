@@ -16,7 +16,7 @@ Quick start
 ### Limitation
 - `lq` is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting. That said, all LyX syntax is supported, so typesetting with `lq` is possible in principle.
 - **Windows auto-refresh**: Before auto-refresh, we use LyX function `buffer-switch` to ensure that mutations are reloaded into the correct target file, rather than the one that users are working on in the GUI. This however does not work on Windows, because LyXServer uses a named pipe protocol that delimits messages with `:`, which conflicts with the drive letter in Windows absolute paths (e.g. `C:\...`). As a result, `buffer-switch` cannot be sent through the pipe, and auto-refresh operates on LyX's active buffer rather than switching to the target file first. **Windows users are advised to open only one `.lyx` file while using `lq`.**
-- LyXServer currently can not report cursor location in an opened `.lyx` file. Thus it might be difficult to communicate with AI agent about exactly what you want to edit. The best way for now is probably using `:contains("some text")`.
+- LyXServer currently can not report cursor location in an opened `.lyx` file. Thus it might be difficult to communicate with AI agent about exactly what you want to edit. The best way for now is probably using `layout:contains("some text")`.
 
 ### Known issue & TODO
 - Table and Figure helpers? (config: float, etc.)
@@ -79,7 +79,7 @@ The query engine supports traversing the CST using standard CSS syntax:
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
   - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
-- **Text content**: `:contains("text")` searches recursively and case-sensitively node children for text.
+- **Text content**: `:contains("text")` searches recursively and case-sensitively node children for text. Pseudo-classes must follow a tag (e.g., `layout:contains("text")`, `inset:first`).
 
 ### Safe Mutation Workflow
 Mutations apply to all matched nodes of a selector. Specifically,
@@ -140,7 +140,7 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 - `lq read <file> <selector> [--count] [--text-only]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
-  - `--text-only` (Mutually exclusive with `--count`): Output just the concatenated text content from `layout` blocks (double newline between nodes) and skips inset metadata like `LatexCommand`, `key`, `status`.
+  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes as plain text with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Double newline between nodes. Useful for proofreading.
 
 ### Mutate
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
