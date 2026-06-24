@@ -140,7 +140,7 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 - `lq read <file> <selector> [--count] [--text-only]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
-  - `--text-only` (Mutually exclusive with `--count`): Output just the concatenated text content as plain text (double newline between nodes).
+  - `--text-only` (Mutually exclusive with `--count`): Output just the concatenated text content from `layout` blocks (double newline between nodes) and skips inset metadata like `LatexCommand`, `key`, `status`.
 
 ### Mutate
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`

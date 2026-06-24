@@ -13,13 +13,125 @@ export interface SelectorPart {
 
 export type Selector = SelectorPart[][]; // Array of paths, where each path is an array of parts
 
+/** Parse pseudo-classes from a suffix string (e.g. ":first:contains('foo')"). */
+function parsePseudoClasses(suffix: string): PseudoClass[] {
+  const pseudos: PseudoClass[] = [];
+  if (!suffix) return pseudos;
+
+  const pseudoRegex = /:([a-zA-Z0-9_-]+)(?:\(((?:[^()"']|"[^"]*"|'[^']*'|\((?:[^()"']|"[^"]*"|'[^']*')*\))*)\))?/g;
+  let pMatch;
+  let matchedLength = 0;
+  while ((pMatch = pseudoRegex.exec(suffix)) !== null) {
+    const pName = pMatch[1];
+    const pArg = pMatch[2] ? pMatch[2].trim() : undefined;
+
+    if (!["first", "last", "nth", "nth-child", "contains", "not", "adjacent"].includes(pName)) {
+      throw new Error(`Unsupported pseudo-class: :${pName}`);
+    }
+
+    if (pName === "not" || pName === "adjacent") {
+      if (!pArg) throw new Error(`:${pName}() requires a selector argument, e.g. :${pName}(layout[Section])`);
+      try { parseSelectorPart(pArg); } catch {
+        throw new Error(`Invalid selector inside :${pName}(): ${pArg}`);
+      }
+    }
+
+    pseudos.push({ name: pName as PseudoClass["name"], argRaw: pArg });
+    matchedLength += pMatch[0].length;
+  }
+
+  if (matchedLength !== suffix.length) {
+    throw new Error(`Invalid pseudo-class syntax: ${suffix}`);
+  }
+
+  return pseudos;
+}
+
+/** Parse a single selector part string (e.g. "inset[CommandInset bibtex]") into a SelectorPart. */
+function parseSelectorPart(raw: string): SelectorPart {
+  const tagMatch = raw.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?/);
+  if (!tagMatch) throw new Error(`Invalid selector: ${raw}`);
+
+  const tag = tagMatch[1];
+  const rawArg = tagMatch[2];
+
+  let argExact: string | undefined = undefined;
+  if (rawArg) {
+    const attrMatch = rawArg.match(/^(?:[a-zA-Z0-9_-]+=['"]?([^'"]+)['"]?|['"]?([^'"]+)['"]?)$/);
+    if (attrMatch) {
+      argExact = attrMatch[1] !== undefined ? attrMatch[1] : attrMatch[2];
+    } else {
+      argExact = rawArg;
+    }
+  }
+
+  // Parse pseudo-classes from the remainder (after tag + optional [args])
+  const pseudoString = raw.substring(tagMatch[0].length);
+  const pseudos = parsePseudoClasses(pseudoString);
+
+  return { tag, argExact, pseudos: pseudos.length > 0 ? pseudos : undefined };
+}
+
+/** Split a selector string by whitespace, respecting brackets, quotes, and paren depth. */
+function splitSelectorByWhitespace(sel: string): string[] {
+  const parts: string[] = [];
+  let current = "";
+  let parenDepth = 0;
+  let inBracket = false;
+  let inDoubleQuote = false;
+  let inSingleQuote = false;
+
+  for (let i = 0; i < sel.length; i++) {
+    const ch = sel[i];
+    if (inDoubleQuote) {
+      current += ch;
+      if (ch === '"') inDoubleQuote = false;
+    } else if (inSingleQuote) {
+      current += ch;
+      if (ch === "'") inSingleQuote = false;
+    } else if (ch === '"') {
+      current += ch;
+      inDoubleQuote = true;
+    } else if (ch === "'") {
+      current += ch;
+      inSingleQuote = true;
+    } else if (ch === '[') {
+      current += ch;
+      inBracket = true;
+    } else if (ch === ']') {
+      current += ch;
+      inBracket = false;
+    } else if (ch === '(') {
+      current += ch;
+      parenDepth++;
+    } else if (ch === ')') {
+      current += ch;
+      parenDepth--;
+    } else if (ch === ' ' || ch === '\t' || ch === '\n') {
+      if (parenDepth === 0 && !inBracket) {
+        if (current.length > 0) {
+          parts.push(current);
+          current = "";
+        }
+      } else {
+        current += ch;
+      }
+    } else {
+      current += ch;
+    }
+  }
+  if (current.length > 0) parts.push(current);
+  return parts;
+}
+
 export function parseSelector(selector: string): SelectorPart[][] {
   return selector.split(",").map((sel) => {
-    // Split by whitespace but respect quotes and brackets
+    // Validate bracket balance
     const unquoted = sel.replace(/"[^"]*"/g, "").replace(/'[^']*'/g, "");
     if ((unquoted.match(/\[/g) || []).length !== (unquoted.match(/\]/g) || []).length) throw new Error(`Unclosed bracket in selector part: ${sel}`);
     
-    const parts = sel.trim().match(/(?:[^\s"'\[(]+|\[[^\]]*\]|"[^"]*"|'[^']*'|\((?:"[^"]*"|'[^']*'|[^)(]+)*\))+/g) || [];
+    // Split by whitespace, respecting brackets, quotes, and paren depth.
+    const parts = splitSelectorByWhitespace(sel.trim());
     return parts.map((part) => {
       const tagMatch = part.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?/);
       if (!tagMatch) throw new Error(`Invalid selector part: ${part}`);
@@ -38,39 +150,7 @@ export function parseSelector(selector: string): SelectorPart[][] {
       }
 
       const pseudoString = part.substring(tagMatch[0].length);
-      const pseudos: PseudoClass[] = [];
-      
-      if (pseudoString) {
-        // Match pseudo-classes. Ensure string literals ("..." and '...') are checked BEFORE [^)(]+ 
-        // to prevent the negation class from prematurely swallowing quote markers.
-        const pseudoRegex = /:([a-zA-Z0-9_-]+)(?:\(((?:"[^"]*"|'[^']*'|[^)(]+)*)\))?/g;
-        let pMatch;
-        let matchedLength = 0;
-        while ((pMatch = pseudoRegex.exec(pseudoString)) !== null) {
-          const pName = pMatch[1];
-          const pArg = pMatch[2] ? pMatch[2].trim() : undefined;
-          
-          if (!["first", "last", "nth", "nth-child", "contains", "not", "adjacent"].includes(pName)) {
-            throw new Error(`Unsupported pseudo-class: :${pName}`);
-          }
-          
-          if (pName === "not" || pName === "adjacent") {
-            // :not(selector) / :adjacent(selector) — the arg is a selector part (tag + optional [args]).
-            // Validate that it parses as a valid SelectorPart.
-            if (!pArg) throw new Error(`:${pName}() requires a selector argument, e.g. :${pName}(layout[Section])`);
-            // Quick validation: try to parse it as a selector part
-            const innerParts = pArg.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?$/);
-            if (!innerParts) throw new Error(`Invalid selector inside :${pName}(): ${pArg}`);
-          }
-          
-          pseudos.push({ name: pName as PseudoClass["name"], argRaw: pArg });
-          matchedLength += pMatch[0].length;
-        }
-        
-        if (matchedLength !== pseudoString.length) {
-          throw new Error(`Invalid pseudo-class syntax in part: ${part}`);
-        }
-      }
+      const pseudos = parsePseudoClasses(pseudoString);
 
       return { tag, argExact, pseudos };
     });
@@ -88,27 +168,6 @@ function nodeContainsText(node: Node, searchStr: string): boolean {
     }
   }
   return false;
-}
-
-/** Parse a single selector part string (e.g. "inset[CommandInset bibtex]") into a SelectorPart. */
-function parseSelectorPart(raw: string): SelectorPart {
-  const tagMatch = raw.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?$/);
-  if (!tagMatch) throw new Error(`Invalid selector inside :not(): ${raw}`);
-  
-  const tag = tagMatch[1];
-  const rawArg = tagMatch[2];
-
-  let argExact: string | undefined = undefined;
-  if (rawArg) {
-    const attrMatch = rawArg.match(/^(?:[a-zA-Z0-9_-]+=['"]?([^'"]+)['"]?|['"]?([^'"]+)['"]?)$/);
-    if (attrMatch) {
-      argExact = attrMatch[1] !== undefined ? attrMatch[1] : attrMatch[2];
-    } else {
-      argExact = rawArg;
-    }
-  }
-
-  return { tag, argExact };
 }
 
 function matchNode(node: Node, part: SelectorPart): boolean {

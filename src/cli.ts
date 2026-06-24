@@ -147,9 +147,10 @@ Usage:
 Arguments:
   <file>      The path to the .lyx file.
   <selector>  A CSS-like selector targeting a reference node.
-  <position>  Where to insert ('before', 'after', 'prepend', 'append', 'split-after <match>').
-              split-after <match> splits a text node right after the exact,
-              case-sensitive substring and inserts new content at that point.
+  <position>  Where to insert ('before', 'after', 'prepend', 'append', 'split-after "<match>"').
+              split-after takes the match string as the next positional argument.
+              It splits a text node right after the exact, case-sensitive substring
+              and inserts new content at that point.
               Only proceeds if the match appears exactly once in the block.
 
 Options:
@@ -411,10 +412,20 @@ function ensureTrackingChangesInHeader(ast: DocumentNode): void {
   }
 }
 
-/** Recursively extract all text from a node's descendants. */
+/** Recursively extract visible text from a node's descendants.
+ *  Inside insets, only text from nested layouts (e.g. Plain Layout in Foot)
+ *  is extracted — direct text/property children of insets (payloads like
+ *  LatexCommand, key, status) are skipped as metadata. */
 function extractAllText(node: Node): string {
   if (node.type === "text") return node.text;
   if (node.type === "block") {
+    if (node.tag === "inset") {
+      // Only extract text from layout children inside insets
+      return node.children
+        .filter(c => c.type === "block" && c.tag === "layout")
+        .map(extractAllText)
+        .join("");
+    }
     return node.children.map(extractAllText).join("");
   }
   return "";
@@ -960,6 +971,16 @@ export async function runCli(args: string[]) {
         if (t.length > 0) texts.push(t);
       }
       const output = texts.join("\n\n") + "\n";
+      // Warn if output is large (consistent with blast-radius warning for mutations)
+      const KB = 1024;
+      if (output.length > 10 * KB) {
+        const sizeKB = Math.round(output.length / KB);
+        const warnMsg = `Warning: --text-only output is ${sizeKB}KB across ${nodes.length} nodes. ` +
+          `Consider a more specific selector to reduce noise.`;
+        try {
+          await Deno.stderr.write(new TextEncoder().encode(warnMsg + "\n"));
+        } catch { /* ignore */ }
+      }
       await Deno.stdout.write(new TextEncoder().encode(output));
     } else {
       printJson({ status: "success", data: nodes, count: nodes.length });
