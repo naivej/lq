@@ -83,11 +83,16 @@ Arguments:
   <new text>  The new text content to apply to the matched nodes.
 
 Options:
-  --replace-all  Replace ALL children of the target block, not just text nodes.
-                 Use when you want to rebuild a block from scratch.
+  --find <substring>   Replace all occurrences of <substring> within the matched
+                       nodes' text, instead of replacing the entire text content.
+                       Use for surgical edits like typo fixes.
+  --replace-all        Replace ALL children of the target block, not just text nodes.
+                       Use when you want to rebuild a block from scratch.
+                       Mutually exclusive with --find.
 
 By default, lq set preserves non-text children (insets, properties) and replaces
-only text nodes. Use --replace-all to wipe everything.`,
+only text nodes. Use --replace-all to wipe everything. Use --find for surgical
+substring replacement within text.`,
 
   delete: `lq delete - Safely delete the targeted nodes from the LyX file.
 
@@ -403,6 +408,17 @@ function ensureTrackingChangesInHeader(ast: DocumentNode): void {
   }
 }
 
+function countOccurrences(text: string, findStr: string): number {
+  if (findStr.length === 0) return 0;
+  let count = 0;
+  let pos = 0;
+  while ((pos = text.indexOf(findStr, pos)) !== -1) {
+    count++;
+    pos += findStr.length;
+  }
+  return count;
+}
+
 function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted"): Node[] {
   const ts = Math.floor(Date.now() / 1000).toString();
   const authorId = 1; // Testing sequential ID instead of random large number
@@ -444,6 +460,53 @@ function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted"): Node[] {
     }
   }
   flushTextBuffer();
+  return result;
+}
+
+/**
+ * Replace all occurrences of findStr with replacement in a text string,
+ * wrapping only the changed portions in change tracking markers.
+ * Surrounding text that does not match is left untracked (no markers).
+ *
+ * This mirrors how LyX tracks character-level edits: only the actual
+ * changed characters get \change_deleted / \change_inserted markers.
+ */
+function replaceWithTracking(
+  text: string,
+  findStr: string,
+  replacement: string,
+  authorId: number,
+  ts: string,
+): Node[] {
+  const result: Node[] = [];
+  let remaining = text;
+
+  while (remaining.length > 0) {
+    const idx = remaining.indexOf(findStr);
+    if (idx === -1) {
+      // No more matches — remaining text is unchanged (untracked)
+      result.push({ type: "text", text: remaining });
+      break;
+    }
+
+    // Text before the match (unchanged, untracked)
+    if (idx > 0) {
+      result.push({ type: "text", text: remaining.substring(0, idx) });
+    }
+
+    // The matched substring (tracked as deleted)
+    result.push({ type: "property", key: "change_deleted", value: `${authorId} ${ts}` });
+    result.push({ type: "text", text: findStr });
+    result.push({ type: "property", key: "change_unchanged" });
+
+    // The replacement (tracked as inserted)
+    result.push({ type: "property", key: "change_inserted", value: `${authorId} ${ts}` });
+    result.push({ type: "text", text: replacement });
+    result.push({ type: "property", key: "change_unchanged" });
+
+    remaining = remaining.substring(idx + findStr.length);
+  }
+
   return result;
 }
 
@@ -899,65 +962,148 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "set") {
-    const flags = parseArgs(restArgs, { boolean: ["replace-all"] });
+    const flags = parseArgs(restArgs, { boolean: ["replace-all"], string: ["find"] });
     const replaceAll = flags["replace-all"] === true;
+    const findStr: string | undefined = typeof flags["find"] === "string" ? flags["find"] : undefined;
+
     if (nodes.length === 0) {
       printError("NO_MATCH", "Selector matched no nodes to set.");
       return;
     }
-    
+
+    // --find and --replace-all are mutually exclusive
+    if (findStr !== undefined && replaceAll) {
+      printError("FLAG_CONFLICT", "--find and --replace-all are mutually exclusive. --find does surgical substring replacement; --replace-all wipes all children.");
+      return;
+    }
+
+    // --find requires a non-empty substring
+    if (findStr !== undefined && findStr.length === 0) {
+      printError("INVALID_FLAG", "--find requires a non-empty substring to search for.");
+      return;
+    }
+
     if (flags._.length === 0) {
       printError("MISSING_ARGS", "A new text value is required for the 'set' command.");
       return;
     }
-    
+
     const newValue = flags._.join(" ");
-    
+
+    // Track total substring matches for stderr notification
+    let totalFindMatches = 0;
+
+    // Pre-compute trackChanges timestamp once for all nodes
+    const tcTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
+    const tcAid = 1;
+
     for (const node of nodes) {
       if (node.type === "property") {
-        node.value = newValue;
+        if (findStr !== undefined) {
+          // Surgical replace within the property value
+          if (node.value !== undefined) {
+            const count = countOccurrences(node.value, findStr);
+            if (count > 0) {
+              node.value = node.value.replaceAll(findStr, newValue);
+              totalFindMatches += count;
+            }
+          }
+        } else {
+          node.value = newValue;
+        }
       } else if (node.type === "block") {
-        if (trackChanges) {
-          const ts = Math.floor(Date.now() / 1000).toString();
-          const aid = 1;
+        if (findStr !== undefined) {
+          // Surgical mode: replace substring within text children
+          if (trackChanges) {
+            // Tracked surgical replace: split text nodes at match boundaries
+            const newChildren: Node[] = [];
+            for (const child of node.children) {
+              if (child.type === "text") {
+                const count = countOccurrences(child.text, findStr);
+                if (count > 0) {
+                  totalFindMatches += count;
+                  newChildren.push(...replaceWithTracking(child.text, findStr, newValue, tcAid, tcTs));
+                } else {
+                  newChildren.push(child);
+                }
+              } else {
+                newChildren.push(child);
+              }
+            }
+            node.children = newChildren;
+          } else {
+            // Plain surgical replace: simple string replace in all text children
+            for (const child of node.children) {
+              if (child.type === "text") {
+                const count = countOccurrences(child.text, findStr);
+                if (count > 0) {
+                  child.text = child.text.replaceAll(findStr, newValue);
+                  totalFindMatches += count;
+                }
+              }
+            }
+          }
+        } else if (trackChanges) {
+          // Full-text replace with trackChanges (existing behavior)
           if (replaceAll) {
-            // Old destructive behavior: wrap ALL old children under change_deleted
             node.children = [
-              { type: "property", key: "change_deleted", value: `${aid} ${ts}` },
+              { type: "property", key: "change_deleted", value: `${tcAid} ${tcTs}` },
               ...node.children,
               { type: "property", key: "change_unchanged" },
-              { type: "property", key: "change_inserted", value: `${aid} ${ts}` },
+              { type: "property", key: "change_inserted", value: `${tcAid} ${tcTs}` },
               { type: "text", text: newValue },
               { type: "property", key: "change_unchanged" },
             ];
           } else {
-            // Default: preserve non-text children, replace only text nodes
             const nonTextChildren = node.children.filter(c => c.type !== "text");
             const oldTextNodes = node.children.filter(c => c.type === "text");
             node.children = [
-              { type: "property", key: "change_deleted", value: `${aid} ${ts}` },
+              { type: "property", key: "change_deleted", value: `${tcAid} ${tcTs}` },
               ...oldTextNodes,
               { type: "property", key: "change_unchanged" },
-              { type: "property", key: "change_inserted", value: `${aid} ${ts}` },
+              { type: "property", key: "change_inserted", value: `${tcAid} ${tcTs}` },
               { type: "text", text: newValue },
               { type: "property", key: "change_unchanged" },
               ...nonTextChildren,
             ];
           }
         } else {
+          // Full-text replace without trackChanges (existing behavior)
           if (replaceAll) {
             node.children = [{ type: "text", text: newValue }];
           } else {
-            // Default: preserve non-text children, replace only text nodes
             const nonTextChildren = node.children.filter(c => c.type !== "text");
             node.children = [{ type: "text", text: newValue }, ...nonTextChildren];
           }
         }
       } else if (node.type === "text") {
-        node.text = newValue;
+        if (findStr !== undefined) {
+          // Direct text node surgical replace (no trackChanges for bare text nodes)
+          const count = countOccurrences(node.text, findStr);
+          if (count > 0) {
+            node.text = node.text.replaceAll(findStr, newValue);
+            totalFindMatches += count;
+          }
+        } else {
+          node.text = newValue;
+        }
       }
     }
-    
+
+    // After loop: check if --find had any matches
+    if (findStr !== undefined) {
+      if (totalFindMatches === 0) {
+        printError("NO_MATCH", `--find '${findStr}' matched no occurrences within the targeted nodes.`);
+        return;
+      }
+      // Notify user of match count on stderr
+      const plural = totalFindMatches === 1 ? "" : "s";
+      const findMsg = `--find matched ${totalFindMatches} occurrence${plural} of '${findStr}' across ${nodes.length} node(s).`;
+      try {
+        await Deno.stderr.write(new TextEncoder().encode(findMsg + "\n"));
+      } catch { /* ignore */ }
+    }
+
     if (trackChanges) {
       ensureAuthorInHeader(ast);
       ensureTrackingChangesInHeader(ast);

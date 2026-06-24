@@ -62,8 +62,10 @@ You can targets specific nodes in the CST using the query engine, which works li
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
 
 ### Mutate
-- `lq set <file> <selector> <new text> [--replace-all]`
-  - Replaces text content within the targeted nodes. By default, preserves non-text children (insets, properties) — use `--replace-all` to wipe all children and rebuild from scratch.
+- `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
+  - Replaces text content within the targeted nodes while preserves non-text children (insets, properties) by default. 
+  - `--replace-all`: Wipe all children and rebuild from scratch.
+  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced; a count is emitted to stderr.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq insert <file> <selector> <position> [helper]`

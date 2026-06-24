@@ -276,3 +276,128 @@ Deno.test("CLI - insert with trackChanges", { timeout: 10000 }, async () => {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
+
+// ---------------------------------------------------------------------------
+// 15. set --find: surgical substring replacement
+// ---------------------------------------------------------------------------
+Deno.test("CLI - set --find basic substring replacement", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_find_basic.lyx");
+  try {
+    // The fixture has text "Some writing in " in a Standard layout
+    const result = await runCliTest(["set", tempFile, "layout[Standard]:contains('writing')", "text", "--find", "writing"]);
+    assertEquals(result.status, "success");
+
+    // Verify via read: "writing" → "text" in the matched node
+    const readResult = await runCliTest(["read", tempFile, "layout[Standard]:contains('text')"]);
+    const nodes = readResult.data as Array<{ children: Array<{ text: string }> }>;
+    const allText = nodes[0].children
+      .filter((c: { type?: string; text?: string }) => c.type === "text" || c.text !== undefined)
+      .map((c: { text: string }) => c.text)
+      .join("");
+    // "writing" should be gone from this node's text
+    assertEquals(allText.includes("writing"), false);
+    // "text" should be present
+    assertStringIncludes(allText, "text");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 16. set --find: multiple occurrences all replaced
+// ---------------------------------------------------------------------------
+Deno.test("CLI - set --find replaces all occurrences", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_find_multi.lyx");
+  try {
+    // "paper" appears twice as text in a Standard layout
+    const result = await runCliTest(["set", tempFile, "layout[Standard]:contains('paper')", "article", "--find", "paper"]);
+    assertEquals(result.status, "success");
+
+    // Verify via read: all "paper" → "article" in the matched node's text
+    const readResult = await runCliTest(["read", tempFile, "layout[Standard]:contains('article')"]);
+    const nodes = readResult.data as Array<{ children: Array<{ text: string }> }>;
+    const allText = nodes[0].children
+      .filter((c: { type?: string; text?: string }) => c.type === "text" || c.text !== undefined)
+      .map((c: { text: string }) => c.text)
+      .join("");
+    assertEquals(allText.includes("paper"), false);
+    assertStringIncludes(allText, "article");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 17. set --find: no match produces NO_MATCH error
+// ---------------------------------------------------------------------------
+Deno.test("CLI - set --find no match errors", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_find_none.lyx");
+  try {
+    const result = await runCliTest(["set", tempFile, "layout[Standard]:first", "replacement", "--find", "nonexistent_xyz"]);
+    assertEquals(result.status, "error");
+    assertEquals(result.code, "NO_MATCH");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 18. set --find + --replace-all: mutually exclusive
+// ---------------------------------------------------------------------------
+Deno.test("CLI - set --find and --replace-all conflict", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_find_conflict.lyx");
+  try {
+    const result = await runCliTest(["set", tempFile, "layout[Standard]:first", "text", "--find", "foo", "--replace-all"]);
+    assertEquals(result.status, "error");
+    assertEquals(result.code, "FLAG_CONFLICT");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 19. set --find with trackChanges: surgical tracking markers
+// ---------------------------------------------------------------------------
+Deno.test("CLI - set --find with trackChanges", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_find_tc.lyx");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]:contains('writing')", "text", "--find", "writing"],
+      { trackChanges: true },
+    );
+    assertEquals(result.status, "success");
+
+    const rawText = await Deno.readTextFile(tempFile);
+    // Should have tracking markers
+    assertStringIncludes(rawText, "\\change_deleted");
+    assertStringIncludes(rawText, "\\change_inserted");
+    // Tracked change header properties
+    assertStringIncludes(rawText, "\\tracking_changes true");
+    assertStringIncludes(rawText, "\\author 1 \"lq-agent\"");
+    // Old text "writing" should appear inside change_deleted
+    assertStringIncludes(rawText, "writing");
+    // New text "text" should appear inside change_inserted
+    assertStringIncludes(rawText, "text");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 20. set --find on a property node
+// ---------------------------------------------------------------------------
+Deno.test("CLI - set --find on property node", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_find_prop.lyx");
+  try {
+    // The fixture has \language british (and \quotes_style british, but we target language)
+    const result = await runCliTest(["set", tempFile, "property[language]", "english", "--find", "british"]);
+    assertEquals(result.status, "success");
+
+    // Verify the specific property changed
+    const readResult = await runCliTest(["read", tempFile, "property[language]"]);
+    const propNode = (readResult.data as Array<{ value: string }>)[0];
+    assertEquals(propNode.value, "english");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
