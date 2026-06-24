@@ -12,11 +12,12 @@ Quick start
 - **Cross-reference and citation** support.
 - **Tracked change** support.
 - **Auto refresh** opened `.lyx` files using [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
+- **Parse cache** — file-content-hash cache in `~/.lq/cache/` avoids re-parsing unchanged files. Write-through keeps mutations fast — only the first command in a session pays the parse cost.
 
 ### Limitation
 - `lq` is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting. That said, all LyX syntax is supported, so typesetting with `lq` is possible in principle.
 - **Windows auto-refresh**: Before auto-refresh, we use LyX function `buffer-switch` to ensure that mutations are reloaded into the correct target file, rather than the one that users are working on in the GUI. This however does not work on Windows, because LyXServer uses a named pipe protocol that delimits messages with `:`, which conflicts with the drive letter in Windows absolute paths (e.g. `C:\...`). As a result, `buffer-switch` cannot be sent through the pipe, and auto-refresh operates on LyX's active buffer rather than switching to the target file first. **Windows users are advised to open only one `.lyx` file while using `lq`.**
-- LyXServer currently can not report cursor location in an opened `.lyx` file. Thus it might be difficult to communicate with AI agent about exactly what you want to edit. The best way for now is probably using `layout:contains("some text")`.
+- LyXServer currently can not report cursor location in an opened `.lyx` file. Thus it might be difficult to communicate with AI agent about exactly what you want to edit.
 
 ### Known issue & TODO
 - Table and Figure helpers? (config: float, etc.)
@@ -56,7 +57,7 @@ While LyX is a frontend for LaTeX, `lq` operates entirely independently of the L
 ## How This Tool Works
 
 At its core, `lq` operates on a simple lifecycle:
-1. **Parse**: Reads a `.lyx` file and converts it into a structured Concrete Syntax Tree (CST).
+1. **Parse**: Reads a `.lyx` file and converts it into a structured Concrete Syntax Tree (CST). The parse is cached by file-content SHA-256 hash in `~/.lq/cache/` — subsequent reads of the same file deserialize the CST from cache instead of re-parsing. After mutations, the cache is updated with the new CST (write-through), so even back-to-back edits hit the cache after the first parse.
 2. **Query**: Uses a CSS-like selector engine to find specific nodes in the CST.
 3. **Mutate**: Applies changes (insert, set, delete) to the matched nodes.
 4. **Serialize**: Converts the modified CST back into a perfectly formatted `.lyx` file.
@@ -74,12 +75,12 @@ The query engine supports traversing the CST using standard CSS syntax:
 - **Tags**: `layout`, `inset`, `property`.
 - **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`.
 - **Descendants**: `layout[Section] inset[Formula]` (Finds a Formula inside a Section).
-- **Pseudo-classes**: 
-  - Target specific matches using `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`).
+- **Pseudo-classes** to target specific matches (must follow a tag e.g., `layout:contains("text")`, `inset:first`):
+  - `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`).
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
+  - `:contains("text")` searches recursively and case-sensitively node children for text.
   - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
-- **Text content**: `:contains("text")` searches recursively and case-sensitively node children for text. Pseudo-classes must follow a tag (e.g., `layout:contains("text")`, `inset:first`).
 
 ### Safe Mutation Workflow
 Mutations apply to all matched nodes of a selector. Specifically,
@@ -140,7 +141,7 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 - `lq read <file> <selector> [--count] [--text-only]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
-  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes as plain text with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Double newline between nodes. Useful for proofreading.
+  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes as plain text with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Double newline between nodes.
 
 ### Mutate
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
