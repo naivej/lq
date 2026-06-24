@@ -6,6 +6,7 @@ import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode } from "./ast.ts";
 import { validateInsetType } from "./inset_registry.ts";
+import { getCachedAst, setCachedAst, hashText } from "./cache.ts";
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
 
@@ -748,8 +749,21 @@ export async function runCli(args: string[]) {
   }
 
   let ast: DocumentNode;
+  let cacheHash: string | null = null;
   try {
-    ast = parse(text);
+    // Try cache first — deserializing JSON is orders of magnitude faster
+    // than line-by-line parsing for large files.
+    const cached = await getCachedAst(filePath);
+    if (cached) {
+      ast = cached;
+    } else {
+      ast = parse(text);
+      // Populate cache on miss (non-fatal)
+      try {
+        cacheHash = await hashText(text);
+        await setCachedAst(cacheHash, ast);
+      } catch { /* cache failures are non-fatal */ }
+    }
   } catch (e: Error | unknown) {
     printError("PARSE_ERROR", (e as Error).message);
     return;
@@ -1172,6 +1186,7 @@ export async function runCli(args: string[]) {
     }
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
+    try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     printJson({ status: "success", modified_nodes: nodes.length });
     return;
@@ -1208,6 +1223,7 @@ export async function runCli(args: string[]) {
       markAsDeleted(ast.children);
       const newFileText = serialize(ast);
       await Deno.writeTextFile(filePath, newFileText);
+      try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
       await refreshPostStep(filePath, refreshMode);
       printJson({ status: "success", tracked_deleted_nodes: nodes.length });
       return;
@@ -1230,6 +1246,7 @@ export async function runCli(args: string[]) {
 
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
+    try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     printJson({ status: "success", deleted_nodes: nodes.length });
     return;
@@ -1666,6 +1683,7 @@ export async function runCli(args: string[]) {
 
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
+    try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     printJson({ status: "success", inserted_nodes: insertedCount, inserted_blocks: insertedBlocks });
     return;
