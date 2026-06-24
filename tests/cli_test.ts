@@ -401,3 +401,32 @@ Deno.test("CLI - set --find on property node", { timeout: 10000 }, async () => {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
+
+// ---------------------------------------------------------------------------
+// 21. read --text-only: basic text extraction
+// ---------------------------------------------------------------------------
+Deno.test("CLI - read --text-only basic", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_textonly.lyx");
+  try {
+    // Run with --text-only and capture raw stdout
+    const { stdout } = await runCliRaw(["read", tempFile, "layout[Title]", "--text-only"]);
+    // The fixture Title layout contains "Title"
+    assertStringIncludes(stdout, "Title");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 22. read --text-only + --count: mutually exclusive
+// ---------------------------------------------------------------------------
+Deno.test("CLI - read --text-only and --count conflict", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_tonly_conflict.lyx");
+  try {
+    const result = await runCliTest(["read", tempFile, "layout[Title]", "--text-only", "--count"]);
+    assertEquals(result.status, "error");
+    assertEquals(result.code, "FLAG_CONFLICT");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});

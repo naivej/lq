@@ -1,6 +1,7 @@
 ---
 name: use-lq
 description: Read, edit, and manipulate lyx documents (.lyx files)
+allowed-tools: Bash(lq *)
 ---
 
 # User Manual
@@ -10,14 +11,17 @@ description: Read, edit, and manipulate lyx documents (.lyx files)
 ## Query Engine (CSS Selectors)
 
 `lq` reads a `.lyx` file and converts it into a structured Concrete Syntax Tree (CST). 
-- **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child. `layout[Section] layout[Standard]` returns nothing — Standard paragraphs don't live inside Section blocks. Use `:contains()` or positional selectors (`:first`, `:nth-child`) to navigate instead.
-- **No sibling combinators**: `~` and `+` are not supported. Use `:nth-child()` or multiple `read` commands to find adjacent nodes.
+- **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child. `layout[Section] layout[Standard]` returns nothing — Standard paragraphs don't live inside Section blocks.
 
 You can targets specific nodes in the CST using the query engine, which works like CSS selectors:
 - **Tags**: `layout` (e.g., standard paragraphs, sections), `inset` (e.g., formulas, footnotes, figures), `property` (e.g. `\family roman`).
 - **Attributes**: Target specific names using `layout[Section]`, `inset[Formula]`, or `property[family]`.
 - **Descendants**: Space-separated paths like `layout[Section] inset[Formula]` (finds a Formula inside a Section).
-- **Pseudo-classes**: Target specific matches using `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`). `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula). Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
+- **Pseudo-classes**: 
+  - Target specific matches using `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`).
+  - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
+  - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
+  - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 - **Text Content**: Find exact strings using `:contains("text")`. It searches recursively through deeply nested insets and is strictly case-sensitive.
 
 ## Context-Aware Strict Validation
@@ -57,9 +61,10 @@ You can targets specific nodes in the CST using the query engine, which works li
   - Outputs the CST as a JSON document.
   - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
   - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
-- `lq read <file> <selector> [--count]`
+- `lq read <file> <selector> [--count] [--text-only]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
+  - `--text-only` (Mutually exclusive with `--count`): Output just the concatenated text content as plain text (double newline between nodes).
 
 ### Mutate
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
@@ -86,13 +91,22 @@ You can targets specific nodes in the CST using the query engine, which works li
 
 1. **Embrace the Git Workflow**: You should work in a version-controlled workspace. `git stage` and `git restore` is essentially the dry run. `git commit` for checkpoints / milestones so you can undo unwanted changes.
 2. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Any raw LaTeX (like equations inside `inset[Formula]`) is treated as pure string data. Do not try to parse the LaTeX syntax itself; simply target the `inset[Formula]` node and replace its text content.
-3. **Use `:contains` for Precision**: If structural selectors like `:nth-child(5)` feel brittle, use `:contains("unique phrase")` to precisely target the paragraph or inset you want to edit.
-4. **Be Token-Efficient**: `lq` operates on files that can be tens of thousands of lines long.
-   - **Use `dump --depth n`** instead of bare `dump`. A full CST dump can consume hundreds of thousands of tokens; depth-limited output gives you the document outline without the noise.
-   - **Always use `bib --search`** instead of bare `bib`. A `.bib` file can contain thousands of entries; `--search` filters server-side so only matching citations are returned.
-   - **Use `lq read --count` first** — `layout[Standard]` matches every standard paragraph. Check the count before reading full data or mutating.
-5. **Make sure `lq` is configured**: Always run `lq init` first to set up / confirm configeration. But **NEVER change configreation** without clear instructions or consent from the user.
-6. **Stop for LyXServer errors**: If `lq` cannot connect LyXServer, stop immediately and ask the user to turn on LyXServer or turn off auto refresh.
+3. **Match the query tool to the task** — `lq` operates on files that can be tens of thousands of lines. Using the wrong command wastes tokens and hides the information you need.
+
+   | You want to… | Use this |
+   |---|---|
+   | See the document outline | `lq dump <file> --depth 2` |
+   | Scan all body text | `lq read <file> "layout" --text-only` |
+   | Get just section headings | `lq read <file> "layout[Section]" --text-only` |
+   | Find a specific paragraph by content | `lq read <file> ":contains('unique phrase')" --text-only` |
+   | Check how many nodes a selector matches | `lq read <file> "<selector>" --count` |
+   | Inspect a specific node's CST | `lq read <file> "<precise selector>"` |
+   | Deep-debug a node's children | `lq dump <file> "<selector>"` |
+   | Find a citation key | `lq bib <file> --search "keyword"` |
+
+   **Never:** bare `lq dump` (100K+ tokens), bare `lq bib` (thousands of entries), or `lq read "layout"` without `--text-only` (full JSON for every paragraph).
+4. **Make sure `lq` is configured**: Always run `lq init` first to set up / confirm configeration. But **NEVER change configreation** without clear instructions or consent from the user.
+5. **Stop for LyXServer errors**: If `lq` cannot connect LyXServer, stop immediately and ask the user to turn on LyXServer or turn off auto refresh.
 
 ## Safe Mutation Workflow
 

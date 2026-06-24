@@ -1,7 +1,7 @@
-import { DocumentNode, Node } from "./ast.ts";
+import { DocumentNode, Node, BlockNode } from "./ast.ts";
 
 export interface PseudoClass {
-  name: "first" | "last" | "nth" | "contains" | "nth-child" | "not";
+  name: "first" | "last" | "nth" | "contains" | "nth-child" | "not" | "adjacent";
   argRaw?: string;
 }
 
@@ -50,17 +50,17 @@ export function parseSelector(selector: string): SelectorPart[][] {
           const pName = pMatch[1];
           const pArg = pMatch[2] ? pMatch[2].trim() : undefined;
           
-          if (!["first", "last", "nth", "nth-child", "contains", "not"].includes(pName)) {
+          if (!["first", "last", "nth", "nth-child", "contains", "not", "adjacent"].includes(pName)) {
             throw new Error(`Unsupported pseudo-class: :${pName}`);
           }
           
-          if (pName === "not") {
-            // :not(selector) — the arg is a selector part (tag + optional [args]).
+          if (pName === "not" || pName === "adjacent") {
+            // :not(selector) / :adjacent(selector) — the arg is a selector part (tag + optional [args]).
             // Validate that it parses as a valid SelectorPart.
-            if (!pArg) throw new Error(":not() requires a selector argument, e.g. :not(inset[Formula])");
+            if (!pArg) throw new Error(`:${pName}() requires a selector argument, e.g. :${pName}(layout[Section])`);
             // Quick validation: try to parse it as a selector part
             const innerParts = pArg.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?$/);
-            if (!innerParts) throw new Error(`Invalid selector inside :not(): ${pArg}`);
+            if (!innerParts) throw new Error(`Invalid selector inside :${pName}(): ${pArg}`);
           }
           
           pseudos.push({ name: pName as PseudoClass["name"], argRaw: pArg });
@@ -189,6 +189,33 @@ function findDescendants(nodes: Node[], part: SelectorPart, results: Node[] = []
   return results;
 }
 
+/**
+ * Find the parent's children array and the index of a given node within it.
+ * Returns null if the node is the document root.
+ */
+function getSiblingContext(node: Node, rootChildren: Node[]): { parentChildren: Node[]; index: number } | null {
+  // Check root level
+  for (let i = 0; i < rootChildren.length; i++) {
+    if (rootChildren[i] === node) return { parentChildren: rootChildren, index: i };
+    if (rootChildren[i].type === "block") {
+      const result = getSiblingContextInBlock(node, (rootChildren[i] as BlockNode).children);
+      if (result) return result;
+    }
+  }
+  return null;
+}
+
+function getSiblingContextInBlock(node: Node, children: Node[]): { parentChildren: Node[]; index: number } | null {
+  for (let i = 0; i < children.length; i++) {
+    if (children[i] === node) return { parentChildren: children, index: i };
+    if (children[i].type === "block") {
+      const result = getSiblingContextInBlock(node, (children[i] as BlockNode).children);
+      if (result) return result;
+    }
+  }
+  return null;
+}
+
 export function query(ast: DocumentNode, selectorStr: string): Node[] {
   const groups = parseSelector(selectorStr);
   const rootChildren = ast.type === "document" ? ast.children : (ast.type === "block" ? ast.children : []);
@@ -246,6 +273,22 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
               const n = idx + 1;
               if (a === 0) return n === b;
               return (n - b) % a === 0 && (n - b) / a >= 0;
+            });
+          } else if (p.name === "adjacent" && p.argRaw !== undefined) {
+            // :adjacent(selector) — keep nodes whose immediately preceding sibling
+            // matches the inner selector. Applied as a post-filter like :first/:last.
+            const innerPart = parseSelectorPart(p.argRaw);
+            nextNodes = nextNodes.filter(n => {
+              const ctx = getSiblingContext(n, rootChildren);
+              if (!ctx || ctx.index === 0) return false;
+              // Skip past text and property nodes to find the previous "meaningful"
+              // sibling — the CST has whitespace text nodes between layouts.
+              for (let si = ctx.index - 1; si >= 0; si--) {
+                const prev = ctx.parentChildren[si];
+                if (prev.type === "text" || prev.type === "property") continue;
+                return matchNode(prev, innerPart);
+              }
+              return false;
             });
           }
         }

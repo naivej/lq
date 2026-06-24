@@ -20,6 +20,7 @@ Quick start
 
 ### Known issue & TODO
 - Table and Figure helpers? (config: float, etc.)
+- Maybe we need dry run after all?
 - Some LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization) are not enforced by `lq`. Those are purely cosmetic and LyX reads files fine without them. As a result, open a `lq` edited file in LyX can cause formatting-only diffs.
 
 ## Design Philosophy & Architecture
@@ -73,7 +74,11 @@ The query engine supports traversing the CST using standard CSS syntax:
 - **Tags**: `layout`, `inset`, `property`.
 - **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`.
 - **Descendants**: `layout[Section] inset[Formula]` (Finds a Formula inside a Section).
-- **Pseudo-classes**: `:first`, `:last`, `:nth-child(an+b)` (Or use `odd` for 2n+1, `even` for 2n). `:not(selector)` excludes nodes that have any descendant matching the inner selector. (Example: `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula.) Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
+- **Pseudo-classes**: 
+  - Target specific matches using `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`).
+  - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
+  - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
+  - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 - **Text content**: `:contains("text")` searches recursively and case-sensitively node children for text.
 
 ### Safe Mutation Workflow
@@ -132,9 +137,10 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
   - Outputs the CST as a JSON document.
   - `selector`: Scope the dump to matching nodes. Omit to dump the whole document.
   - `--depth <n>`: `0` shows only the root node; `1` shows direct children; `N` descend N levels from root; omit for the full subtree.
-- `lq read <file> <selector> [--count]`
+- `lq read <file> <selector> [--count] [--text-only]`
   - Outputs matching nodes and text content as JSON.
   - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
+  - `--text-only` (Mutually exclusive with `--count`): Output just the concatenated text content as plain text (double newline between nodes).
 
 ### Mutate
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`

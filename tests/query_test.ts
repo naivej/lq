@@ -132,4 +132,31 @@ Deno.test("Query Engine on LyX Document", async () => {
   // :not() with a non-matching inner selector should match everything
   const allStd2 = query(ast, 'layout[Standard]:not(inset[Nonexistent])');
   assertEquals(allStd2.length, allStd.length);
+
+  // Test :adjacent() pseudo-class
+  // Layouts immediately following a Section
+  const afterSection = query(ast, 'layout[Standard]:adjacent(layout[Section])');
+  assertEquals(afterSection.length, 2); // Two Standard layouts follow Sections
+
+  // :adjacent() should return 0 when no preceding sibling matches
+  const noMatch = query(ast, 'layout[Section]:adjacent(layout[Title])');
+  assertEquals(noMatch.length, 0); // No Section is preceded by a Title
+
+  // :adjacent() skips text/property nodes to find the previous meaningful sibling.
+  // The Sections in the fixture are not adjacent to each other (Standard layouts
+  // sit between them), so this returns 0 — correct.
+  const secAfterSec = query(ast, 'layout[Section]:adjacent(layout[Section])');
+  assertEquals(secAfterSec.length, 0);
+
+  // :adjacent() + :first chaining — order matters.
+  // :first:adjacent(Section) returns 0 because the first Standard overall
+  // (in DFS order) follows an Abstract, not a Section.
+  // :adjacent(Section):first takes the 2 Standards after Sections, then keeps the first.
+  const firstAdjThenFirst = query(ast, 'layout[Standard]:adjacent(layout[Section]):first');
+  assertEquals(firstAdjThenFirst.length, 1);
+
+  // Parse validation: :adjacent() requires an argument
+  let adjParseError = false;
+  try { parseSelector('layout:adjacent()'); } catch { adjParseError = true; }
+  assertEquals(adjParseError, true);
 });

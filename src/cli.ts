@@ -39,7 +39,10 @@ Arguments:
 
 Options:
   --count     Return only the match count as JSON ({\"count\": N}), omitting the data array.
-              Useful for checking blast radius before mutations without parsing large output.`,
+              Useful for checking blast radius before mutations without parsing large output.
+  --text-only Output just the concatenated text content of matched nodes as plain text
+              (double newline between nodes). Useful for proofreading and scanning.
+              Mutually exclusive with --count.`,
 
   dump: `lq dump - Output the CST (optionally scoped to a selector) as JSON.
 
@@ -408,6 +411,15 @@ function ensureTrackingChangesInHeader(ast: DocumentNode): void {
   }
 }
 
+/** Recursively extract all text from a node's descendants. */
+function extractAllText(node: Node): string {
+  if (node.type === "text") return node.text;
+  if (node.type === "block") {
+    return node.children.map(extractAllText).join("");
+  }
+  return "";
+}
+
 function countOccurrences(text: string, findStr: string): number {
   if (findStr.length === 0) return 0;
   let count = 0;
@@ -685,10 +697,11 @@ export async function runCli(args: string[]) {
     return;
   }
 
-  // Extract --count flag early (before positional arg destructuring)
-  // so it doesn't get mistaken for the file path.
+  // Extract --count and --text-only flags early (before positional arg destructuring)
+  // so they don't get mistaken for the file path.
   const countOnly = cleanArgs.includes("--count");
-  const positionalArgs = cleanArgs.filter(a => a !== "--count");
+  const textOnly = cleanArgs.includes("--text-only");
+  const positionalArgs = cleanArgs.filter(a => a !== "--count" && a !== "--text-only");
   
   const [command, filePath, selector, ...restArgs] = positionalArgs;
   
@@ -934,8 +947,20 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "read") {
+    if (countOnly && textOnly) {
+      printError("FLAG_CONFLICT", "--count and --text-only are mutually exclusive.");
+      return;
+    }
     if (countOnly) {
       printJson({ status: "success", count: nodes.length });
+    } else if (textOnly) {
+      const texts: string[] = [];
+      for (const node of nodes) {
+        const t = extractAllText(node).trim();
+        if (t.length > 0) texts.push(t);
+      }
+      const output = texts.join("\n\n") + "\n";
+      await Deno.stdout.write(new TextEncoder().encode(output));
     } else {
       printJson({ status: "success", data: nodes, count: nodes.length });
     }
