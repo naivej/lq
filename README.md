@@ -108,7 +108,7 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
 ## Commands
 
 ### Config
-- `lq init [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>]`
+- `lq init [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>] [--max-cache-entries <n>]`
   - Without flags
     - Initializes the user configuration file `~/.lq/config.json` with default options. 
     - Or prints the current configuration if it exists.
@@ -121,6 +121,7 @@ Users can query or search the bibliography by `lq bib`, then inject citations us
     - Set preserves old text in `\change_deleted` + new in `\change_inserted`
     - Delete wraps removed nodes in `\change_deleted`
     - Insert wraps new content in `\change_inserted`
+  - `--max-cache-entries <n>`: Maximum number of cached parse results stored in `~/.lq/cache/`. Default: 50.
 
 ### Query
 - `lq schema <file> [--layouts-dir <path>]`

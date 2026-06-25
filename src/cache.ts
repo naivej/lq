@@ -1,7 +1,12 @@
 import { DocumentNode } from "./ast.ts";
 import * as path from "@std/path";
 
-const MAX_CACHE_ENTRIES = 50;
+let maxCacheEntries = 50;
+
+/** Set the maximum number of cached CST entries (default 50). */
+export function setMaxCacheEntries(n: number): void {
+  if (n >= 0) maxCacheEntries = n;
+}
 
 /** Compute SHA-256 hash of a file's content. */
 export async function hashFile(filePath: string): Promise<string> {
@@ -33,8 +38,9 @@ function getCachePath(hash: string): string | null {
   return path.join(dir, hash + ".cst");
 }
 
-/** Try to load a cached CST for the given file. Returns null on miss or error. */
+/** Try to load a cached CST for the given file. Returns null on miss, error, or cache disabled. */
 export async function getCachedAst(filePath: string): Promise<DocumentNode | null> {
+  if (maxCacheEntries === 0) return null;
   try {
     const hash = await hashFile(filePath);
     const cachePath = getCachePath(hash);
@@ -46,8 +52,9 @@ export async function getCachedAst(filePath: string): Promise<DocumentNode | nul
   }
 }
 
-/** Store a CST in the cache under the given content hash. */
+/** Store a CST in the cache under the given content hash. No-op when cache is disabled. */
 export async function setCachedAst(hash: string, ast: DocumentNode): Promise<void> {
+  if (maxCacheEntries === 0) return;
   try {
     const cachePath = getCachePath(hash);
     if (!cachePath) return;
@@ -83,11 +90,11 @@ async function pruneCache(dir: string): Promise<void> {
         }
       }
     }
-    if (entries.length <= MAX_CACHE_ENTRIES) return;
+    if (entries.length <= maxCacheEntries) return;
 
     // Sort by access time (oldest first), delete excess
     entries.sort((a, b) => (a.atime ?? 0) - (b.atime ?? 0));
-    const toDelete = entries.slice(0, entries.length - MAX_CACHE_ENTRIES);
+    const toDelete = entries.slice(0, entries.length - maxCacheEntries);
     for (const entry of toDelete) {
       try {
         await Deno.remove(path.join(dir, entry.name));

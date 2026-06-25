@@ -31,7 +31,7 @@ You can targets specific nodes in the CST using the query engine, which works li
 ## Commands
 
 ### Config
-- `lq init [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>]`
+- `lq init [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>] [--max-cache-entries <n>]`
   - Without flags
     - Initializes the user configuration file `~/.lq/config.json` with default options. 
     - Or prints the current configuration if it exists.
@@ -44,6 +44,7 @@ You can targets specific nodes in the CST using the query engine, which works li
     - Set preserves old text in `\change_deleted` + new in `\change_inserted`
     - Delete wraps removed nodes in `\change_deleted`
     - Insert wraps new content in `\change_inserted`
+  - `--max-cache-entries <n>`: Set the maximum number of cached parse results in `~/.lq/cache/`. Default: 50.
 
 ### Query
 - `lq schema <file> [--layouts-dir <path>]`

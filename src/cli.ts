@@ -6,7 +6,7 @@ import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode } from "./ast.ts";
 import { validateInsetType } from "./inset_registry.ts";
-import { getCachedAst, setCachedAst, hashText } from "./cache.ts";
+import { getCachedAst, setCachedAst, hashText, setMaxCacheEntries } from "./cache.ts";
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
 
@@ -127,7 +127,9 @@ Options:
   --track-changes <on|off> Enable or disable tracked changes for all mutation commands.
                             When on: set wraps old text in \\change_deleted + new in \\change_inserted,
                                       delete wraps removed nodes in \\change_deleted,
-                                      insert wraps new content in \\change_inserted.`,
+                                      insert wraps new content in \\change_inserted.
+  --max-cache-entries <n>  Maximum number of cached parse results in ~/.lq/cache/.
+                           Default: 50.`,
 
   schema: `lq schema - Return a list of all semantically valid layouts.
 
@@ -178,6 +180,7 @@ interface UserConfig {
   layoutsDir?: string;
   refresh?: "none" | "reload" | "save-reload";
   trackChanges?: boolean;
+  maxCacheEntries?: number;
 }
 
 async function loadUserConfig(): Promise<UserConfig> {
@@ -590,13 +593,15 @@ export async function runCli(args: string[]) {
   const cleanArgs = args.filter(a => a !== "--help" && a !== "-h");
 
   if (commandArg === "init") {
-    const flags = parseArgs(cleanArgs.slice(1), { string: ["layouts-dir", "refresh", "track-changes"] });
+    const flags = parseArgs(cleanArgs.slice(1), { string: ["layouts-dir", "refresh", "track-changes", "max-cache-entries"] });
     const hasFlags = flags["layouts-dir"] !== undefined ||
                      flags["refresh"] !== undefined ||
-                     flags["track-changes"] !== undefined;
+                     flags["track-changes"] !== undefined ||
+                     flags["max-cache-entries"] !== undefined;
     let dir = flags["layouts-dir"];
     const refresh = flags["refresh"] as string | undefined;
     const trackChangesFlag = flags["track-changes"] as string | undefined;
+    const maxCacheEntriesStr = flags["max-cache-entries"] as string | undefined;
 
     // Validate --refresh value
     if (refresh !== undefined && refresh !== "none" && refresh !== "reload" && refresh !== "save-reload") {
@@ -608,6 +613,17 @@ export async function runCli(args: string[]) {
     if (trackChangesFlag !== undefined && trackChangesFlag !== "on" && trackChangesFlag !== "off") {
       printError("INVALID_FLAG", `--track-changes must be 'on' or 'off', got: '${trackChangesFlag}'`);
       return;
+    }
+
+    // Validate --max-cache-entries value
+    let maxCacheEntries: number | undefined;
+    if (maxCacheEntriesStr !== undefined) {
+      const n = parseInt(maxCacheEntriesStr, 10);
+      if (isNaN(n) || n < 0) {
+        printError("INVALID_FLAG", `--max-cache-entries must be a non-negative integer, got: '${maxCacheEntriesStr}'`);
+        return;
+      }
+      maxCacheEntries = n;
     }
 
     // If no flags and config exists, print it and exit
@@ -674,6 +690,17 @@ export async function runCli(args: string[]) {
       }
     }
 
+    if (maxCacheEntries !== undefined) {
+      config.maxCacheEntries = maxCacheEntries;
+    } else {
+      const existing = await loadUserConfig();
+      if (existing.maxCacheEntries !== undefined) {
+        config.maxCacheEntries = existing.maxCacheEntries;
+      } else {
+        config.maxCacheEntries = 50;
+      }
+    }
+
     // If refresh is enabled, verify LyXServer is reachable
     if (config.refresh !== "none") {
       const available = checkLyxServerAvailable();
@@ -694,6 +721,7 @@ export async function runCli(args: string[]) {
         layoutsDir: dir,
         refresh: config.refresh,
         trackChanges: config.trackChanges,
+        maxCacheEntries: config.maxCacheEntries,
       });
     } catch (e: Error | unknown) {
       printError("WRITE_ERROR", `Failed to write config file: ${(e as Error).message}`);
@@ -719,6 +747,10 @@ export async function runCli(args: string[]) {
     return;
   }
 
+  // Load user config (shared by all commands: cache sizing, refresh, track-changes)
+  const userConfig = await loadUserConfig();
+  setMaxCacheEntries(userConfig.maxCacheEntries ?? 50);
+
   // --- Refresh pre-step (save-reload only) ---
   // Must happen BEFORE reading the file, so buffer-write saves the user's
   // latest edits to disk before lq reads the stale version.
@@ -726,9 +758,8 @@ export async function runCli(args: string[]) {
   let refreshMode: "none" | "reload" | "save-reload" = "none";
   let trackChanges = false;
   if (mutationCommands.includes(command)) {
-    const config = await loadUserConfig();
-    if (config.refresh) refreshMode = config.refresh;
-    trackChanges = config.trackChanges === true;
+    if (userConfig.refresh) refreshMode = userConfig.refresh;
+    trackChanges = userConfig.trackChanges === true;
     if (refreshMode !== "none") {
       const preOk = await refreshPreStep(filePath, refreshMode);
       if (!preOk) {
