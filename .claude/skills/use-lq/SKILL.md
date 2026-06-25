@@ -8,16 +8,28 @@ allowed-tools: Bash(lq *)
 
 `lq` is a standalone CLI tool designed to parse, query, and mutate LyX (`.lyx`) documents.
 
-## Query Engine (CSS Selectors)
+At its core, `lq` operates on a simple lifecycle:
+1. **Parse**: Reads a `.lyx` file and converts it into a structured Concrete Syntax Tree (CST). The parse is cached by file-content SHA-256 hash in `~/.lq/cache/` — subsequent reads of the same file deserialize the CST from cache instead of re-parsing. After mutations, the cache is updated with the new CST (write-through), so even back-to-back edits hit the cache after the first parse.
+2. **Query**: Uses a CSS-like selector engine to find specific nodes in the CST.
+3. **Mutate**: Applies changes (insert, set, delete) to the matched nodes.
+4. **Serialize**: Converts the modified CST back into a perfectly formatted `.lyx` file.
 
-`lq` reads a `.lyx` file and converts it into a structured Concrete Syntax Tree (CST). 
-- **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child. `layout[Section] layout[Standard]` returns nothing — Standard paragraphs don't live inside Section blocks.
+## The LyX-to-CST Mapping
 
-You can targets specific nodes in the CST using the query engine, which works like CSS selectors:
+To effectively use the query engine, Users need to understand how LyX syntax maps to the CST nodes:
+- **Layout Nodes**: Structures like `\begin_layout Section` map to a `layout` tag with a `Section` argument. Users select them using `layout[Section]`.
+- **Inset Nodes**: Structures like `\begin_inset Formula` map to an `inset` tag with a `Formula` argument. Users select them using `inset[Formula]`.
+- **Property Nodes**: Single-line settings like `\textclass article` map to property nodes. 
+- **Text Nodes**: The actual text content inside layouts and insets.
+- **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child.
+
+## Query Engine
+
+The query engine supports traversing the CST using CSS-like syntax:
 - **Tags**: `layout` (e.g., standard paragraphs, sections), `inset` (e.g., formulas, footnotes, figures), `property` (e.g. `\family roman`).
-- **Attributes**: Target specific names using `layout[Section]`, `inset[Formula]`, or `property[family]`.
+- **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`.
 - **Descendants**: Space-separated paths like `layout[Section] inset[Formula]` (finds a Formula inside a Section).
-- **Pseudo-classes** to target specific matches (must follow a tag e.g., `layout:contains("text")`, `inset:first`):
+- **Pseudo-classes** (must follow a tag e.g., `layout:contains("text")`, `inset:first`):
   - `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`).
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
