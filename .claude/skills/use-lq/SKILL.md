@@ -56,7 +56,7 @@ The query engine supports traversing the CST using CSS-like syntax:
     - Set preserves old text in `\change_deleted` + new in `\change_inserted`
     - Delete wraps removed nodes in `\change_deleted`
     - Insert wraps new content in `\change_inserted`
-  - `--max-cache-entries <n>`: Set the maximum number of cached parse results in `~/.lq/cache/`. Default: 50.
+  - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`.
 
 ### Query
 - `lq schema <file> [--layouts-dir <path>]`
