@@ -443,6 +443,21 @@ function extractAllText(node: Node): string {
   return "";
 }
 
+/** First N characters of a node's text, for concise verbose output. */
+function briefText(node: Node, maxLen = 80): string {
+  const text = extractAllText(node).trim();
+  if (text.length <= maxLen) return text;
+  return text.substring(0, maxLen) + "...";
+}
+
+/** Build a selector-like label for a node: tag[args]. */
+function nodeLabel(node: Node): string {
+  if (node.type === "block") {
+    return node.tag + "[" + ((node.args || "").trim()) + "]";
+  }
+  return node.type;
+}
+
 function countOccurrences(text: string, findStr: string): number {
   if (findStr.length === 0) return 0;
   let count = 0;
@@ -1238,7 +1253,8 @@ export async function runCli(args: string[]) {
     await Deno.writeTextFile(filePath, newFileText);
     try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
-    printJson({ status: "success", modified_nodes: nodes.length });
+    const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
+    printJson({ status: "success", modified_nodes: nodes.length, changes });
     return;
   }
 
@@ -1275,7 +1291,8 @@ export async function runCli(args: string[]) {
       await Deno.writeTextFile(filePath, newFileText);
       try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
       await refreshPostStep(filePath, refreshMode);
-      printJson({ status: "success", tracked_deleted_nodes: nodes.length });
+      const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
+      printJson({ status: "success", tracked_deleted_nodes: nodes.length, changes });
       return;
     }
 
@@ -1298,7 +1315,8 @@ export async function runCli(args: string[]) {
     await Deno.writeTextFile(filePath, newFileText);
     try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
-    printJson({ status: "success", deleted_nodes: nodes.length });
+    const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
+    printJson({ status: "success", deleted_nodes: nodes.length, changes });
     return;
   }
 
@@ -1735,7 +1753,8 @@ export async function runCli(args: string[]) {
     await Deno.writeTextFile(filePath, newFileText);
     try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
-    printJson({ status: "success", inserted_nodes: insertedCount, inserted_blocks: insertedBlocks });
+    const changes = nodes.map(n => ({ position, label: nodeLabel(n), text: briefText(n) }));
+    printJson({ status: "success", inserted_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });
     return;
   }
 
