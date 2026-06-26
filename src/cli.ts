@@ -831,7 +831,7 @@ export async function runCli(args: string[]) {
   let trackChanges = true;
   if (mutationCommands.includes(command)) {
     if (userConfig.refresh) refreshMode = userConfig.refresh;
-    trackChanges = userConfig.trackChanges === true;
+    trackChanges = userConfig.trackChanges !== false;
     if (refreshMode !== "none") {
       const preOk = await refreshPreStep(filePath, refreshMode);
       if (!preOk) {

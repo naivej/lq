@@ -52,11 +52,11 @@ The query engine supports traversing the CST using CSS-like syntax:
     - `none` (default): No refresh. LyX detects external changes via its own polling and prompts the user to reload.
     - `reload`: Reload the buffer after `lq` writes, fail silently if LyXserver disconnects. Fast, but discards unsaved in-LyX edits.
     - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Throw an error and abort if LyXserver disconnects
-  - `--track-changes <on (default)|off>`: Enable or disable tracked changes for all mutation commands. When on, set `\tracking_changes true` and add an `\author` entry in the document header. 
+  - `--track-changes <on|off>`: Enable or disable tracked changes for all mutation commands. It's on by default, which sets `\tracking_changes true` and add an `\author` entry in the document header. 
     - Set preserves old text in `\change_deleted` + new in `\change_inserted`
     - Delete wraps removed nodes in `\change_deleted`
     - Insert wraps new content in `\change_inserted`
-  - `--max-cache-entries <n (default 50)>`: Set the maximum number of cached parse results in `~/.lq/cache/`.
+  - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`.
 
 ### Query
 - `lq schema <file> [--layouts-dir <path>]`
