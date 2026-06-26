@@ -1706,24 +1706,25 @@ export async function runCli(args: string[]) {
           if (!targetParentBlock) continue;
           // Collect descendant text nodes, skipping text inside \change_deleted
           // blocks (those represent old/replaced content, not valid targets for
-          // new insertions). This prevents SPLIT_AMBIGUOUS when the same substring
-          // appears in both deleted and inserted blocks after a tracked edit.
+          // new insertions). Uses a depth counter (not a boolean) so that nested
+          // track changes (double-wrap from re-editing) are handled correctly:
+          // inner \change_unchanged decrements depth but outer block still >0.
           const allTextNodes: { node: Node & { type: "text" }; parentList: Node[]; index: number }[] = [];
-          const collectTextNodes = (children: Node[], inDeleted = false) => {
-            let skipUntilUnchanged = inDeleted;
+          const collectTextNodes = (children: Node[], deletedDepth = 0) => {
+            let depth = deletedDepth;
             for (let i = 0; i < children.length; i++) {
               const c = children[i];
               if (c.type === "property") {
-                if (c.key === "change_deleted") skipUntilUnchanged = true;
-                else if (c.key === "change_unchanged") skipUntilUnchanged = false;
+                if (c.key === "change_deleted") depth++;
+                else if (c.key === "change_unchanged" && depth > 0) depth--;
                 continue;
               }
               if (c.type === "text") {
-                if (!skipUntilUnchanged) {
+                if (depth === 0) {
                   allTextNodes.push({ node: c, parentList: children, index: i });
                 }
               } else if (c.type === "block") {
-                collectTextNodes((c as BlockNode).children, skipUntilUnchanged);
+                collectTextNodes((c as BlockNode).children, depth);
               }
             }
           };
