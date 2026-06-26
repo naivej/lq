@@ -420,9 +420,20 @@ function ensureTrackingChangesInHeader(ast: DocumentNode): void {
 /** Recursively extract text from a node's descendants.
  *  Insets emit their selector as a placeholder marker — we do NOT recurse
  *  into them.  This keeps body-text scans clean and prevents concatenation
- *  artifacts.  To see an inset's content, query the inset directly. */
+ *  artifacts.  To see an inset's content, query the inset directly.
+ *
+ *  Track-change properties (change_deleted, change_inserted, change_unchanged)
+ *  emit inline \change_*{} markers so the user can see pending edits at a
+ *  glance.  The {} wrapper form is a deliberate simplification of LyX source
+ *  syntax for readability — see dev log 45 for rationale. */
 function extractAllText(node: Node): string {
   if (node.type === "text") return node.text;
+  if (node.type === "property") {
+    if (node.key === "change_deleted") return "\\change_deleted{";
+    if (node.key === "change_inserted") return "\\change_inserted{";
+    if (node.key === "change_unchanged") return "}";
+    return "";
+  }
   if (node.type === "block") {
     if (node.tag === "inset") {
       return " inset[" + (node.args || "").trim() + "] ";
