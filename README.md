@@ -10,8 +10,8 @@ Quick start
 ### Highlight
 - `lq` mutates `.lyx` files in the same way as LyX (verified by LyX source code).
 - CLI + skills designed for **AI agents**.
-- Various helpers, including **Cross-reference and citation**.
-- **undo-able Tracked change**.
+- Various helpers, including **cross-reference and citation**.
+- **Undo-able Tracked change**.
 - **Auto refresh** opened `.lyx` files using [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
 
 ### Limitation
