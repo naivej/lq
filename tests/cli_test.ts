@@ -187,7 +187,7 @@ Deno.test("CLI - init success with fake home", { timeout: 10000 }, async () => {
     const config = JSON.parse(configText);
     assertEquals(config.layoutsDir, layoutsDir);
     assertEquals(config.refresh, "none");
-    assertEquals(config.trackChanges, false);
+    assertEquals(config.trackChanges, true);
   } finally {
     try { await Deno.remove(tmpHome, { recursive: true }); } catch { /* ignore */ }
     try { await Deno.remove(layoutsDir, { recursive: true }); } catch { /* ignore */ }

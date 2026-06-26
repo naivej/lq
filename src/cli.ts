@@ -22,6 +22,7 @@ Commands:
   bib       Extract available citation keys from linked bibliography files.
   set       Overwrite the targeted nodes with new text content.
   delete    Safely delete the targeted nodes from the LyX file.
+  undo      Revert tracked changes (change_deleted/change_inserted) in matched nodes.
   schema    Return a list of all semantically valid layouts.
   insert    Insert new blocks or properties before/after/prepend/append.
   init      Initialize the user configuration file.
@@ -125,6 +126,7 @@ Options:
                             save-reload Save unsaved edits first, then reload. Preserves
                                         everything. Requires LyX to be running.
   --track-changes <on|off> Enable or disable tracked changes for all mutation commands.
+                            Default: on.
                             When on: set wraps old text in \\change_deleted + new in \\change_inserted,
                                       delete wraps removed nodes in \\change_deleted,
                                       insert wraps new content in \\change_inserted.
@@ -172,7 +174,26 @@ Options:
                                pageref, vpageref, vref, nameref, formatted, labelonly.
   --label <name>               Insert a label inset with the given name.
   --footnote <text>            Insert a footnote inset containing a Plain Layout
-                               with the given text.`
+                               with the given text.`,
+
+  undo: `lq undo - Revert tracked changes in matched nodes.
+
+Usage:
+  lq undo <file> <selector> [<substring>]
+
+Arguments:
+  <file>       The path to the .lyx file.
+  <selector>   A CSS-like selector targeting nodes to inspect for tracked changes.
+  <substring>  Text inside the change_deleted or change_inserted block to revert.
+               Omit to revert ALL tracked changes in matched nodes.
+
+Only available when trackChanges is enabled (default: on). Each change_deleted or
+change_inserted marker must be undone individually, matching LyX's accept/reject
+behavior.
+
+Examples:
+  lq undo file.lyx "layout[Standard]" "bad phrase"   # revert one bad edit
+  lq undo file.lyx "layout[Section]"                  # revert all changes in sections`
 };
 
 // Helper to load user config
@@ -721,7 +742,7 @@ export async function runCli(args: string[]) {
       if (existing.trackChanges !== undefined) {
         config.trackChanges = existing.trackChanges;
       } else {
-        config.trackChanges = false;
+        config.trackChanges = true;
       }
     }
 
@@ -789,9 +810,9 @@ export async function runCli(args: string[]) {
   // --- Refresh pre-step (save-reload only) ---
   // Must happen BEFORE reading the file, so buffer-write saves the user's
   // latest edits to disk before lq reads the stale version.
-  const mutationCommands = ["set", "delete", "insert"];
+  const mutationCommands = ["set", "delete", "insert", "undo"];
   let refreshMode: "none" | "reload" | "save-reload" = "none";
-  let trackChanges = false;
+  let trackChanges = true;
   if (mutationCommands.includes(command)) {
     if (userConfig.refresh) refreshMode = userConfig.refresh;
     trackChanges = userConfig.trackChanges === true;
@@ -1763,6 +1784,93 @@ export async function runCli(args: string[]) {
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ position, label: nodeLabel(n), text: briefText(n) }));
     printJson({ status: "success", inserted_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });
+    return;
+  }
+
+  if (command === "undo") {
+    if (!trackChanges) {
+      printError("TRACK_CHANGES_OFF", "lq undo requires trackChanges to be enabled. Run 'lq init --track-changes on'.");
+      return;
+    }
+    if (nodes.length === 0) {
+      printError("NO_MATCH", "Selector matched no nodes to undo.");
+      return;
+    }
+    const substring: string | undefined = restArgs.length > 0 ? restArgs.join(" ") : undefined;
+
+    let undoneCount = 0;
+    const undoneLabels: string[] = [];
+
+    for (const node of nodes) {
+      if (node.type !== "block") continue;
+      const newChildren: Node[] = [];
+      let i = 0;
+
+      while (i < node.children.length) {
+        const child = node.children[i];
+        if (child.type === "property" && (child.key === "change_deleted" || child.key === "change_inserted")) {
+          // Collect text between this change marker and the next change_unchanged
+          const markerType = child.key;
+          const textParts: string[] = [];
+          let j = i + 1;
+          let foundUnchanged = false;
+          while (j < node.children.length) {
+            const next = node.children[j];
+            if (next.type === "property" && next.key === "change_unchanged") {
+              foundUnchanged = true;
+              break;
+            }
+            if (next.type === "text") {
+              textParts.push(next.text);
+            }
+            j++;
+          }
+
+          if (!foundUnchanged) {
+            // Malformed: no closing change_unchanged — keep as-is
+            newChildren.push(child);
+            i++;
+            continue;
+          }
+
+          const enclosedText = textParts.join("");
+
+          // Check if this change matches our target
+          const shouldUndo = substring === undefined || enclosedText.includes(substring);
+
+          if (shouldUndo) {
+            if (markerType === "change_deleted") {
+              // Restore: keep text nodes, drop the marker and closing change_unchanged
+              for (let k = i + 1; k < j; k++) newChildren.push(node.children[k]);
+            }
+            // change_inserted: drop everything (marker, text, change_unchanged)
+            // Both: skip past the closing change_unchanged
+            i = j + 1;
+            undoneCount++;
+            undoneLabels.push(markerType + "{" + (enclosedText.length > 60 ? enclosedText.substring(0, 60) + "..." : enclosedText) + "}");
+          } else {
+            // Not our target — keep everything as-is
+            for (let k = i; k <= j; k++) newChildren.push(node.children[k]);
+            i = j + 1;
+          }
+        } else {
+          newChildren.push(child);
+          i++;
+        }
+      }
+
+      node.children = newChildren;
+    }
+
+    const changes = undoneLabels.map(l => ({ label: l }));
+    if (undoneCount === 0 && substring !== undefined) {
+      pushWarning(`--undo did not match '${substring}' in any tracked change within the selector.`);
+    }
+    const newFileText = serialize(ast);
+    await Deno.writeTextFile(filePath, newFileText);
+    try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+    await refreshPostStep(filePath, refreshMode);
+    printJson({ status: "success", undone_changes: undoneCount, changes });
     return;
   }
 
