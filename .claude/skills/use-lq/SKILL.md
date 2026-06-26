@@ -38,7 +38,7 @@ The query engine supports traversing the CST using CSS-like syntax:
 
 ## Context-Aware Strict Validation
 
-`lq` features strict context validation. It will actively reject mutations that target core CST boundaries like `body` or `document`. It will also reject `insert` commands if you try to put a layout like `Section` inside an inset like `Foot`, or if you use an unrecognized layout. Unknown inset types produce a warning in the JSON response's `warnings` array but do NOT block the insertion.
+`lq` features strict context validation. It will actively reject mutations that target core CST boundaries like `body` or `document`. It will also reject `insert` commands if you try to put a layout like `Section` inside an inset like `Foot`, or if you use an unrecognized layout. Unknown inset types produce a warning but do NOT block the insertion.
 
 ## Commands
 
@@ -75,9 +75,9 @@ The query engine supports traversing the CST using CSS-like syntax:
   - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
   - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
 - `lq read <file> <selector> [--count] [--text-only]`
-  - Outputs matching nodes and text content as JSON.
-  - `--count`: Return only the match count (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`), omitting the data array.
-  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes as plain text with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Tracked changes appear as `\change_deleted{...}` and `\change_inserted{...}` inline markers. Double newline between nodes.
+  - Read matched nodes.
+  - `--count`: Return only the match count (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`).
+  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Tracked changes appear as `\change_deleted{...}` and `\change_inserted{...}` inline markers. Double newline between nodes.
 
 ### Mutate
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
@@ -134,15 +134,15 @@ Navigate large documents strategically with a zoom-in approach:
 
 ## Safe Mutation Workflow
 
-Mutations apply to all matched nodes of a selector. Specifically,
+All mutations (`insert`, `set`, `delete`, `undo`) apply to all matched nodes of a selector. In particular,
    - `insert` duplicates the payload once for each matched node.
-   - `set` and `delete` apply to *all* matched nodes — an overly broad selector (e.g., `layout[Standard]`) could wipe out the entire document!
-   - If more than 1 node matches, a warning appears in the JSON response's `warnings` array.
+   - `set` and `delete` could wipe out the entire document with an overly broad selector (e.g., `layout[Standard]`).
+   - If more than 1 node matches, a warning is issued (except for `undo`).
 
 When modifying a document, follow this safe workflow:
 1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
 2. **Test Blast Radius**: Run `lq read <file> <selector> --count` first. The subtype breakdown (e.g. `{"layout[Section]": 8, "layout[Standard]": 120}`) tells you the composition — if you meant to target sections but see 120 Standard layouts, your selector is wrong. Narrow before mutating.
-3. **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`. **Keep `new_text` scoped to only the changed substring.** `--find` operates on individual text nodes; `new_text` is the literal replacement, not merged with surrounding nodes. The match count appears in the JSON response's `warnings` array. 
+3. **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`. **Keep `new_text` scoped to only the changed substring.** `--find` operates on individual text nodes; `new_text` is the literal replacement, not merged with surrounding nodes.
 4. **Tracked changes**: Undo un-wanted changes before appling new changes. Re-editing a node that already has pending tracked changes produces a warning, because the new edit will nest inside existing markers (double-wrap).
 
 ## HOW-TO
@@ -154,7 +154,6 @@ When modifying a document, follow this safe workflow:
    ```bash
    lq read <file> "inset[CommandInset label]:contains('sec:')"
    ```
-   Extract the label name from the returned JSON's `children` text nodes.
 
    **Complex references via `--raw-file`**: When you need non-default params (`plural`, `caps`, `noprefix`, `nolink`, `tuple`), write the full inset to a temp file:
    ```
