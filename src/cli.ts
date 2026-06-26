@@ -297,19 +297,28 @@ async function getDefaultLayoutsDir(): Promise<string> {
   }
 }
 
+// Warnings accumulator — all warnings go to stdout JSON, never stderr.
+// Each printJson call flushes and clears the accumulator.
+const _warnings: string[] = [];
+
+function pushWarning(message: string) {
+  _warnings.push(message);
+}
+
 function printJson(data: unknown) {
+  // Attach pending warnings to every JSON response
+  if (_warnings.length > 0) {
+    (data as Record<string, unknown>).warnings = [..._warnings];
+    _warnings.length = 0;
+  } else {
+    (data as Record<string, unknown>).warnings = [];
+  }
   console.log(JSON.stringify(data, null, 2));
 }
 
 function printError(code: string, message: string) {
   printJson({ status: "error", code, message });
   Deno.exit(1);
-}
-
-function printWarning(message: string) {
-  // Output to stderr so it doesn't interfere with JSON stdout.
-  // Format as JSON for consistency with the tool's contract.
-  console.error(JSON.stringify({ status: "warning", message }));
 }
 
 /** Walk the parsed raw CST and validate all inset types against the registry. */
@@ -731,7 +740,7 @@ export async function runCli(args: string[]) {
     if (config.refresh !== "none") {
       const available = checkLyxServerAvailable();
       if (!available) {
-        printWarning(
+        pushWarning(
           `Refresh mode '${config.refresh}' requires a running LyX instance with LyXServer enabled. ` +
           "Could not detect LyXServer socket. Enable LyXServer in LyX Preferences and restart LyX."
         );
@@ -869,7 +878,7 @@ export async function runCli(args: string[]) {
       if (useFullAst) {
         const maxDepth = computeMaxDepth(ast, 0);
         if (depth > maxDepth) {
-          printWarning(`Depth ${depth} exceeds document depth (${maxDepth}). Showing full CST.`);
+          pushWarning(`Depth ${depth} exceeds document depth (${maxDepth}). Showing full CST.`);
           printJson({ status: "success", data: ast });
         } else {
           printJson({ status: "success", data: truncateAtDepth(ast, depth, 0) });
@@ -879,7 +888,7 @@ export async function runCli(args: string[]) {
           const doc = wrapAsDoc(root);
           const maxDepth = computeMaxDepth(doc, 0);
           if (depth > maxDepth) {
-            printWarning(`Depth ${depth} exceeds subtree depth (${maxDepth}). Showing full subtree.`);
+            pushWarning(`Depth ${depth} exceeds subtree depth (${maxDepth}). Showing full subtree.`);
             return doc;
           }
           return truncateAtDepth(doc, depth, 0);
@@ -1072,11 +1081,14 @@ export async function runCli(args: string[]) {
         const sizeKB = Math.round(output.length / KB);
         const warnMsg = `Warning: --text-only output is ${sizeKB}KB across ${nodes.length} nodes. ` +
           `Consider a more specific selector to reduce noise.`;
-        try {
-          await Deno.stderr.write(new TextEncoder().encode(warnMsg + "\n"));
-        } catch { /* ignore */ }
+        pushWarning(warnMsg);
       }
-      await Deno.stdout.write(new TextEncoder().encode(output));
+      // Prepend any pending warnings to the text output
+      const prefix = _warnings.length > 0
+        ? _warnings.map(w => `[${w}]`).join("\n") + "\n\n"
+        : "";
+      _warnings.length = 0;
+      await Deno.stdout.write(new TextEncoder().encode(prefix + output));
     } else {
       printJson({ status: "success", data: nodes, count: nodes.length });
     }
@@ -1097,9 +1109,7 @@ export async function runCli(args: string[]) {
   if (["set", "delete", "insert"].includes(command) && nodes.length > 1) {
     const warnMsg = `Warning: selector matches ${nodes.length} nodes. ` +
       `Run 'lq read ${filePath} "${selector}"' to inspect them before mutating.`;
-    try {
-      await Deno.stderr.write(new TextEncoder().encode(warnMsg + "\n"));
-    } catch { /* ignore */ }
+    pushWarning(warnMsg);
   }
 
   if (command === "set") {
@@ -1237,12 +1247,10 @@ export async function runCli(args: string[]) {
         printError("NO_MATCH", `--find '${findStr}' matched no occurrences within the targeted nodes.`);
         return;
       }
-      // Notify user of match count on stderr
+      // Notify user of match count
       const plural = totalFindMatches === 1 ? "" : "s";
       const findMsg = `--find matched ${totalFindMatches} occurrence${plural} of '${findStr}' across ${nodes.length} node(s).`;
-      try {
-        await Deno.stderr.write(new TextEncoder().encode(findMsg + "\n"));
-      } catch { /* ignore */ }
+      pushWarning(findMsg);
     }
 
     if (trackChanges) {
@@ -1388,7 +1396,7 @@ export async function runCli(args: string[]) {
         // Validate inset types in raw content (warning only)
         const warnings = validateRawInsets(tempAst);
         for (const w of warnings) {
-          printWarning(w);
+          pushWarning(w);
         }
 
         for (const n of validNodes) newNodesToInsert.push(n);
