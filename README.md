@@ -3,8 +3,9 @@
 `lq` is a standalone CLI tool designed to parse, query, and mutate LyX documents  (`.lyx` files) using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
 
 Quick start
-- Download the (fat) binary, then run `lq`
-- Or install deno, clone this repo, then run `deno run -A main.ts` or build the binary for your platform `deno task build`
+- Download the binary or build for your platform with `deno task build`
+- Configure with `lq init`
+- Ask your agent to use /use-lq
 
 ### Highlight
 - `lq` mutates `.lyx` files in the same way as LyX (verified by LyX source code).
