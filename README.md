@@ -10,8 +10,8 @@ Quick start
 ### Highlight
 - `lq` mutates `.lyx` files in the same way as LyX (verified by LyX source code).
 - CLI + skills designed for **AI agents**.
-- **Cross-reference and citation** support.
-- **Tracked change** support.
+- Various helpers, including **Cross-reference and citation**.
+- **undo-able Tracked change**.
 - **Auto refresh** opened `.lyx` files using [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
 
 ### Limitation
@@ -21,7 +21,6 @@ Quick start
 
 ### Known issue & TODO
 - Table and Figure helpers? (config: float, etc.)
-- Maybe we need dry run after all?
 - Daemon mode?
 - Some LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization) are not enforced by `lq`. Those are purely cosmetic and LyX reads files fine without them. As a result, open a `lq` edited file in LyX can cause formatting-only diffs.
 
@@ -51,9 +50,6 @@ While LyX is a frontend for LaTeX, `lq` operates entirely independently of the L
 - **Separation of Concerns**: The tool mutates the LyX source file format directly. It does not parse, understand, or interact with LaTeX syntax.
 - **Opaque Payloads**: Any raw LaTeX existing in the document (such as within `\begin_inset Formula`, `\begin_inset ERT`, or `\begin_preamble`) is treated as opaque string data and preserved flawlessly by the lossless parser.
 - **LyX as the Translator**: By strictly adhering to the schema defined in the LyX `.layout` files, `lq` ensures that the resulting `.lyx` file is structurally sound. When the user opens the file, the LyX engine handles the final translation to LaTeX.
-
-### Git-Driven Workflow (No Dry-Run)
-`lq` intentionally omits a `--dry-run` flag. It is designed under the assumption that the workspace is version-controlled via `git`, and users should rely on `git restore <file>` to undo unwanted changes.
 
 ## [User Manual](.claude/skills/use-lq/SKILL.md)
 

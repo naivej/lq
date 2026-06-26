@@ -38,7 +38,7 @@ The query engine supports traversing the CST using CSS-like syntax:
 
 ## Context-Aware Strict Validation
 
-`lq` features strict context validation. It will actively reject mutations that target core CST boundaries like `body` or `document`. It will also reject `insert` commands if you try to put a layout like `Section` inside an inset like `Foot`, or if you use an unrecognized layout. Unknown inset types produce a warning to stderr but do NOT block the insertion. Always check both stdout (for errors) and stderr (for warnings).
+`lq` features strict context validation. It will actively reject mutations that target core CST boundaries like `body` or `document`. It will also reject `insert` commands if you try to put a layout like `Section` inside an inset like `Foot`, or if you use an unrecognized layout. Unknown inset types produce a warning in the JSON response's `warnings` array but do NOT block the insertion.
 
 ## Commands
 
@@ -52,11 +52,11 @@ The query engine supports traversing the CST using CSS-like syntax:
     - `none` (default): No refresh. LyX detects external changes via its own polling and prompts the user to reload.
     - `reload`: Reload the buffer after `lq` writes, fail silently if LyXserver disconnects. Fast, but discards unsaved in-LyX edits.
     - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Throw an error and abort if LyXserver disconnects
-  - `--track-changes <on|off>`: Enable or disable (default) tracked changes for all mutation commands. When on, set `\tracking_changes true` and add an `\author` entry in the document header. 
+  - `--track-changes <on (default)|off>`: Enable or disable tracked changes for all mutation commands. When on, set `\tracking_changes true` and add an `\author` entry in the document header. 
     - Set preserves old text in `\change_deleted` + new in `\change_inserted`
     - Delete wraps removed nodes in `\change_deleted`
     - Insert wraps new content in `\change_inserted`
-  - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`.
+  - `--max-cache-entries <n (default 50)>`: Set the maximum number of cached parse results in `~/.lq/cache/`.
 
 ### Query
 - `lq schema <file> [--layouts-dir <path>]`
@@ -76,16 +76,21 @@ The query engine supports traversing the CST using CSS-like syntax:
   - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
 - `lq read <file> <selector> [--count] [--text-only]`
   - Outputs matching nodes and text content as JSON.
-  - `--count`: Return only the match count (`{"count": N}`), omitting the data array. Useful for checking blast radius before mutations.
-  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes as plain text with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Double newline between nodes.
+  - `--count`: Return only the match count (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`), omitting the data array.
+  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes as plain text with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Tracked changes appear as `\change_deleted{...}` and `\change_inserted{...}` inline markers. Double newline between nodes.
 
 ### Mutate
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
-  - Replaces text content within the targeted nodes while preserves non-text children (insets, properties) by default. 
+  - Default behaviour: replaces text content within the targeted nodes while preserves non-text children (insets, properties). 
   - `--replace-all`: Wipe all children and rebuild from scratch.
-  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced; a count is emitted to stderr.
+  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
+- `lq undo <file> <selector> [<substring>]`
+  - Requires `trackChanges: on`.
+  - Reverts tracked changes in matched nodes: `change_deleted` blocks are restored (marker removed, text kept); `change_inserted` blocks are discarded (marker and text removed). 
+  - Each marker is undone independently — to fully revert a `set`, run undo twice (once for the deleted text, once for the inserted text).
+  - `<substring>`: Text inside the `change_deleted` or `change_inserted` block to revert. Omit to revert ALL tracked changes in matched nodes.
 - `lq insert <file> <selector> <position> [helper]`
   - Insert new blocks or properties relative to a selector.
   - Positions:
@@ -102,39 +107,42 @@ The query engine supports traversing the CST using CSS-like syntax:
 
 # Best Practices
 
-1. **Embrace the Git Workflow**: You should work in a version-controlled workspace. `git stage` and `git restore` is essentially the dry run. `git commit` for checkpoints / milestones so you can undo unwanted changes.
-2. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Any raw LaTeX (like equations inside `inset[Formula]`) is treated as pure string data. Do not try to parse the LaTeX syntax itself; simply target the `inset[Formula]` node and replace its text content.
-3. **Match the query tool to the task** — `lq` operates on files that can be tens of thousands of lines. Using the wrong command wastes tokens and hides the information you need.
+## Before you start
 
-   | You want to… | Use this |
-   |---|---|
-   | See the document outline | `lq dump <file> --depth 2` |
-   | Scan all body text | `lq read <file> "layout" --text-only` |
-   | Get just section headings | `lq read <file> "layout[Section]" --text-only` |
-   | Find a specific paragraph by content | `lq read <file> "layout:contains('unique phrase')" --text-only` |
-   | Check how many nodes a selector matches | `lq read <file> "<selector>" --count` |
-   | Inspect a specific node's CST | `lq read <file> "<precise selector>"` |
-   | Deep-debug a node's children | `lq dump <file> "<selector>"` |
-   | Find a citation key | `lq bib <file> --search "keyword"` |
+1. **Make sure `lq` is configured**: Always run `lq init` first to set up / confirm configeration. But **NEVER change configreation** without clear instructions or consent from the user.
+2. **Embrace the Git Workflow**: You should work in a version-controlled workspace. `git stage` and `git restore` is essentially the dry run. `git commit` for checkpoints / milestones so you can undo unwanted changes.
+3. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Any raw LaTeX (like equations inside `inset[Formula]`) is treated as pure string data. Do not try to parse the LaTeX syntax itself; simply target the `inset[Formula]` node and replace its text content.
+4. **Stop for LyXServer errors**: If `lq` cannot connect LyXServer, stop immediately and ask the user to turn on LyXServer or turn off auto refresh.
 
-   **Never:** bare `lq dump` (100K+ tokens), bare `lq bib` (thousands of entries), or `lq read "layout"` without `--text-only` (full JSON for every paragraph).
-4. **Make sure `lq` is configured**: Always run `lq init` first to set up / confirm configeration. But **NEVER change configreation** without clear instructions or consent from the user.
-5. **Stop for LyXServer errors**: If `lq` cannot connect LyXServer, stop immediately and ask the user to turn on LyXServer or turn off auto refresh.
+## Smart query
+
+Navigate large documents strategically with a zoom-in approach:
+
+| You want to… | Use this |
+|---|---|
+| See the document outline | `lq dump <file> --depth 2` |
+| Get just section headings | `lq read <file> "layout[Section]" --text-only` |
+| Read body text under a section | `lq read <file> "layout[Section]:contains('Theory') layout" --text-only` |
+| Find a specific paragraph by content | `lq read <file> "layout:contains('unique phrase')" --text-only` |
+| Check selector blast radius & composition | `lq read <file> "<selector>" --count` |
+| Inspect a specific node's CST | `lq read <file> "<precise selector>"` |
+| Deep-debug a node's children | `lq dump <file> "<selector>"` |
+| Find a citation key | `lq bib <file> --search "keyword"` |
+| Revert a tracked change | `lq undo <file> "<selector>" "bad text"` |
+
+**Never:** read the whole document at once, bare `lq dump`, bare `lq read "layout"` without `--text-only`, or bare `lq bib`.
 
 ## Safe Mutation Workflow
 
 Mutations apply to all matched nodes of a selector. Specifically,
    - `insert` duplicates the payload once for each matched node.
    - `set` and `delete` apply to *all* matched nodes — an overly broad selector (e.g., `layout[Standard]`) could wipe out the entire document!
-   - If there are more than 1 match, a warning is emitted to stderr with the count.
+   - If more than 1 node matches, a warning appears in the JSON response's `warnings` array.
 
 When modifying a document, follow this safe workflow:
 1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
-2. **Test Blast Radius (i.e. the number of nodes a selector matches)**: Run `lq read --count <file> <selector>` to verify how many nodes the selector matches. Then `lq read <file> <selector>` to verify selector targets exactly what's intended.
-3. **Choose the right mutation strategy**:
-   - **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`.
-   - **Full replacement** (title change, rewrite paragraph): Use plain `lq set` or `lq set --replace-all`.
-   - **Structural change** (add/remove/move sections): Use `lq insert` / `lq delete`.
+2. **Test Blast Radius**: Run `lq read <file> <selector> --count` first. The subtype breakdown (e.g. `{"layout[Section]": 8, "layout[Standard]": 120}`) tells you the composition — if you meant to target sections but see 120 Standard layouts, your selector is wrong. Narrow before mutating.
+3. **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`. **Keep `new_text` scoped to only the changed substring.** `--find` operates on individual text nodes; `new_text` is the literal replacement, not merged with surrounding nodes. The match count appears in the JSON response's `warnings` array. 
 
 ## HOW-TO
 1. **Cross-Referencing**: Before inserting a cross-reference, find the exact label names. Labels are stored as text inside `CommandInset label` insets. Query all labels with:
