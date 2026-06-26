@@ -42,10 +42,11 @@ Arguments:
 Options:
   --count     Return only the match count as JSON, broken down by subtype\n              ({\"count\": {\"layout[Section]\": 12, \"layout[Standard]\": 450}}).
               Useful for checking blast radius before mutations without parsing large output.
-  --text-only Output the text content of matched nodes as plain text with structural
-              annotations. Each matched node gets a tag[args] prefix (e.g. layout[Standard]),
+  --text-only Output the text content of matched nodes as JSON with a \`text\` field.
+              Each matched node gets a tag[args] prefix (e.g. layout[Standard]),
               and insets appear as inline markers (e.g. inset[Foot]). Double newline
-              between nodes. Useful for proofreading. Mutually exclusive with --count.`,
+              between nodes. Warnings appear in the \`warnings\` array. Useful for
+              proofreading. Mutually exclusive with --count.`,
 
   dump: `lq dump - Output the CST (optionally scoped to a selector) as JSON.
 
@@ -497,6 +498,21 @@ function countOccurrences(text: string, findStr: string): number {
     pos += findStr.length;
   }
   return count;
+}
+
+/** Recursively check if children already contain pending tracked changes
+ *  (change_deleted or change_inserted property nodes). Used to warn before
+ *  re-editing a node that has not yet had its changes accepted/undone. */
+function hasTrackedChanges(children: Node[]): boolean {
+  for (const c of children) {
+    if (c.type === "property" && (c.key === "change_deleted" || c.key === "change_inserted")) {
+      return true;
+    }
+    if (c.type === "block") {
+      if (hasTrackedChanges((c as BlockNode).children)) return true;
+    }
+  }
+  return false;
 }
 
 function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted"): Node[] {
@@ -1105,11 +1121,7 @@ export async function runCli(args: string[]) {
         pushWarning(warnMsg);
       }
       // Prepend any pending warnings to the text output
-      const prefix = _warnings.length > 0
-        ? _warnings.map(w => `[${w}]`).join("\n") + "\n\n"
-        : "";
-      _warnings.length = 0;
-      await Deno.stdout.write(new TextEncoder().encode(prefix + output));
+      printJson({ status: "success", text: output });
     } else {
       printJson({ status: "success", data: nodes, count: nodes.length });
     }
@@ -1217,6 +1229,16 @@ export async function runCli(args: string[]) {
           }
         } else if (trackChanges) {
           // Full-text replace with trackChanges (existing behavior)
+          // Warn if the node already contains pending tracked changes — the new
+          // edit will nest inside existing markers (double-wrap). The user should
+          // run `lq undo` first to revert pending changes before re-editing.
+          if (hasTrackedChanges(node.children)) {
+            pushWarning(
+              `This node already contains pending tracked changes. ` +
+              `Run 'lq undo ${filePath} "${selector}"' first to revert them, ` +
+              `or this edit will nest inside existing markers.`
+            );
+          }
           if (replaceAll) {
             node.children = [
               { type: "property", key: "change_deleted", value: `${tcAid} ${tcTs}` },
@@ -1682,15 +1704,26 @@ export async function runCli(args: string[]) {
 
         if (position === "split-after") {
           if (!targetParentBlock) continue;
-          // Collect all descendant text nodes and count matches of splitMatch
+          // Collect descendant text nodes, skipping text inside \change_deleted
+          // blocks (those represent old/replaced content, not valid targets for
+          // new insertions). This prevents SPLIT_AMBIGUOUS when the same substring
+          // appears in both deleted and inserted blocks after a tracked edit.
           const allTextNodes: { node: Node & { type: "text" }; parentList: Node[]; index: number }[] = [];
-          const collectTextNodes = (children: Node[]) => {
+          const collectTextNodes = (children: Node[], inDeleted = false) => {
+            let skipUntilUnchanged = inDeleted;
             for (let i = 0; i < children.length; i++) {
               const c = children[i];
+              if (c.type === "property") {
+                if (c.key === "change_deleted") skipUntilUnchanged = true;
+                else if (c.key === "change_unchanged") skipUntilUnchanged = false;
+                continue;
+              }
               if (c.type === "text") {
-                allTextNodes.push({ node: c, parentList: children, index: i });
+                if (!skipUntilUnchanged) {
+                  allTextNodes.push({ node: c, parentList: children, index: i });
+                }
               } else if (c.type === "block") {
-                collectTextNodes((c as BlockNode).children);
+                collectTextNodes((c as BlockNode).children, skipUntilUnchanged);
               }
             }
           };

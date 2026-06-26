@@ -96,7 +96,7 @@ The query engine supports traversing the CST using CSS-like syntax:
   - Positions:
     - `before`/`after`: insert a layout as a **sibling** of the target.
     - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
-    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in the target block.
+    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in current text (text inside `\change_deleted` blocks is skipped — those represent old/replaced content, not valid targets for new insertions).
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
@@ -143,6 +143,7 @@ When modifying a document, follow this safe workflow:
 1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
 2. **Test Blast Radius**: Run `lq read <file> <selector> --count` first. The subtype breakdown (e.g. `{"layout[Section]": 8, "layout[Standard]": 120}`) tells you the composition — if you meant to target sections but see 120 Standard layouts, your selector is wrong. Narrow before mutating.
 3. **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`. **Keep `new_text` scoped to only the changed substring.** `--find` operates on individual text nodes; `new_text` is the literal replacement, not merged with surrounding nodes. The match count appears in the JSON response's `warnings` array. 
+4. **Tracked changes**: Undo un-wanted changes before appling new changes. Re-editing a node that already has pending tracked changes produces a warning, because the new edit will nest inside existing markers (double-wrap).
 
 ## HOW-TO
 1. **Cross-Referencing**: Before inserting a cross-reference, find the exact label names. Labels are stored as text inside `CommandInset label` insets. Query all labels with:
