@@ -11,13 +11,12 @@ Quick start
 - `lq` mutates `.lyx` files in the same way as LyX (verified by LyX source code).
 - CLI + skills designed for **AI agents**.
 - Various helpers, including **cross-reference and citation**.
-- **Undo-able Tracked change**.
+- **Undo-able tracked change**.
 - **Auto refresh** opened `.lyx` files using [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
 
 ### Limitation
 - `lq` is designed to edit existing LyX documents, not to create one from scratch. It enables AI-assisted writing, not type-setting. That said, all LyX syntax is supported, so typesetting with `lq` is possible in principle.
 - **Windows auto-refresh**: Before auto-refresh, we use LyX function `buffer-switch` to ensure that mutations are reloaded into the correct target file, rather than the one that users are working on in the GUI. This however does not work on Windows, because LyXServer uses a named pipe protocol that delimits messages with `:`, which conflicts with the drive letter in Windows absolute paths (e.g. `C:\...`). As a result, `buffer-switch` cannot be sent through the pipe, and auto-refresh operates on LyX's active buffer rather than switching to the target file first. **Windows users are advised to open only one `.lyx` file while using `lq`.**
-- LyXServer currently can not report cursor location in an opened `.lyx` file. Thus it might be difficult to communicate with AI agent about exactly what you want to edit.
 
 ### Known issue & TODO
 - Table and Figure helpers? (config: float, etc.)
