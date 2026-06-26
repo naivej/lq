@@ -21,7 +21,7 @@ export interface CliResult {
   inserted_nodes?: number;
   modified_nodes?: number;
   deleted_nodes?: number;
-  count?: number;
+  count?: number | Record<string, number>;
   data?: unknown;
 }
 

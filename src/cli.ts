@@ -39,7 +39,7 @@ Arguments:
               Pseudo-classes (:first, :contains(), etc.) must follow a tag.
 
 Options:
-  --count     Return only the match count as JSON ({\"count\": N}), omitting the data array.
+  --count     Return only the match count as JSON, broken down by subtype\n              ({\"count\": {\"layout[Section]\": 12, \"layout[Standard]\": 450}}).
               Useful for checking blast radius before mutations without parsing large output.
   --text-only Output the text content of matched nodes as plain text with structural
               annotations. Each matched node gets a tag[args] prefix (e.g. layout[Standard]),
@@ -1016,7 +1016,14 @@ export async function runCli(args: string[]) {
       return;
     }
     if (countOnly) {
-      printJson({ status: "success", count: nodes.length });
+      const tally: Record<string, number> = {};
+      for (const node of nodes) {
+        const key = node.type === "block"
+          ? node.tag + "[" + ((node.args || "").trim()) + "]"
+          : node.type;
+        tally[key] = (tally[key] || 0) + 1;
+      }
+      printJson({ status: "success", count: tally });
     } else if (textOnly) {
       const texts: string[] = [];
       for (const node of nodes) {

@@ -78,9 +78,9 @@ Deno.test("CLI - dump command", { timeout: 10000 }, async () => {
 Deno.test("CLI - read --count", { timeout: 10000 }, async () => {
   const result = await runCliTest(["read", "--count", FIXTURE, "layout"]);
   assertEquals(result.status, "success");
-  const count = (result as unknown as Record<string, unknown>).count as number;
-  assertEquals(typeof count, "number");
-  assertGreater(count, 0);
+  const count = (result as unknown as Record<string, unknown>).count as Record<string, number>;
+  assertEquals(typeof count, "object");
+  assertGreater(Object.keys(count).length, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -127,7 +127,8 @@ Deno.test("CLI - delete command success", { timeout: 10000 }, async () => {
   try {
     // Count Standard layouts before delete
     const before = await runCliTest(["read", "--count", tempFile, "layout[Standard]"]);
-    const countBefore = (before as unknown as Record<string, unknown>).count as number;
+    const countBefore = (before as unknown as Record<string, unknown>).count as Record<string, number>;
+    const totalBefore = Object.values(countBefore).reduce((a, b) => a + b, 0);
 
     // Delete the first Standard layout
     const result = await runCliTest(["delete", tempFile, "layout[Standard]:first"]);
@@ -135,7 +136,8 @@ Deno.test("CLI - delete command success", { timeout: 10000 }, async () => {
 
     // Verify count decreased by 1
     const after = await runCliTest(["read", "--count", tempFile, "layout[Standard]"]);
-    assertEquals((after as unknown as Record<string, unknown>).count, countBefore - 1);
+    const totalAfter = Object.values((after as unknown as Record<string, unknown>).count as Record<string, number>).reduce((a, b) => a + b, 0);
+    assertEquals(totalAfter, totalBefore - 1);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -228,7 +230,8 @@ Deno.test("CLI - delete with trackChanges", { timeout: 10000 }, async () => {
       ["read", "--count", tempFile, "layout[Standard]"],
       { trackChanges: true },
     );
-    const countBefore = (before as unknown as Record<string, unknown>).count as number;
+    const countBefore = (before as unknown as Record<string, unknown>).count as Record<string, number>;
+    const totalBefore = Object.values(countBefore).reduce((a, b) => a + b, 0);
 
     // Delete the first Standard layout with trackChanges
     const result = await runCliWithConfig(
@@ -243,7 +246,8 @@ Deno.test("CLI - delete with trackChanges", { timeout: 10000 }, async () => {
       ["read", "--count", tempFile, "layout[Standard]"],
       { trackChanges: true },
     );
-    assertEquals((after as unknown as Record<string, unknown>).count, countBefore);
+    const totalAfter = Object.values((after as unknown as Record<string, unknown>).count as Record<string, number>).reduce((a, b) => a + b, 0);
+    assertEquals(totalAfter, totalBefore);
 
     // Verify markers are in the file
     const text = await Deno.readTextFile(tempFile);
