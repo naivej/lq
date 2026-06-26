@@ -1377,7 +1377,7 @@ export async function runCli(args: string[]) {
       return;
     }
 
-    let position = restArgs[0];
+    const position = restArgs[0];
     
     // split-after <text> — match string is the next positional arg
     let splitMatch: string | undefined;
