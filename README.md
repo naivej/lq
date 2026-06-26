@@ -5,7 +5,7 @@
 Quick start
 - Download the binary or build for your platform with `deno task build`
 - Configure with `lq init`
-- Ask your agent to use /use-lq
+- Ask your agent to /use-lq
 
 ### Highlight
 - `lq` mutates `.lyx` files in the same way as LyX (verified by LyX source code).
