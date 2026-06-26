@@ -62,6 +62,7 @@ While LyX is a frontend for LaTeX, `lq` operates entirely independently of the L
 Requires **Deno 2.8+**.
 
 - **Run tests:** `deno test -A`
+- **Only affected tests:** `deno test -A --changed` (Deno 2.9+)
 - **Test coverage:** `deno task coverage` generates per-function coverage report in `./cov`
 - **Benchmark:** `deno bench -A --no-check tests/bench.ts`
 - **CPU profiling:** `deno task profile <args...>` (outputs .cpuprofile, SVG flamegraph, and Markdown report)
