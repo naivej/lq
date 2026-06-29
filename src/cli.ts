@@ -489,6 +489,68 @@ function nodeLabel(node: Node): string {
   return node.type;
 }
 
+interface TocNode {
+  layout: string;
+  text: string;
+  children: TocNode[];
+}
+
+function buildToc(ast: DocumentNode, headingHierarchy: { layout: string; tocLevel: number }[]): TocNode[] {
+  const rankMap = new Map(headingHierarchy.map((h, i) => [h.layout, i]));
+
+  function rank(layout: string): number {
+    const r = rankMap.get(layout);
+    return r === undefined ? Infinity : r;
+  }
+
+  const stack: TocNode[] = [];
+  const roots: TocNode[] = [];
+
+  // Headings live under body > document > root. Traverse to find body.
+  const docBlock = ast.children.find(n => n.type === "block" && n.tag === "document");
+  const bodyNode = docBlock && docBlock.type === "block"
+    ? docBlock.children.find(n => n.type === "block" && n.tag === "body")
+    : undefined;
+  const topLevelChildren = bodyNode && bodyNode.type === "block" ? bodyNode.children : ast.children;
+
+  for (const node of topLevelChildren) {
+    if (node.type !== "block") continue;
+    const layoutName = (node.args || "").trim().split(" ")[0];
+    const r = rank(layoutName);
+    if (r === Infinity) continue;
+
+    const entry: TocNode = {
+      layout: layoutName,
+      text: extractAllText(node).trim(),
+      children: [],
+    };
+
+    while (stack.length > 0 && rank(stack[stack.length - 1].layout) >= r) {
+      stack.pop();
+    }
+
+    if (stack.length === 0) {
+      roots.push(entry);
+    } else {
+      stack[stack.length - 1].children.push(entry);
+    }
+    stack.push(entry);
+  }
+
+  return roots;
+}
+
+/** Limit TOC tree to a given depth (0 = only top-level headings). */
+function truncateTocDepth(nodes: TocNode[], maxDepth: number, currentDepth: number): TocNode[] {
+  if (currentDepth >= maxDepth) {
+    return nodes.map(n => ({ ...n, children: [] }));
+  }
+  return nodes.map(n => ({
+    ...n,
+    children: truncateTocDepth(n.children, maxDepth, currentDepth + 1),
+  }));
+}
+
 function countOccurrences(text: string, findStr: string): number {
   if (findStr.length === 0) return 0;
   let count = 0;
@@ -877,11 +939,59 @@ export async function runCli(args: string[]) {
     // Dump may have --depth before the selector destructuring consumes it.
     // Parse from selector + restArgs to catch both "--depth N" patterns.
     const dumpArgs = selector ? [selector, ...restArgs] : restArgs;
-    const dumpFlags = parseArgs(dumpArgs, { string: ["depth"] });
+    const dumpFlags = parseArgs(dumpArgs, { boolean: ["toc"], string: ["depth"] });
     const depthStr = dumpFlags["depth"];
+    const tocMode = dumpFlags["toc"] === true;
     
     // If selector is present and not a flag, use it to target a subtree
     const dumpSelector = (selector && !selector.startsWith("--")) ? selector : undefined;
+    
+    // --toc mode: output heading tree
+    if (tocMode) {
+      if (dumpSelector) {
+        printError("FLAG_CONFLICT", "--toc and selector are mutually exclusive.");
+        return;
+      }
+      // Get heading hierarchy from schema
+      const textclassNode = query(ast, "textclass")[0];
+      const textclass = (textclassNode && textclassNode.type === "property" && textclassNode.value)
+        ? textclassNode.value : null;
+      if (!textclass) {
+        printError("NO_TEXTCLASS", "Could not determine textclass from the document.");
+        return;
+      }
+      let headingHierarchy: { layout: string; tocLevel: number }[];
+      try {
+        const layoutsDir = userConfig.layoutsDir || await getDefaultLayoutsDir();
+        const schema = await getSchemaForClass(textclass, layoutsDir);
+        headingHierarchy = schema.headingHierarchy;
+      } catch {
+        // Fallback: standard LaTeX hierarchy
+        headingHierarchy = [
+          { layout: "Chapter", tocLevel: 0 },
+          { layout: "Section", tocLevel: 1 },
+          { layout: "Subsection", tocLevel: 2 },
+          { layout: "Subsubsection", tocLevel: 3 },
+          { layout: "Paragraph", tocLevel: 4 },
+          { layout: "Subparagraph", tocLevel: 5 },
+        ];
+      }
+      
+      let toc = buildToc(ast, headingHierarchy);
+      
+      // Apply --depth limit to toc tree
+      if (depthStr !== undefined) {
+        const depth = parseInt(depthStr, 10);
+        if (isNaN(depth) || depth < 0) {
+          printError("INVALID_FLAG", "--depth must be a non-negative integer.");
+          return;
+        }
+        toc = truncateTocDepth(toc, depth, 0);
+      }
+      
+      printJson({ status: "success", data: toc });
+      return;
+    }
     
     let roots: Node[] = []; // default: empty, will use ast directly
     let useFullAst = true;
@@ -1072,10 +1182,8 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "read") {
-    if (countOnly && textOnly) {
-      printError("FLAG_CONFLICT", "--count and --text-only are mutually exclusive.");
-      return;
-    }
+    const result: Record<string, unknown> = { status: "success" };
+
     if (countOnly) {
       const tally: Record<string, number> = {};
       for (const node of nodes) {
@@ -1084,8 +1192,10 @@ export async function runCli(args: string[]) {
           : node.type;
         tally[key] = (tally[key] || 0) + 1;
       }
-      printJson({ status: "success", count: tally });
-    } else if (textOnly) {
+      result.count = tally;
+    }
+
+    if (textOnly) {
       const texts: string[] = [];
       for (const node of nodes) {
         // Prefix each matched node with its own selector so the user
@@ -1120,11 +1230,15 @@ export async function runCli(args: string[]) {
           `Consider a more specific selector to reduce noise.`;
         pushWarning(warnMsg);
       }
-      // Prepend any pending warnings to the text output
-      printJson({ status: "success", text: output });
-    } else {
-      printJson({ status: "success", data: nodes, count: nodes.length });
+      result.text = output;
     }
+
+    if (!countOnly && !textOnly) {
+      result.data = nodes;
+      result.count = nodes.length;
+    }
+
+    printJson(result);
     return;
   }
 
@@ -1290,9 +1404,30 @@ export async function runCli(args: string[]) {
         printError("NO_MATCH", `--find '${findStr}' matched no occurrences within the targeted nodes.`);
         return;
       }
-      // Notify user of match count
+      // Build per-node breakdown for richer feedback
+      const affectedNodes: Record<string, number> = {};
+      for (const node of nodes) {
+        if (node.type === "block" || node.type === "text") {
+          const key = node.type === "block"
+            ? node.tag + "[" + ((node.args || "").trim()) + "]"
+            : "text";
+          let count = 0;
+          if (node.type === "text") {
+            count = countOccurrences(node.text, findStr);
+          } else {
+            for (const child of node.children) {
+              if (child.type === "text") count += countOccurrences(child.text, findStr);
+            }
+          }
+          if (count > 0) affectedNodes[key] = (affectedNodes[key] || 0) + count;
+        }
+      }
       const plural = totalFindMatches === 1 ? "" : "s";
-      const findMsg = `--find matched ${totalFindMatches} occurrence${plural} of '${findStr}' across ${nodes.length} node(s).`;
+      const nodeList = Object.entries(affectedNodes)
+        .map(([k, c]) => `${k} (${c} occurrence${c === 1 ? "" : "s"})`)
+        .join(", ");
+      const findMsg = `--find matched ${totalFindMatches} occurrence${plural} of '${findStr}' across ${nodes.length} node(s): ${nodeList}. ` +
+        `To target a specific occurrence, use a longer unique substring (include surrounding words).`;
       pushWarning(findMsg);
     }
 

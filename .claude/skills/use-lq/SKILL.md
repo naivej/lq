@@ -28,11 +28,13 @@ To effectively use the query engine, Users need to understand how LyX syntax map
 The query engine supports traversing the CST using CSS-like syntax:
 - **Tags**: `layout` (e.g., standard paragraphs, sections), `inset` (e.g., formulas, footnotes, figures), `property` (e.g. `\family roman`).
 - **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`.
-- **Descendants**: Space-separated paths like `layout[Section] inset[Formula]` (finds a Formula inside a Section).
+- **Descendant combinator** (` `): Finds descendants with space-separated paths. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.
+- **Sibling combinator** (`~`): Finds following siblings. Example: `layout[Section] ~ layout[Standard]` matches all Standard layouts after a Section.
 - **Pseudo-classes** (must follow a tag e.g., `layout:contains("text")`, `inset:first`):
   - `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`).
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
+  - `:until(selector)` bounds a `~` sibling range — rejects nodes that have a sibling matching the inner selector between themselves and the anchor. Example: `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` gives all Standard paragraphs in the Introduction section.
   - `:contains("text")` searches recursively and case-sensitively node children for text.
   - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 
@@ -70,14 +72,15 @@ The query engine supports traversing the CST using CSS-like syntax:
   - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
   - Each citation includes `key`, `author`, `title`, and `year`.
   - `--search <text>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
-- `lq dump <file> [<selector>] [--depth <n>]`
+- `lq dump <file> [<selector>] [--depth <n>] [--toc]`
   - Outputs the CST as a JSON document.
   - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
   - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
+  - `--toc`: Output a hierarchical heading tree (table of contents) instead of raw CST. Heading levels are read from the document class's `.layout` file. `--depth` limits TOC nesting depth (1 = top-level sections only). Mutually exclusive with selector.
 - `lq read <file> <selector> [--count] [--text-only]`
   - Read matched nodes.
-  - `--count`: Return only the match count (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`).
-  - `--text-only` (Mutually exclusive with `--count`): Output the text content of matched nodes with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Tracked changes appear as `\change_deleted{...}` and `\change_inserted{...}` inline markers. Double newline between nodes.
+  - `--count`: Return match counts by type (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`).
+  - `--text-only`: Output the text content of matched nodes with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Tracked changes appear as `\change_deleted{...}` and `\change_inserted{...}` inline markers. Double newline between nodes.
 
 ### Mutate
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
@@ -110,7 +113,7 @@ The query engine supports traversing the CST using CSS-like syntax:
 ## Before you start
 
 1. **Make sure `lq` is configured**: Always run `lq init` first to set up / confirm configeration. But **NEVER change configreation** without clear instructions or consent from the user.
-2. **Embrace the Git Workflow**: You should work in a version-controlled workspace. `git stage` and `git restore` is essentially the dry run. `git commit` for checkpoints / milestones so you can undo unwanted changes.
+2. **Embrace the Git Workflow**: Work in a version-controlled workspace. `git stage` before mutating, then review with `git diff`. If you don't like the result, `git restore` reverts everything — or `lq undo` reverts individual tracked changes without touching other edits. There is no `--dry-run` flag because git + undo cover the same need.
 3. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Any raw LaTeX (like equations inside `inset[Formula]`) is treated as pure string data. Do not try to parse the LaTeX syntax itself; simply target the `inset[Formula]` node and replace its text content.
 4. **Stop for LyXServer errors**: If `lq` cannot connect LyXServer, stop immediately and ask the user to turn on LyXServer or turn off auto refresh.
 
@@ -120,10 +123,12 @@ Navigate large documents strategically with a zoom-in approach:
 
 | You want to… | Use this |
 |---|---|
-| See the document outline | `lq dump <file> --depth 2` |
+| See the document outline | `lq dump <file> --toc` |
 | Get just section headings | `lq read <file> "layout[Section]" --text-only` |
-| Read body text under a section | `lq read <file> "layout[Section]:contains('Theory') layout" --text-only` |
+| Read body text under a section | `lq read <file> "layout[Section]:contains('Theory') ~ layout:until(layout[Section])" --text-only` |
+| Read all body text under a section (broad) | `lq read <file> "layout[Section]:contains('Theory') ~ layout:until(layout[Section])" --count --text-only` |
 | Find a specific paragraph by content | `lq read <file> "layout:contains('unique phrase')" --text-only` |
+| Find a paragraph by multiple keywords | `lq read <file> "layout:contains('climate'):contains('policy')" --text-only` |
 | Check selector blast radius & composition | `lq read <file> "<selector>" --count` |
 | Inspect a specific node's CST | `lq read <file> "<precise selector>"` |
 | Deep-debug a node's children | `lq dump <file> "<selector>"` |

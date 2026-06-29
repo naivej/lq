@@ -1,7 +1,7 @@
 import { DocumentNode, Node, BlockNode } from "./ast.ts";
 
 export interface PseudoClass {
-  name: "first" | "last" | "nth" | "contains" | "nth-child" | "not" | "adjacent";
+  name: "first" | "last" | "nth" | "contains" | "nth-child" | "not" | "adjacent" | "until";
   argRaw?: string;
 }
 
@@ -9,6 +9,7 @@ export interface SelectorPart {
   tag?: string;      // e.g., 'layout', 'inset'
   argExact?: string; // e.g., 'Section' inside [Section]
   pseudos?: PseudoClass[];
+  combinator?: "descendant" | "sibling"; // space (default) or ~
 }
 
 export type Selector = SelectorPart[][]; // Array of paths, where each path is an array of parts
@@ -25,11 +26,11 @@ function parsePseudoClasses(suffix: string): PseudoClass[] {
     const pName = pMatch[1];
     const pArg = pMatch[2] ? pMatch[2].trim() : undefined;
 
-    if (!["first", "last", "nth", "nth-child", "contains", "not", "adjacent"].includes(pName)) {
+    if (!["first", "last", "nth", "nth-child", "contains", "not", "adjacent", "until"].includes(pName)) {
       throw new Error(`Unsupported pseudo-class: :${pName}`);
     }
 
-    if (pName === "not" || pName === "adjacent") {
+    if (pName === "not" || pName === "adjacent" || pName === "until") {
       if (!pArg) throw new Error(`:${pName}() requires a selector argument, e.g. :${pName}(layout[Section])`);
       // Allow bare pseudo-classes in inner selectors — :not(:contains('TODO'))
       // is valid even though :contains('TODO') has no tag at the top level.
@@ -158,38 +159,49 @@ export function parseSelector(selector: string): SelectorPart[][] {
     const unquoted = sel.replace(/"[^"]*"/g, "").replace(/'[^']*'/g, "");
     if ((unquoted.match(/\[/g) || []).length !== (unquoted.match(/\]/g) || []).length) throw new Error(`Unclosed bracket in selector part: ${sel}`);
     
-    // Split by whitespace, respecting brackets, quotes, and paren depth.
-    const parts = splitSelectorByWhitespace(sel.trim());
-    return parts.map((part) => {
-      const tagMatch = part.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?/);
-      if (!tagMatch) throw new Error(`Invalid selector part: ${part}`);
-      
-      const tag = tagMatch[1];
-      const rawArg = tagMatch[2];
+    // Split by ~ to get sibling-combinator groups, then split each group by whitespace.
+    // The first group uses default descendant combinator; subsequent groups'
+    // first part gets combinator: "sibling".
+    const tildeGroups = splitRespectingDelimiters(sel.trim(), "~");
+    const allParts: SelectorPart[] = [];
+    
+    for (let gi = 0; gi < tildeGroups.length; gi++) {
+      const groupParts = splitSelectorByWhitespace(tildeGroups[gi].trim());
+      for (let pi = 0; pi < groupParts.length; pi++) {
+        const part = groupParts[pi];
+        const tagMatch = part.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?/);
+        if (!tagMatch) throw new Error(`Invalid selector part: ${part}`);
+        
+        const tag = tagMatch[1];
+        const rawArg = tagMatch[2];
 
-      let argExact: string | undefined = undefined;
-      if (rawArg) {
-        const attrMatch = rawArg.match(/^(?:[a-zA-Z0-9_-]+=['"]?([^'"]+)['"]?|['"]?([^'"]+)['"]?)$/);
-        if (attrMatch) {
-          argExact = attrMatch[1] !== undefined ? attrMatch[1] : attrMatch[2];
-        } else {
-          argExact = rawArg;
+        let argExact: string | undefined = undefined;
+        if (rawArg) {
+          const attrMatch = rawArg.match(/^(?:[a-zA-Z0-9_-]+=['"]?([^'"]+)['"]?|['"]?([^'"]+)['"]?)$/);
+          if (attrMatch) {
+            argExact = attrMatch[1] !== undefined ? attrMatch[1] : attrMatch[2];
+          } else {
+            argExact = rawArg;
+          }
         }
+
+        const pseudoString = part.substring(tagMatch[0].length);
+        const pseudos = parsePseudoClasses(pseudoString);
+
+        if (pseudos.length > 0 && !tag) {
+          throw new Error(
+            "Pseudo-classes must follow a tag. Use layout, inset, or property before pseudo-classes."
+          );
+        }
+
+        const sp: SelectorPart = { tag, argExact, pseudos };
+        // First part of each ~ group after the first gets sibling combinator
+        if (gi > 0 && pi === 0) sp.combinator = "sibling";
+        allParts.push(sp);
       }
-
-      const pseudoString = part.substring(tagMatch[0].length);
-      const pseudos = parsePseudoClasses(pseudoString);
-
-      // Pseudo-classes must follow a tag — bare :contains(), :first, etc.
-      // match garbage (body, text nodes) and are never useful.
-      if (pseudos.length > 0 && !tag) {
-        throw new Error(
-          "Pseudo-classes must follow a tag. Use layout, inset, or property before pseudo-classes."
-        );
-      }
-
-      return { tag, argExact, pseudos };
-    });
+    }
+    
+    return allParts;
   });
 }
 
@@ -312,6 +324,54 @@ function getSiblingContextInBlock(node: Node, children: Node[]): { parentChildre
   return null;
 }
 
+/**
+ * Find all following siblings of the given anchor node that match `part`.
+ * Used by the ~ (general sibling) combinator.
+ */
+function findFollowingSiblings(
+  anchor: Node,
+  rootChildren: Node[],
+  part: SelectorPart,
+): Node[] {
+  const ctx = getSiblingContext(anchor, rootChildren);
+  if (!ctx) return [];
+
+  const results: Node[] = [];
+  for (let i = ctx.index + 1; i < ctx.parentChildren.length; i++) {
+    const sibling = ctx.parentChildren[i];
+    if (matchNode(sibling, part)) {
+      results.push(sibling);
+    }
+    // Also search descendants of sibling blocks (like space combinator does)
+    if (sibling.type === "block") {
+      findDescendants(sibling.children, part, results);
+    }
+  }
+  return results;
+}
+
+/**
+ * Check if any node in the range (parentChildren, from startIndex, up to but
+ * not including the given node) matches `innerPart`.  Used by :until().
+ */
+function hasInterveningMatch(
+  node: Node,
+  parentChildren: Node[],
+  startIndex: number,
+  innerPart: SelectorPart,
+): boolean {
+  for (let i = startIndex; i < parentChildren.length; i++) {
+    if (parentChildren[i] === node) return false; // reached target, no match found
+    if (matchNode(parentChildren[i], innerPart)) return true;
+    // Also check descendants of intervening blocks
+    if (parentChildren[i].type === "block") {
+      const descMatches = findDescendants((parentChildren[i] as BlockNode).children, innerPart);
+      if (descMatches.length > 0) return true;
+    }
+  }
+  return false;
+}
+
 export function query(ast: DocumentNode, selectorStr: string): Node[] {
   const groups = parseSelector(selectorStr);
   const rootChildren = ast.type === "document" ? ast.children : (ast.type === "block" ? ast.children : []);
@@ -320,14 +380,22 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
 
   for (const group of groups) {
     let currentNodes: Node[] = rootChildren;
+    // Track the anchor nodes for :until() bounding — each anchor corresponds
+    // to a node matched in the previous stage (before the ~ combinator).
+    let siblingAnchors: Node[] = [];
 
     for (let i = 0; i < group.length; i++) {
       const part = group[i];
       let nextNodes: Node[] = [];
 
-      // If it's the first part in a group, search from root
-      // Otherwise, search descendants of current matches
-      if (i === 0) {
+      if (part.combinator === "sibling") {
+        // ~ combinator: search following siblings of each current anchor
+        for (const cn of currentNodes) {
+          nextNodes = nextNodes.concat(findFollowingSiblings(cn, rootChildren, part));
+        }
+        // Save current nodes as anchors for potential :until() filtering
+        siblingAnchors = currentNodes;
+      } else if (i === 0) {
         nextNodes = findDescendants(currentNodes, part);
       } else {
         for (const cn of currentNodes) {
@@ -337,7 +405,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
         }
       }
 
-      // Apply pseudo-classes
+      // Apply pseudo-classes (first, last, nth, nth-child, adjacent, contains, not, until)
       if (part.pseudos) {
         for (const p of part.pseudos) {
           if (p.name === "first" && nextNodes.length > 0) {
@@ -371,15 +439,10 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
               return (n - b) % a === 0 && (n - b) / a >= 0;
             });
           } else if (p.name === "adjacent" && p.argRaw !== undefined) {
-            // :adjacent(selector) — keep nodes whose immediately preceding sibling
-            // matches the inner selector. Applied as a post-filter like :first/:last.
-            // Allow bare pseudo-classes in the inner selector.
             const innerPart = parseSelectorPart(p.argRaw, true);
             nextNodes = nextNodes.filter(n => {
               const ctx = getSiblingContext(n, rootChildren);
               if (!ctx || ctx.index === 0) return false;
-              // Skip past text and property nodes to find the previous "meaningful"
-              // sibling — the CST has whitespace text nodes between layouts.
               for (let si = ctx.index - 1; si >= 0; si--) {
                 const prev = ctx.parentChildren[si];
                 if (prev.type === "text" || prev.type === "property") continue;
@@ -387,6 +450,34 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
               }
               return false;
             });
+          } else if (p.name === "until" && p.argRaw !== undefined) {
+            // :until(selector) — rejects nodes that have a sibling matching
+            // the inner selector between them and the ~ anchor.
+            const innerPart = parseSelectorPart(p.argRaw, true);
+            if (siblingAnchors.length > 0) {
+              // Build a map: anchor -> set of nodes bounded by it
+              nextNodes = nextNodes.filter(n => {
+                // Find which anchor this node belongs to
+                const nCtx = getSiblingContext(n, rootChildren);
+                if (!nCtx) return false;
+                // Find nearest anchor that precedes this node
+                for (let ai = siblingAnchors.length - 1; ai >= 0; ai--) {
+                  const anchorCtx = getSiblingContext(siblingAnchors[ai], rootChildren);
+                  if (!anchorCtx) continue;
+                  if (anchorCtx.parentChildren !== nCtx.parentChildren) continue;
+                  if (anchorCtx.index < nCtx.index) {
+                    // Check for intervening match
+                    return !hasInterveningMatch(n, nCtx.parentChildren, anchorCtx.index + 1, innerPart);
+                  }
+                }
+                return true; // no anchor found, keep node
+              });
+            }
+            // If no sibling anchors (e.g. :until() used without ~), the filter
+            // has no effect — all nodes pass through.
+            if (siblingAnchors.length === 0) {
+              // :until() is only meaningful after ~; without it, no filtering occurs.
+            }
           }
         }
       }

@@ -1,12 +1,18 @@
 import * as path from "@std/path";
 import { KNOWN_INSET_TYPES } from "./inset_registry.ts";
 
+export interface HeadingLevel {
+  layout: string;
+  tocLevel: number;
+}
+
 export interface LyxSchema {
   textclass: string;
   documentLayouts: string[];
   insetLayouts: string[];
   insets: string[];
   inlineProperties: string[];
+  headingHierarchy: HeadingLevel[];
 }
 
 export const INSET_LAYOUTS = ["Plain Layout"];
@@ -25,12 +31,13 @@ async function parseLayoutFile(
   filePath: string,
   searchPaths: string[],
   visited = new Set<string>()
-): Promise<{ allowed: Set<string>; disallowed: Set<string> }> {
+): Promise<{ allowed: Set<string>; disallowed: Set<string>; headingLevels: Map<string, number> }> {
   const allowed = new Set<string>();
   const disallowed = new Set<string>();
+  const headingLevels = new Map<string, number>();
 
   if (visited.has(filePath)) {
-    return { allowed, disallowed };
+    return { allowed, disallowed, headingLevels };
   }
   visited.add(filePath);
 
@@ -38,8 +45,7 @@ async function parseLayoutFile(
   try {
     text = await Deno.readTextFile(filePath);
   } catch (_e) {
-    // If we can't read an included file, just return what we have
-    return { allowed, disallowed };
+    return { allowed, disallowed, headingLevels };
   }
 
   const lines = text.split(/\r?\n/);
@@ -55,7 +61,20 @@ async function parseLayoutFile(
 
     const matchStyle = line.match(/^Style\s+(.+)$/);
     if (matchStyle) {
-      allowed.add(matchStyle[1].trim());
+      const styleName = matchStyle[1].trim();
+      allowed.add(styleName);
+      // Parse body of Style block for TocLevel
+      let tocLevel: number | undefined;
+      while (++i < lines.length) {
+        const bodyLine = lines[i].trim();
+        if (bodyLine === "End") break;
+        if (bodyLine.startsWith("#")) continue;
+        const tocMatch = bodyLine.match(/^TocLevel\s+(\d+)$/);
+        if (tocMatch) tocLevel = parseInt(tocMatch[1]);
+      }
+      if (tocLevel !== undefined) {
+        headingLevels.set(styleName, tocLevel);
+      }
       continue;
     }
 
@@ -91,11 +110,12 @@ async function parseLayoutFile(
         const sub = await parseLayoutFile(foundPath, searchPaths, visited);
         for (const s of sub.allowed) allowed.add(s);
         for (const s of sub.disallowed) disallowed.add(s);
+        for (const [k, v] of sub.headingLevels) headingLevels.set(k, v);
       }
     }
   }
 
-  return { allowed, disallowed };
+  return { allowed, disallowed, headingLevels };
 }
 
 export async function getSchemaForClass(textclass: string, layoutsDir: string): Promise<LyxSchema> {
@@ -118,11 +138,19 @@ export async function getSchemaForClass(textclass: string, layoutsDir: string): 
     result.allowed.delete(s);
   }
 
+  // Build heading hierarchy sorted by TocLevel
+  const headingHierarchy: HeadingLevel[] = [];
+  for (const [layout, tocLevel] of result.headingLevels) {
+    headingHierarchy.push({ layout, tocLevel });
+  }
+  headingHierarchy.sort((a, b) => a.tocLevel - b.tocLevel);
+
   return {
     textclass,
     documentLayouts: Array.from(result.allowed).sort(),
     insetLayouts: INSET_LAYOUTS,
     insets: INSETS,
-    inlineProperties: INLINE_PROPERTIES
+    inlineProperties: INLINE_PROPERTIES,
+    headingHierarchy,
   };
 }

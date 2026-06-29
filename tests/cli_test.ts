@@ -422,14 +422,19 @@ Deno.test("CLI - read --text-only basic", { timeout: 10000 }, async () => {
 });
 
 // ---------------------------------------------------------------------------
-// 22. read --text-only + --count: mutually exclusive
+// 22. read --text-only + --count: combined output
 // ---------------------------------------------------------------------------
-Deno.test("CLI - read --text-only and --count conflict", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_tonly_conflict.lyx");
+Deno.test("CLI - read --text-only and --count combined", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_tonly_combined.lyx");
   try {
     const result = await runCliTest(["read", tempFile, "layout[Title]", "--text-only", "--count"]);
-    assertEquals(result.status, "error");
-    assertEquals(result.code, "FLAG_CONFLICT");
+    assertEquals(result.status, "success");
+    // Both count and text fields should be present
+    assertEquals(typeof result.count, "object");
+    assertEquals(typeof result.text, "string");
+    const countMap = result.count as Record<string, number>;
+    assertEquals(countMap["layout[Title]"], 1);
+    assertEquals(result.text!.trim(), "layout[Title] Title");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
