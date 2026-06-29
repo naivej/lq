@@ -1307,10 +1307,21 @@ export async function runCli(args: string[]) {
 
     // Track total substring matches for stderr notification
     let totalFindMatches = 0;
+    // Per-node type counts captured during mutation (before trackChanges wraps text
+    // in change_inserted markers, which could cause double-counting if re-scanned)
+    const findPerNode: Record<string, number> = {};
 
     // Pre-compute trackChanges timestamp once for all nodes
     const tcTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
     const tcAid = 1;
+
+    // Helper to accumulate per-node find counts during mutation
+    function addFindCount(node: Node, count: number) {
+      const key = node.type === "block"
+        ? node.tag + "[" + ((node.args || "").trim()) + "]"
+        : "text";
+      findPerNode[key] = (findPerNode[key] || 0) + count;
+    }
 
     for (const node of nodes) {
       if (node.type === "property") {
@@ -1321,6 +1332,7 @@ export async function runCli(args: string[]) {
             if (count > 0) {
               node.value = node.value.replaceAll(findStr, newValue);
               totalFindMatches += count;
+              addFindCount(node, count);
             }
           }
         } else {
@@ -1332,11 +1344,12 @@ export async function runCli(args: string[]) {
           if (trackChanges) {
             // Tracked surgical replace: split text nodes at match boundaries
             const newChildren: Node[] = [];
+            let nodeFindCount = 0;
             for (const child of node.children) {
               if (child.type === "text") {
                 const count = countOccurrences(child.text, findStr);
                 if (count > 0) {
-                  totalFindMatches += count;
+                  nodeFindCount += count;
                   newChildren.push(...replaceWithTracking(child.text, findStr, newValue, tcAid, tcTs));
                 } else {
                   newChildren.push(child);
@@ -1346,17 +1359,22 @@ export async function runCli(args: string[]) {
               }
             }
             node.children = newChildren;
+            totalFindMatches += nodeFindCount;
+            if (nodeFindCount > 0) addFindCount(node, nodeFindCount);
           } else {
             // Plain surgical replace: simple string replace in all text children
+            let nodeFindCount = 0;
             for (const child of node.children) {
               if (child.type === "text") {
                 const count = countOccurrences(child.text, findStr);
                 if (count > 0) {
                   child.text = child.text.replaceAll(findStr, newValue);
-                  totalFindMatches += count;
+                  nodeFindCount += count;
                 }
               }
             }
+            totalFindMatches += nodeFindCount;
+            if (nodeFindCount > 0) addFindCount(node, nodeFindCount);
           }
         } else if (trackChanges) {
           // Full-text replace with trackChanges (existing behavior)
@@ -1421,26 +1439,8 @@ export async function runCli(args: string[]) {
         printError("NO_MATCH", `--find '${findStr}' matched no occurrences within the targeted nodes.`);
         return;
       }
-      // Build per-node breakdown for richer feedback
-      const affectedNodes: Record<string, number> = {};
-      for (const node of nodes) {
-        if (node.type === "block" || node.type === "text") {
-          const key = node.type === "block"
-            ? node.tag + "[" + ((node.args || "").trim()) + "]"
-            : "text";
-          let count = 0;
-          if (node.type === "text") {
-            count = countOccurrences(node.text, findStr);
-          } else {
-            for (const child of node.children) {
-              if (child.type === "text") count += countOccurrences(child.text, findStr);
-            }
-          }
-          if (count > 0) affectedNodes[key] = (affectedNodes[key] || 0) + count;
-        }
-      }
       const plural = totalFindMatches === 1 ? "" : "s";
-      const nodeList = Object.entries(affectedNodes)
+      const nodeList = Object.entries(findPerNode)
         .map(([k, c]) => `${k} (${c} occurrence${c === 1 ? "" : "s"})`)
         .join(", ");
       const findMsg = `--find matched ${totalFindMatches} occurrence${plural} of '${findStr}' across ${nodes.length} node(s): ${nodeList}. ` +

@@ -313,6 +313,18 @@ function getSiblingContext(node: Node, rootChildren: Node[]): { parentChildren: 
   return null;
 }
 
+/**
+ * O(1) sibling context lookup if parentIndex is available, otherwise O(n) tree walk.
+ */
+function getSiblingContextFast(
+  node: Node,
+  rootChildren: Node[],
+  parentIndex?: Map<Node, { parentChildren: Node[]; index: number }>,
+): { parentChildren: Node[]; index: number } | null {
+  if (parentIndex) return parentIndex.get(node) ?? null;
+  return getSiblingContext(node, rootChildren);
+}
+
 function getSiblingContextInBlock(node: Node, children: Node[]): { parentChildren: Node[]; index: number } | null {
   for (let i = 0; i < children.length; i++) {
     if (children[i] === node) return { parentChildren: children, index: i };
@@ -325,16 +337,41 @@ function getSiblingContextInBlock(node: Node, children: Node[]): { parentChildre
 }
 
 /**
+ * Build a flat map of every node → { parentChildren, index } for O(1) sibling lookups.
+ * Avoids repeated O(n) tree walks in findFollowingSiblings and :adjacent() filters.
+ */
+function buildParentIndex(rootChildren: Node[]): Map<Node, { parentChildren: Node[]; index: number }> {
+  const map = new Map<Node, { parentChildren: Node[]; index: number }>();
+  function walk(children: Node[], parentChildren: Node[]) {
+    for (let i = 0; i < children.length; i++) {
+      const n = children[i];
+      map.set(n, { parentChildren, index: i });
+      if (n.type === "block") {
+        walk(n.children, n.children);
+      }
+    }
+  }
+  walk(rootChildren, rootChildren);
+  return map;
+}
+
+/**
  * Find all following siblings of the given anchor node that match `part`.
  * Used by the ~ (general sibling) combinator.
+ * If parentIndex is provided, uses it for O(1) anchor lookup instead of O(n) tree walk.
  */
 function findFollowingSiblings(
   anchor: Node,
   rootChildren: Node[],
   part: SelectorPart,
+  parentIndex?: Map<Node, { parentChildren: Node[]; index: number }>,
 ): Node[] {
-  const ctx = getSiblingContext(anchor, rootChildren);
-  if (!ctx) return [];
+  let ctx = parentIndex?.get(anchor);
+  if (!ctx) {
+    const result = getSiblingContext(anchor, rootChildren);
+    if (!result) return [];
+    ctx = result;
+  }
 
   const results: Node[] = [];
   for (let i = ctx.index + 1; i < ctx.parentChildren.length; i++) {
@@ -376,6 +413,17 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
   const groups = parseSelector(selectorStr);
   const rootChildren = ast.type === "document" ? ast.children : (ast.type === "block" ? ast.children : []);
   
+  // Pre-build parent index for O(1) sibling lookups when any sibling-related
+  // feature is used (~ combinator, :adjacent(), :until()).
+  let parentIndex: Map<Node, { parentChildren: Node[]; index: number }> | undefined;
+  const needsIndex = groups.some(g => g.some(p =>
+    p.combinator === "sibling" ||
+    p.pseudos?.some(ps => ps.name === "adjacent" || ps.name === "until")
+  ));
+  if (needsIndex) {
+    parentIndex = buildParentIndex(rootChildren);
+  }
+  
   const finalResults = new Set<Node>();
 
   for (const group of groups) {
@@ -391,7 +439,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
       if (part.combinator === "sibling") {
         // ~ combinator: search following siblings of each current anchor
         for (const cn of currentNodes) {
-          nextNodes = nextNodes.concat(findFollowingSiblings(cn, rootChildren, part));
+          nextNodes = nextNodes.concat(findFollowingSiblings(cn, rootChildren, part, parentIndex));
         }
         // Save current nodes as anchors for potential :until() filtering
         siblingAnchors = currentNodes;
@@ -441,7 +489,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
           } else if (p.name === "adjacent" && p.argRaw !== undefined) {
             const innerPart = parseSelectorPart(p.argRaw, true);
             nextNodes = nextNodes.filter(n => {
-              const ctx = getSiblingContext(n, rootChildren);
+              const ctx = getSiblingContextFast(n, rootChildren, parentIndex);
               if (!ctx || ctx.index === 0) return false;
               for (let si = ctx.index - 1; si >= 0; si--) {
                 const prev = ctx.parentChildren[si];
@@ -458,11 +506,11 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
               // Build a map: anchor -> set of nodes bounded by it
               nextNodes = nextNodes.filter(n => {
                 // Find which anchor this node belongs to
-                const nCtx = getSiblingContext(n, rootChildren);
+                const nCtx = getSiblingContextFast(n, rootChildren, parentIndex);
                 if (!nCtx) return false;
                 // Find nearest anchor that precedes this node
                 for (let ai = siblingAnchors.length - 1; ai >= 0; ai--) {
-                  const anchorCtx = getSiblingContext(siblingAnchors[ai], rootChildren);
+                  const anchorCtx = getSiblingContextFast(siblingAnchors[ai], rootChildren, parentIndex);
                   if (!anchorCtx) continue;
                   if (anchorCtx.parentChildren !== nCtx.parentChildren) continue;
                   if (anchorCtx.index < nCtx.index) {
