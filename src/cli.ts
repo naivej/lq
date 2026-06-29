@@ -17,17 +17,31 @@ Usage:
   lq <command> [options] [arguments]
 
 Commands:
-  read      Output matching nodes and text content as JSON.
+  init      Initialize the user configuration file.
+  schema    Return a list of all semantically valid layouts.
   dump      Output the full CST as a massive JSON document.
+  read      Output matching nodes and text content as JSON.
   bib       Extract available citation keys from linked bibliography files.
   set       Overwrite the targeted nodes with new text content.
   delete    Safely delete the targeted nodes from the LyX file.
-  undo      Revert tracked changes (change_deleted/change_inserted) in matched nodes.
-  schema    Return a list of all semantically valid layouts.
   insert    Insert new blocks or properties before/after/prepend/append.
-  init      Initialize the user configuration file.
+  undo      Revert tracked changes (change_deleted/change_inserted) in matched nodes.
 
-Run 'lq <command> --help' for more information on a specific command.`,
+Run 'lq <command> --help' for more information on a specific command.
+Run 'lq selector --help' for the selector syntax reference.`,
+
+  selector: `lq selector - CSS-like selector syntax reference.
+
+lq selectors use a CSS-inspired syntax to traverse the CST:
+
+  Tag + optional [args]     layout, inset[Formula], property[family]
+  Descendant combinator     layout[Section] inset[Formula]
+  Sibling combinator (~)    layout[Section] ~ layout[Standard]
+  Pseudo-classes            :first, :last, :nth-child(an+b), :not(sel),
+                            :adjacent(sel), :until(sel), :contains("text")
+                            :until() bounds a ~ range to stop before the next matching sibling:
+Pseudo-classes chain:       layout:first:contains("intro")
+                            Chained :contains() matches nodes with multiple keywords, even across insets`,
 
   read: `lq read - Output matching nodes and text content as JSON.
 
@@ -36,17 +50,16 @@ Usage:
 
 Arguments:
   <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector (e.g., 'layout[Section]', 'layout:contains("text")').
-              Pseudo-classes (:first, :contains(), etc.) must follow a tag.
+  <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
 
 Options:
-  --count     Return only the match count as JSON, broken down by subtype\n              ({\"count\": {\"layout[Section]\": 12, \"layout[Standard]\": 450}}).
-              Useful for checking blast radius before mutations without parsing large output.
+  --count     Return match counts by type as JSON
+              ({\"count\": {\"layout[Section]\": 12, \"layout[Standard]\": 450}}).
   --text-only Output the text content of matched nodes as JSON with a \`text\` field.
               Each matched node gets a tag[args] prefix (e.g. layout[Standard]),
               and insets appear as inline markers (e.g. inset[Foot]). Double newline
-              between nodes. Warnings appear in the \`warnings\` array. Useful for
-              proofreading. Mutually exclusive with --count.`,
+              between nodes. Warnings appear in the \`warnings\` array.
+  --count --text-only can be used together for both fields in one response.`,
 
   dump: `lq dump - Output the CST (optionally scoped to a selector) as JSON.
 
@@ -55,12 +68,16 @@ Usage:
 
 Arguments:
   <file>      The path to the .lyx file.
-  <selector>  Optional CSS selector to dump a subtree instead of the whole document.
+  <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
 
 Options:
   --depth <n>  Limit CST output to n levels deep (0 = root node only).
                Omit for the full CST. If n exceeds the subtree depth, the
-               full subtree is shown with a warning.`,
+               full subtree is shown with a warning.
+  --toc        Output a hierarchical heading tree (table of contents)
+               instead of raw CST. Heading levels are read from the
+               document class's .layout file. --depth limits TOC nesting
+               depth. Mutually exclusive with <selector>.`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
 
@@ -86,7 +103,7 @@ Usage:
 
 Arguments:
   <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector targeting nodes to mutate.
+  <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
   <new text>  The new text content to apply to the matched nodes.
 
 Options:
@@ -108,7 +125,7 @@ Usage:
 
 Arguments:
   <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector targeting nodes to delete.`,
+  <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.`,
 
   init: `lq init - Initialize or view the user configuration file.
 
@@ -153,7 +170,7 @@ Usage:
 
 Arguments:
   <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector targeting a reference node.
+  <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
   <position>  Where to insert ('before', 'after', 'prepend', 'append', 'split-after "<match>"').
               split-after takes the match string as the next positional argument.
               It splits a text node right after the exact, case-sensitive substring
