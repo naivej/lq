@@ -1293,7 +1293,7 @@ export async function runCli(args: string[]) {
       const KB = 1024;
       if (output.length > 10 * KB) {
         const sizeKB = Math.round(output.length / KB);
-        const warnMsg = `Warning: --text-only output is ${sizeKB}KB across ${nodes.length} nodes. ` +
+        const warnMsg = `--text-only output is ${sizeKB}KB across ${nodes.length} nodes. ` +
           `Consider a more specific selector to reduce noise.`;
         pushWarning(warnMsg);
       }
@@ -1321,7 +1321,7 @@ export async function runCli(args: string[]) {
   // Blast radius warning: if selector matches more than 1 node, warn to
   // stderr. The mutation still proceeds — this is a warning, not a blocker.
   if (["set", "delete", "insert"].includes(command) && nodes.length > 1) {
-    const warnMsg = `Warning: selector matches ${nodes.length} nodes. ` +
+    const warnMsg = `Selector matches ${nodes.length} nodes. ` +
       `Run 'lq read ${filePath} "${selector}"' to inspect them before mutating.`;
     pushWarning(warnMsg);
   }
