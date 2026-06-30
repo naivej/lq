@@ -69,7 +69,7 @@ async function parseLayoutFile(
         const bodyLine = lines[i].trim();
         if (bodyLine === "End") break;
         if (bodyLine.startsWith("#")) continue;
-        const tocMatch = bodyLine.match(/^TocLevel\s+(\d+)$/);
+        const tocMatch = bodyLine.match(/^TocLevel\s+(-?\d+)$/);
         if (tocMatch) tocLevel = parseInt(tocMatch[1]);
       }
       if (tocLevel !== undefined) {
@@ -138,10 +138,12 @@ export async function getSchemaForClass(textclass: string, layoutsDir: string): 
     result.allowed.delete(s);
   }
 
-  // Build heading hierarchy sorted by TocLevel
+  // Build heading hierarchy sorted by TocLevel, excluding disallowed styles
   const headingHierarchy: HeadingLevel[] = [];
   for (const [layout, tocLevel] of result.headingLevels) {
-    headingHierarchy.push({ layout, tocLevel });
+    if (!result.disallowed.has(layout)) {
+      headingHierarchy.push({ layout, tocLevel });
+    }
   }
   headingHierarchy.sort((a, b) => a.tocLevel - b.tocLevel);
 

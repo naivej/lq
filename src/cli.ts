@@ -1020,8 +1020,10 @@ export async function runCli(args: string[]) {
       } catch {
         // Fallback: standard LaTeX hierarchy
         headingHierarchy = [
+          { layout: "Part", tocLevel: -1 },
           { layout: "Chapter", tocLevel: 0 },
           { layout: "Section", tocLevel: 1 },
+          { layout: "Bibliography", tocLevel: 1 },
           { layout: "Subsection", tocLevel: 2 },
           { layout: "Subsubsection", tocLevel: 3 },
           { layout: "Paragraph", tocLevel: 4 },
