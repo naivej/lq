@@ -30,9 +30,7 @@ Commands:
 Run 'lq <command> --help' for more information on a specific command.
 Run 'lq selector --help' for the selector syntax reference.`,
 
-  selector: `lq selector - CSS-like selector syntax reference.
-
-lq selectors use a CSS-inspired syntax to traverse the document structure:
+  selector: `lq selector - CSS-like selector to traverse the LyX document.
 
   Tag + optional [args]     layout, inset[Formula], property[family]
   Descendant combinator     layout[Section] inset[Formula]
