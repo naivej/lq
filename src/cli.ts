@@ -1364,12 +1364,12 @@ export async function runCli(args: string[]) {
     const tcAid = trackChanges ? resolveAuthorId(ast, authorName) : 0;
 
     // Helper to accumulate per-node find counts during mutation
-    function addFindCount(node: Node, count: number) {
+    const addFindCount = (node: Node, count: number) => {
       const key = node.type === "block"
         ? node.tag + "[" + ((node.args || "").trim()) + "]"
         : "text";
       findPerNode[key] = (findPerNode[key] || 0) + count;
-    }
+    };
 
     for (const node of nodes) {
       if (node.type === "property") {
