@@ -82,7 +82,7 @@ The query engine supports traversing the CST using CSS-like syntax:
   - Outputs the CST as a JSON document.
   - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
   - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
-  - `--toc`: Output a hierarchical heading tree (table of contents) instead of raw CST. Heading levels are read from the document class's `.layout` file. `--depth` limits TOC nesting depth (1 = top-level sections only). Mutually exclusive with selector.
+  - `--toc` (Mutually exclusive with selector): Output a hierarchical heading tree (table of contents) instead of raw CST. Heading levels are read from the document class's `.layout` file with LaTeX's standard hierarchy as the fallback. Combined with `--depth` to limit TOC nesting depth (1 = top-level sections only).
 - `lq read <file> <selector> [--count] [--text-only]`
   - Read matched nodes.
   - `--count`: Return match counts by type (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`).
@@ -128,23 +128,23 @@ The query engine supports traversing the CST using CSS-like syntax:
 
 Navigate large documents strategically with a zoom-in approach:
 
-| You want to…                              | Use this                                                                                                    |
-| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
-| See the document outline                   | `lq dump <file> --toc`                                                                                    |
-| Get just section headings                  | `lq read <file> "layout[Section]" --text-only`                                                            |
-| Read body text under a section             | `lq read <file> "layout[Section]:contains('Theory') ~ layout:until(layout[Section])" --text-only`         |
-| Read all body text under a section (broad) | `lq read <file> "layout[Section]:contains('Theory') ~ layout:until(layout[Section])" --count --text-only` |
-| Find a specific paragraph by content       | `lq read <file> "layout:contains('unique phrase')" --text-only`                                           |
-| Find a paragraph by multiple keywords      | `lq read <file> "layout:contains('climate'):contains('policy')" --text-only`                              |
-| Get first paragraph of a section           | `lq read <file> "layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section]):first" --text-only` |
-| Get body under a subsection (multi-hop ~)  | `lq read <file> "layout[Section] ~ layout[Subsection]:contains('Methods') ~ layout[Standard]:until(layout[Section])" --text-only` |
-| Body text without footnotes in a section   | `lq read <file> "layout[Section] ~ layout[Standard]:not(inset[Foot]):until(layout[Section])" --text-only` |
+| You want to…                              | Use this                                                                                                                             |
+| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
+| See the document outline                   | `lq dump <file> --toc`                                                                                                             |
+| Get just section headings                  | `lq read <file> "layout[Section]" --text-only`                                                                                     |
+| Read body text under a section             | `lq read <file> "layout[Section]:contains('Theory') ~ layout:until(layout[Section])" --text-only`                                  |
+| Read all body text under a section (broad) | `lq read <file> "layout[Section]:contains('Theory') ~ layout:until(layout[Section])" --count --text-only`                          |
+| Find a specific paragraph by content       | `lq read <file> "layout:contains('unique phrase')" --text-only`                                                                    |
+| Find a paragraph by multiple keywords      | `lq read <file> "layout:contains('climate'):contains('policy')" --text-only`                                                       |
+| Get first paragraph of a section           | `lq read <file> "layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section]):first" --text-only`                   |
+| Get body under a subsection (multi-hop ~)  | `lq read <file> "layout[Section] ~ layout[Subsection]:contains('Methods') ~ layout[Standard]:until(layout[Section])" --text-only`  |
+| Body text without footnotes in a section   | `lq read <file> "layout[Section] ~ layout[Standard]:not(inset[Foot]):until(layout[Section])" --text-only`                          |
 | Paragraph after a Quote, within a section  | `lq read <file> "layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section]):adjacent(layout[Quote])" --text-only` |
-| Check selector blast radius & composition  | `lq read <file> "<selector>" --count`                                                                     |
-| Inspect a specific node's CST              | `lq read <file> "<precise selector>"`                                                                     |
-| Deep-debug a node's children               | `lq dump <file> "<selector>"`                                                                             |
-| Find a citation key                        | `lq bib <file> --search "keyword"`                                                                        |
-| Revert a tracked change                    | `lq undo <file> "<selector>" "bad text"`                                                                  |
+| Check selector blast radius & composition  | `lq read <file> "<selector>" --count`                                                                                              |
+| Inspect a specific node's CST              | `lq read <file> "<precise selector>"`                                                                                              |
+| Deep-debug a node's children               | `lq dump <file> "<selector>"`                                                                                                      |
+| Find a citation key                        | `lq bib <file> --search "keyword"`                                                                                                 |
+| Revert a tracked change                    | `lq undo <file> "<selector>" "bad text"`                                                                                           |
 
 **Never:** read the whole document at once, bare `lq dump`, bare `lq read "layout"` without `--text-only`, or bare `lq bib`.
 
