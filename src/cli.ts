@@ -153,14 +153,17 @@ Options:
   schema: `lq schema - Return a list of all semantically valid layouts.
 
 Usage:
-  lq schema <file> [options]
+  lq schema <file>
 
 Arguments:
   <file>      The path to the .lyx file.
 
-Options:
-  --layouts-dir <path>  Path to the directory containing .layout files.
-                        Defaults to checking ~/.lq/config.json, then the default LyX install path.`,
+Returns JSON with five categories:
+  documentLayouts   Styles valid for the document class (e.g. Section, Standard).
+  insetLayouts      Layouts valid inside insets (e.g. Plain Layout).
+  insets            Valid inset types (e.g. Formula, Foot, CommandInset).
+  inlineProperties  Valid inline property names (e.g. change_inserted).
+  headingHierarchy  Heading layouts with their TocLevel values.`,
 
   insert: `lq insert - Insert new blocks or properties relative to a selector.
 
@@ -1182,29 +1185,10 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "schema") {
-    const schemaArgs = selector ? [selector, ...restArgs] : restArgs;
-    const flags = parseArgs(schemaArgs, {
-      string: ["layouts-dir"],
-    });
-
-    let layoutsDir = flags["layouts-dir"];
-
-    if (!layoutsDir) {
-      const config = await loadUserConfig();
-      if (config.layoutsDir) {
-        layoutsDir = config.layoutsDir;
-      } else {
-        printError("NO_CONFIG", "No layouts directory configured. Run 'lq init' to auto-detect and save your LyX layouts path.");
-        return;
-      }
-    } else {
-      try {
-        const stat = await Deno.stat(layoutsDir);
-        if (!stat.isDirectory) throw new Error();
-      } catch (_e) {
-        printError("INVALID_DIR", `The provided --layouts-dir '${layoutsDir}' does not exist or is not a directory.`);
-        return;
-      }
+    const config = await loadUserConfig();
+    if (!config.layoutsDir) {
+      printError("NO_CONFIG", "No layouts directory configured. Run 'lq init' to auto-detect and save your LyX layouts path.");
+      return;
     }
 
     const textclassNode = query(ast, "textclass")[0];
@@ -1214,7 +1198,7 @@ export async function runCli(args: string[]) {
     }
     
     try {
-      const schema = await getSchemaForClass(textclassNode.value, layoutsDir);
+      const schema = await getSchemaForClass(textclassNode.value, config.layoutsDir);
       printJson({ status: "success", data: schema });
     } catch (e: Error | unknown) {
       printError("SCHEMA_ERROR", (e as Error).message);
