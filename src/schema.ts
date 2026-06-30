@@ -31,13 +31,21 @@ async function parseLayoutFile(
   filePath: string,
   searchPaths: string[],
   visited = new Set<string>()
-): Promise<{ allowed: Set<string>; disallowed: Set<string>; headingLevels: Map<string, number> }> {
+): Promise<{
+  allowed: Set<string>;
+  disallowed: Set<string>;
+  headingLevels: Map<string, number>;
+  customInsets: Set<string>;
+  disallowedInsets: Set<string>;
+}> {
   const allowed = new Set<string>();
   const disallowed = new Set<string>();
   const headingLevels = new Map<string, number>();
+  const customInsets = new Set<string>();
+  const disallowedInsets = new Set<string>();
 
   if (visited.has(filePath)) {
-    return { allowed, disallowed, headingLevels };
+    return { allowed, disallowed, headingLevels, customInsets, disallowedInsets };
   }
   visited.add(filePath);
 
@@ -45,7 +53,7 @@ async function parseLayoutFile(
   try {
     text = await Deno.readTextFile(filePath);
   } catch (_e) {
-    return { allowed, disallowed, headingLevels };
+    return { allowed, disallowed, headingLevels, customInsets, disallowedInsets };
   }
 
   const lines = text.split(/\r?\n/);
@@ -84,6 +92,22 @@ async function parseLayoutFile(
       continue;
     }
 
+    const matchInsetLayout = line.match(/^InsetLayout\s+(.+)$/);
+    if (matchInsetLayout) {
+      customInsets.add(matchInsetLayout[1].trim().replace(/^"|"$/g, ""));
+      // Skip body of InsetLayout block
+      while (++i < lines.length) {
+        if (lines[i].trim() === "End") break;
+      }
+      continue;
+    }
+
+    const matchNoInsetLayout = line.match(/^NoInsetLayout\s+(.+)$/);
+    if (matchNoInsetLayout) {
+      disallowedInsets.add(matchNoInsetLayout[1].trim());
+      continue;
+    }
+
     const matchInput = line.match(/^Input\s+(.+)$/);
     if (matchInput) {
       let incFile = matchInput[1].trim();
@@ -111,11 +135,13 @@ async function parseLayoutFile(
         for (const s of sub.allowed) allowed.add(s);
         for (const s of sub.disallowed) disallowed.add(s);
         for (const [k, v] of sub.headingLevels) headingLevels.set(k, v);
+        for (const s of sub.customInsets) customInsets.add(s);
+        for (const s of sub.disallowedInsets) disallowedInsets.add(s);
       }
     }
   }
 
-  return { allowed, disallowed, headingLevels };
+  return { allowed, disallowed, headingLevels, customInsets, disallowedInsets };
 }
 
 export async function getSchemaForClass(textclass: string, layoutsDir: string): Promise<LyxSchema> {
@@ -138,6 +164,15 @@ export async function getSchemaForClass(textclass: string, layoutsDir: string): 
     result.allowed.delete(s);
   }
 
+  // Merge hardcoded insets with per-class custom InsetLayout declarations
+  const allInsets = new Set(INSETS);
+  for (const s of result.customInsets) {
+    allInsets.add(s);
+  }
+  for (const s of result.disallowedInsets) {
+    allInsets.delete(s);
+  }
+
   // Build heading hierarchy sorted by TocLevel, excluding disallowed styles
   const headingHierarchy: HeadingLevel[] = [];
   for (const [layout, tocLevel] of result.headingLevels) {
@@ -151,7 +186,7 @@ export async function getSchemaForClass(textclass: string, layoutsDir: string): 
     textclass,
     documentLayouts: Array.from(result.allowed).sort(),
     insetLayouts: INSET_LAYOUTS,
-    insets: INSETS,
+    insets: Array.from(allInsets).sort(),
     inlineProperties: INLINE_PROPERTIES,
     headingHierarchy,
   };

@@ -1,7 +1,7 @@
 import { parse } from "./parser.ts";
 import { serialize } from "./serializer.ts";
 import { query } from "./query.ts";
-import { getSchemaForClass } from "./schema.ts";
+import { getSchemaForClass, INSET_LAYOUTS, INSETS, INLINE_PROPERTIES } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode } from "./ast.ts";
@@ -1202,7 +1202,18 @@ export async function runCli(args: string[]) {
       const schema = await getSchemaForClass(textclassNode.value, layoutsDir);
       printJson({ status: "success", data: schema });
     } catch (e: Error | unknown) {
-      printError("SCHEMA_ERROR", (e as Error).message);
+      pushWarning(`Could not read layout file for textclass '${textclassNode.value}': ${(e as Error).message}`);
+      printJson({
+        status: "success",
+        data: {
+          textclass: textclassNode.value,
+          documentLayouts: [],
+          insetLayouts: INSET_LAYOUTS,
+          insets: INSETS,
+          inlineProperties: INLINE_PROPERTIES,
+          headingHierarchy: [],
+        },
+      });
     }
     return;
   }
