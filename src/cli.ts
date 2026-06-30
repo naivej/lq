@@ -75,8 +75,7 @@ Options:
                Omit for the full CST. If n exceeds the subtree depth, the
                full subtree is shown with a warning.
   --toc        Output a hierarchical heading tree (table of contents)
-               instead of raw CST. Heading levels are read from the
-               document class's .layout file. --depth limits TOC nesting
+               instead of raw CST. --depth limits TOC nesting
                depth. Mutually exclusive with <selector>.`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
@@ -173,8 +172,8 @@ Usage:
 Arguments:
   <file>      The path to the .lyx file.
   <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
-  <position>  Where to insert ('before', 'after', 'prepend', 'append', 'split-after "<match>"').
-              split-after takes the match string as the next positional argument.
+  <position>  Where to insert: 'before', 'after', 'prepend', 'append', or 'split-after'
+              followed by <match> as the next positional argument.
               It splits a text node right after the exact, case-sensitive substring
               and inserts new content at that point.
               Only proceeds if the match appears exactly once in the block.
@@ -203,16 +202,15 @@ Usage:
 
 Arguments:
   <file>       The path to the .lyx file.
-  <selector>   A CSS-like selector targeting nodes to inspect for tracked changes.
+  <selector>   A CSS-like selector. Run 'lq selector --help' for syntax.
   <substring>  Text inside the change_deleted or change_inserted block to revert.
                Omit to revert ALL tracked changes in matched nodes.
 
 Only available when trackChanges is enabled (default: on). Each change_deleted or
-change_inserted marker must be undone individually, matching LyX's accept/reject
-behavior.
+change_inserted marker must be undone individually.
 
 Examples:
-  lq undo file.lyx "layout[Standard]" "bad phrase"   # revert one bad edit
+  lq undo file.lyx "layout[Standard]" "bad phrase"    # revert one bad edit
   lq undo file.lyx "layout[Section]"                  # revert all changes in sections`
 };
 
@@ -1237,6 +1235,21 @@ export async function runCli(args: string[]) {
     return;
   }
 
+  // Warn if :until() is used without a preceding ~ combinator: without ~
+  // there is no anchor to check intervening siblings against, so :until()
+  // has no effect (all nodes pass through).
+  if (selector.includes(":until(")) {
+    const parts = selector.split(",");
+    for (const part of parts) {
+      if (part.includes(":until(") && !part.includes("~")) {
+        pushWarning(
+          `:until() in "${part.trim()}" has no effect without a preceding ~ combinator. ` +
+          `Use 'layout[A] ~ layout[B]:until(layout[C])' to bound a sibling range.`
+        );
+      }
+    }
+  }
+
   if (command === "read") {
     const result: Record<string, unknown> = { status: "success" };
 
@@ -1580,7 +1593,7 @@ export async function runCli(args: string[]) {
     }
 
     if (!["before", "after", "prepend", "append", "split-after"].includes(position)) {
-      printError("INVALID_POSITION", "Position must be 'before', 'after', 'prepend', 'append', or 'split-after <match>'.");
+      printError("INVALID_POSITION", "Position must be 'before', 'after', 'prepend', 'append', or 'split-after' (followed by the match string as the next argument).");
       return;
     }
 
