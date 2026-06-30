@@ -1,5 +1,5 @@
 import * as path from "@std/path";
-import { KNOWN_INSET_TYPES, INLINE_PROPERTIES } from "./registry.ts";
+import { KNOWN_INSET_TYPES, KNOWN_COMMAND_INSET_TYPES, INLINE_PROPERTIES } from "./registry.ts";
 
 export interface HeadingLevel {
   layout: string;
@@ -11,6 +11,7 @@ export interface LyxSchema {
   documentLayouts: string[];
   insetLayouts: string[];
   insets: string[];
+  commandInsetSubtypes: string[];
   inlineProperties: readonly string[];
   headingHierarchy: HeadingLevel[];
 }
@@ -185,6 +186,7 @@ export async function getSchemaForClass(textclass: string, layoutsDir: string): 
     documentLayouts: Array.from(result.allowed).sort(),
     insetLayouts: INSET_LAYOUTS,
     insets: Array.from(allInsets).sort(),
+    commandInsetSubtypes: [...KNOWN_COMMAND_INSET_TYPES].sort(),
     inlineProperties: INLINE_PROPERTIES,
     headingHierarchy,
   };

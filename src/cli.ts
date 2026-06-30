@@ -5,7 +5,7 @@ import { getSchemaForClass, INSET_LAYOUTS, INSETS, INLINE_PROPERTIES } from "./s
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode } from "./ast.ts";
-import { validateInsetType } from "./registry.ts";
+import { validateInsetType, KNOWN_COMMAND_INSET_TYPES } from "./registry.ts";
 import { getCachedAst, setCachedAst, hashText, setMaxCacheEntries } from "./cache.ts";
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
@@ -156,12 +156,13 @@ Usage:
 Arguments:
   <file>      The path to the .lyx file.
 
-Returns JSON with five categories:
-  documentLayouts   Styles valid for the document class (e.g. Section, Standard).
-  insetLayouts      Layouts valid inside insets (e.g. Plain Layout).
-  insets            Valid inset types (e.g. Formula, Foot, CommandInset).
-  inlineProperties  Valid inline property names (e.g. change_inserted).
-  headingHierarchy  Heading layouts with their TocLevel values.`,
+Returns JSON with six categories:
+  documentLayouts      Styles valid for the document class (e.g. Section, Standard).
+  insetLayouts         Layouts valid inside insets (e.g. Plain Layout).
+  insets               Valid inset types (e.g. Formula, Foot, CommandInset).
+  commandInsetSubtypes Valid CommandInset subtypes (e.g. citation, ref, label).
+  inlineProperties     Valid inline property keys (e.g. family, lang).
+  headingHierarchy     Heading layouts with their TocLevel values.`,
 
   insert: `lq insert - Insert new blocks or properties relative to a selector.
 
@@ -1208,6 +1209,7 @@ export async function runCli(args: string[]) {
           documentLayouts: [],
           insetLayouts: INSET_LAYOUTS,
           insets: INSETS,
+          commandInsetSubtypes: [...KNOWN_COMMAND_INSET_TYPES].sort(),
           inlineProperties: INLINE_PROPERTIES,
           headingHierarchy: [],
         },

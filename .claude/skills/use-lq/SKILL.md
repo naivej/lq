@@ -68,7 +68,13 @@ The query engine supports traversing the CST using CSS-like syntax:
 ### Query
 
 - `lq schema <file>`
-  - Returns `headingHierarchy` and a list of semantically valid layouts for the document's class across 4 categories: `documentLayouts`, `insetLayouts`, `insets`, `inlineProperties`.
+  - Returns all valid elements for the document's class across 6 categories:
+    - `documentLayouts` — Styles valid for this class (e.g. Section, Standard)
+    - `insetLayouts` — Layouts valid inside insets (e.g. Plain Layout)
+    - `insets` — Valid inset types (e.g. Formula, Foot, CommandInset)
+    - `commandInsetSubtypes` — Valid CommandInset subtypes (citation, ref, label, etc.)
+    - `inlineProperties` — Valid inline property keys (family, lang, change_inserted, etc.)
+    - `headingHierarchy` — Heading layouts with TocLevel
 - `lq bib <file> [--search <text>]`
   - Extracts available citation keys from linked `.bib` bibliography files and outputs them as JSON.
   - Each citation includes `key`, `author`, `title`, and `year`.
