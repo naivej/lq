@@ -1213,8 +1213,6 @@ export async function runCli(args: string[]) {
     
     try {
       const schema = await getSchemaForClass(textclassNode.value, layoutsDir);
-      // headingHierarchy is internal (used by dump --toc), not part of the public schema API
-      delete (schema as unknown as Record<string, unknown>).headingHierarchy;
       printJson({ status: "success", data: schema });
     } catch (e: Error | unknown) {
       printError("SCHEMA_ERROR", (e as Error).message);
