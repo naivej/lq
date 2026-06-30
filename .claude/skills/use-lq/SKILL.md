@@ -136,6 +136,10 @@ Navigate large documents strategically with a zoom-in approach:
 | Read all body text under a section (broad) | `lq read <file> "layout[Section]:contains('Theory') ~ layout:until(layout[Section])" --count --text-only` |
 | Find a specific paragraph by content       | `lq read <file> "layout:contains('unique phrase')" --text-only`                                           |
 | Find a paragraph by multiple keywords      | `lq read <file> "layout:contains('climate'):contains('policy')" --text-only`                              |
+| Get first paragraph of a section           | `lq read <file> "layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section]):first" --text-only` |
+| Get body under a subsection (multi-hop ~)  | `lq read <file> "layout[Section] ~ layout[Subsection]:contains('Methods') ~ layout[Standard]:until(layout[Section])" --text-only` |
+| Body text without footnotes in a section   | `lq read <file> "layout[Section] ~ layout[Standard]:not(inset[Foot]):until(layout[Section])" --text-only` |
+| Paragraph after a Quote, within a section  | `lq read <file> "layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section]):adjacent(layout[Quote])" --text-only` |
 | Check selector blast radius & composition  | `lq read <file> "<selector>" --count`                                                                     |
 | Inspect a specific node's CST              | `lq read <file> "<precise selector>"`                                                                     |
 | Deep-debug a node's children               | `lq dump <file> "<selector>"`                                                                             |

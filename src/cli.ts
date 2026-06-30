@@ -37,11 +37,9 @@ lq selectors use a CSS-inspired syntax to traverse the document structure:
   Tag + optional [args]     layout, inset[Formula], property[family]
   Descendant combinator     layout[Section] inset[Formula]
   Sibling combinator (~)    layout[Section] ~ layout[Standard]
-  Pseudo-classes            :first, :last, :nth-child(an+b), :not(sel),
+  Chainable Pseudo-classes  :first, :last, :nth-child(an+b), :not(sel),
                             :adjacent(sel), :until(sel), :contains("text")
-                            :until() bounds a ~ range to stop before the next matching sibling:
-Pseudo-classes chain:       layout:first:contains("intro")
-                            Chained :contains() matches nodes with multiple keywords, even across insets`,
+                            :until() bounds a ~ range to stop before the next matching sibling`,
 
   read: `lq read - Output matching nodes and text content as JSON.
 
