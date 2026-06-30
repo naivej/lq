@@ -19,7 +19,7 @@ Usage:
 Commands:
   init      Initialize the user configuration file.
   schema    Return a list of all semantically valid layouts.
-  dump      Output the full CST as a massive JSON document.
+  dump      Output the document structure as JSON.
   read      Output matching nodes and text content as JSON.
   bib       Extract available citation keys from linked bibliography files.
   set       Overwrite the targeted nodes with new text content.
@@ -32,7 +32,7 @@ Run 'lq selector --help' for the selector syntax reference.`,
 
   selector: `lq selector - CSS-like selector syntax reference.
 
-lq selectors use a CSS-inspired syntax to traverse the CST:
+lq selectors use a CSS-inspired syntax to traverse the document structure:
 
   Tag + optional [args]     layout, inset[Formula], property[family]
   Descendant combinator     layout[Section] inset[Formula]
@@ -61,7 +61,7 @@ Options:
               between nodes. Warnings appear in the \`warnings\` array.
   --count --text-only can be used together for both fields in one response.`,
 
-  dump: `lq dump - Output the CST (optionally scoped to a selector) as JSON.
+  dump: `lq dump - Output the document structure as JSON.
 
 Usage:
   lq dump <file> [<selector>] [options]
@@ -71,11 +71,11 @@ Arguments:
   <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
 
 Options:
-  --depth <n>  Limit CST output to n levels deep (0 = root node only).
-               Omit for the full CST. If n exceeds the subtree depth, the
+  --depth <n>  Limit output to n levels deep (0 = root node only).
+               Omit for full depth. If n exceeds the subtree depth, the
                full subtree is shown with a warning.
   --toc        Output a hierarchical heading tree (table of contents)
-               instead of raw CST. --depth limits TOC nesting
+               instead of the document tree. --depth limits TOC nesting
                depth. Mutually exclusive with <selector>.`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
@@ -149,7 +149,7 @@ Options:
                                       insert wraps new content in \\change_inserted.
   --author-name <name>      Set the author name used in tracked changes.
                             Default: "lq user".
-  --max-cache-entries <n>  Maximum number of cached parse results in ~/.lq/cache/.
+  --max-cache-entries <n>  Maximum number of file caches kept in ~/.lq/cache/.
                            Default: 50.`,
 
   schema: `lq schema - Return a list of all semantically valid layouts.
