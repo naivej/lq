@@ -1186,8 +1186,9 @@ export async function runCli(args: string[]) {
 
   if (command === "schema") {
     const config = await loadUserConfig();
-    if (!config.layoutsDir) {
-      printError("NO_CONFIG", "No layouts directory configured. Run 'lq init' to auto-detect and save your LyX layouts path.");
+    const layoutsDir = config.layoutsDir || await getDefaultLayoutsDir();
+    if (!layoutsDir) {
+      printError("NO_CONFIG", "No layouts directory found. Run 'lq init' to auto-detect and save your LyX layouts path.");
       return;
     }
 
@@ -1198,7 +1199,7 @@ export async function runCli(args: string[]) {
     }
     
     try {
-      const schema = await getSchemaForClass(textclassNode.value, config.layoutsDir);
+      const schema = await getSchemaForClass(textclassNode.value, layoutsDir);
       printJson({ status: "success", data: schema });
     } catch (e: Error | unknown) {
       printError("SCHEMA_ERROR", (e as Error).message);
