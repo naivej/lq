@@ -49,7 +49,7 @@ The query engine supports traversing the CST using CSS-like syntax:
 
 ### Config
 
-- `lq init [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>] [--max-cache-entries <n>]`
+- `lq init [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>] [--max-cache-entries <n>] [--author-name <name>]`
   - Without flags
     - Initializes the user configuration file `~/.lq/config.json` with default options.
     - Or prints the current configuration if it exists.
@@ -63,6 +63,7 @@ The query engine supports traversing the CST using CSS-like syntax:
     - Delete wraps removed nodes in `\change_deleted`
     - Insert wraps new content in `\change_inserted`
   - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`.
+  - `--author-name <name>`: Set the author name used in tracked changes. Default: `"lq user"`.
 
 ### Query
 

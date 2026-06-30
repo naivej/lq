@@ -148,6 +148,8 @@ Options:
                             When on: set wraps old text in \\change_deleted + new in \\change_inserted,
                                       delete wraps removed nodes in \\change_deleted,
                                       insert wraps new content in \\change_inserted.
+  --author-name <name>      Set the author name used in tracked changes.
+                            Default: "lq user".
   --max-cache-entries <n>  Maximum number of cached parse results in ~/.lq/cache/.
                            Default: 50.`,
 
@@ -220,6 +222,7 @@ interface UserConfig {
   refresh?: "none" | "reload" | "save-reload";
   trackChanges?: boolean;
   maxCacheEntries?: number;
+  authorName?: string;
 }
 
 async function loadUserConfig(): Promise<UserConfig> {
@@ -434,17 +437,34 @@ function truncateAtDepth(doc: DocumentNode, maxDepth: number, currentDepth: numb
 }
 
 
-// Ensure author ID is generated correctly if missing
-function ensureAuthorInHeader(ast: DocumentNode, authorId: number = 1, authorName: string = "lq-agent"): void {
+// Resolve the author ID for the given author name.
+// Reads existing \author entries from the .lyx header:
+// - If the name matches an existing author, return its ID.
+// - Otherwise, auto-assign a new ID (max existing + 1, or 1 if none exist)
+//   and add a new \author entry to the header.
+// Returns the resolved author ID (always ≥ 1).
+function resolveAuthorId(ast: DocumentNode, authorName: string): number {
   const docBlock = ast.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "document") as BlockNode;
-  if (!docBlock) return;
+  if (!docBlock) return 1;
   const header = docBlock.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "header") as BlockNode;
-  if (!header) return;
-  
-  const hasAuthor = header.children.some((c: Node) => c.type === "property" && c.key === "author" && c.value?.includes(authorId.toString()));
-  if (!hasAuthor) {
-    header.children.push({ type: "property", key: "author", value: `${authorId} "${authorName}"` });
+  if (!header) return 1;
+
+  // Parse existing \author <id> "<name>" entries
+  let maxId = 0;
+  for (const c of header.children) {
+    if (c.type !== "property" || c.key !== "author" || !c.value) continue;
+    const m = c.value.match(/^(\d+)\s+"(.+)"$/);
+    if (!m) continue;
+    const id = parseInt(m[1], 10);
+    const name = m[2];
+    if (name === authorName) return id;
+    if (id > maxId) maxId = id;
   }
+
+  // Not found — assign new ID
+  const newId = maxId + 1;
+  header.children.push({ type: "property", key: "author", value: `${newId} "${authorName}"` });
+  return newId;
 }
 
 // Ensure \tracking_changes true is set in the header so LyX does not auto-accept
@@ -594,9 +614,8 @@ function hasTrackedChanges(children: Node[]): boolean {
   return false;
 }
 
-function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted"): Node[] {
+function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted", authorId: number): Node[] {
   const ts = Math.floor(Date.now() / 1000).toString();
-  const authorId = 1; // Testing sequential ID instead of random large number
   
   const result: Node[] = [];
   // Buffer consecutive text nodes to wrap them under a single change marker pair,
@@ -620,7 +639,7 @@ function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted"): Node[] {
       if (n.type === "block") {
         const b = n as BlockNode;
         if (b.tag === "layout") {
-          b.children = wrapWithTracking(b.children, type);
+          b.children = wrapWithTracking(b.children, type, authorId);
           result.push(b);
         } else if (b.tag === "inset") {
           result.push({ type: "property", key: `change_${type}`, value: `${authorId} ${ts}` });
@@ -744,15 +763,17 @@ export async function runCli(args: string[]) {
   const cleanArgs = args.filter(a => a !== "--help" && a !== "-h");
 
   if (commandArg === "init") {
-    const flags = parseArgs(cleanArgs.slice(1), { string: ["layouts-dir", "refresh", "track-changes", "max-cache-entries"] });
+    const flags = parseArgs(cleanArgs.slice(1), { string: ["layouts-dir", "refresh", "track-changes", "max-cache-entries", "author-name"] });
     const hasFlags = flags["layouts-dir"] !== undefined ||
                      flags["refresh"] !== undefined ||
                      flags["track-changes"] !== undefined ||
-                     flags["max-cache-entries"] !== undefined;
+                     flags["max-cache-entries"] !== undefined ||
+                     flags["author-name"] !== undefined;
     let dir = flags["layouts-dir"];
     const refresh = flags["refresh"] as string | undefined;
     const trackChangesFlag = flags["track-changes"] as string | undefined;
     const maxCacheEntriesStr = flags["max-cache-entries"] as string | undefined;
+    const authorNameFlag = flags["author-name"] as string | undefined;
 
     // Validate --refresh value
     if (refresh !== undefined && refresh !== "none" && refresh !== "reload" && refresh !== "save-reload") {
@@ -852,6 +873,21 @@ export async function runCli(args: string[]) {
       }
     }
 
+    if (authorNameFlag !== undefined) {
+      if (authorNameFlag.length === 0) {
+        printError("INVALID_FLAG", "--author-name must be a non-empty string.");
+        return;
+      }
+      config.authorName = authorNameFlag;
+    } else {
+      const existing = await loadUserConfig();
+      if (existing.authorName) {
+        config.authorName = existing.authorName;
+      } else {
+        config.authorName = "lq user";
+      }
+    }
+
     // If refresh is enabled, verify LyXServer is reachable
     if (config.refresh !== "none") {
       const available = checkLyxServerAvailable();
@@ -873,6 +909,7 @@ export async function runCli(args: string[]) {
         refresh: config.refresh,
         trackChanges: config.trackChanges,
         maxCacheEntries: config.maxCacheEntries,
+        authorName: config.authorName,
       });
     } catch (e: Error | unknown) {
       printError("WRITE_ERROR", `Failed to write config file: ${(e as Error).message}`);
@@ -908,9 +945,11 @@ export async function runCli(args: string[]) {
   const mutationCommands = ["set", "delete", "insert", "undo"];
   let refreshMode: "none" | "reload" | "save-reload" = "none";
   let trackChanges = true;
+  let authorName = "lq user";
   if (mutationCommands.includes(command)) {
     if (userConfig.refresh) refreshMode = userConfig.refresh;
     trackChanges = userConfig.trackChanges !== false;
+    authorName = userConfig.authorName || "lq user";
     if (refreshMode !== "none") {
       const preOk = await refreshPreStep(filePath, refreshMode);
       if (!preOk) {
@@ -1313,7 +1352,7 @@ export async function runCli(args: string[]) {
 
     // Pre-compute trackChanges timestamp once for all nodes
     const tcTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
-    const tcAid = 1;
+    const tcAid = trackChanges ? resolveAuthorId(ast, authorName) : 0;
 
     // Helper to accumulate per-node find counts during mutation
     function addFindCount(node: Node, count: number) {
@@ -1449,7 +1488,6 @@ export async function runCli(args: string[]) {
     }
 
     if (trackChanges) {
-      ensureAuthorInHeader(ast);
       ensureTrackingChangesInHeader(ast);
     }
     const newFileText = serialize(ast);
@@ -1469,7 +1507,7 @@ export async function runCli(args: string[]) {
 
     if (trackChanges) {
       // Track-changes mode: wrap matched nodes in change_deleted markers instead of removing them
-      ensureAuthorInHeader(ast);
+      const authorId = resolveAuthorId(ast, authorName);
       ensureTrackingChangesInHeader(ast);
       const nodesToMark = new Set(nodes);
 
@@ -1478,9 +1516,9 @@ export async function runCli(args: string[]) {
           const child = children[i];
           if (nodesToMark.has(child)) {
             if (child.type === "block") {
-              child.children = wrapWithTracking(child.children, "deleted");
+              child.children = wrapWithTracking(child.children, "deleted", authorId);
             } else if (child.type === "text" || child.type === "property") {
-              const wrapped = wrapWithTracking([child], "deleted");
+              const wrapped = wrapWithTracking([child], "deleted", authorId);
               children.splice(i, 1, ...wrapped);
             }
           } else if (child.type === "block") {
@@ -1767,13 +1805,15 @@ export async function runCli(args: string[]) {
       // insertion index).
       let insertedSoFar = 0;
 
+      // Resolve author once for all payload blocks
+      const insertAuthorId = trackChanges ? resolveAuthorId(ast, authorName) : 0;
+      if (trackChanges) ensureTrackingChangesInHeader(ast);
+
       // Per-node validation for each block in the payload
       for (const nodeToInsert of newNodesToInsert) {
         if (trackChanges) {
-          ensureAuthorInHeader(ast);
-          ensureTrackingChangesInHeader(ast);
           if (nodeToInsert.type === "block") {
-            nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted");
+            nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted", insertAuthorId);
           } else {
             printError("TRACKING_ERROR", "Cannot track bare text nodes. Wrap in a layout block.");
             return;
@@ -1919,11 +1959,9 @@ export async function runCli(args: string[]) {
           const replacementNodes: Node[] = [{ type: "text", text: before }];
 
           if (trackChanges) {
-            ensureAuthorInHeader(ast);
-            ensureTrackingChangesInHeader(ast);
             if (nodeToInsert.type === "block") {
               const tracked = structuredClone(nodeToInsert);
-              tracked.children = wrapWithTracking(tracked.children, "inserted");
+              tracked.children = wrapWithTracking(tracked.children, "inserted", insertAuthorId);
               replacementNodes.push(tracked);
             }
           } else {

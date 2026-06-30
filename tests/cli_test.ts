@@ -10,7 +10,7 @@
  * Run from lq/ directory: deno test -A tests/cli_test.ts
  */
 
-import { assertEquals, assertStringIncludes, assertGreater } from "@std/assert";
+import { assertEquals, assertStringIncludes, assertGreater, assertMatch } from "@std/assert";
 import { runCliTest, runCliRaw, runCliWithEnv, runCliWithConfig, createTempFixture } from "./helpers.ts";
 
 const FIXTURE = "tests/fixtures/my_template.lyx";
@@ -213,7 +213,7 @@ Deno.test("CLI - set with trackChanges", { timeout: 10000 }, async () => {
     assertStringIncludes(text, "Tracked Title");
     // Header should have tracking_changes true AND author
     assertStringIncludes(text, "\\tracking_changes true");
-    assertStringIncludes(text, "\\author 1 \"lq-agent\"");
+    assertMatch(text, /\\author \d+ "lq user"/);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -253,7 +253,7 @@ Deno.test("CLI - delete with trackChanges", { timeout: 10000 }, async () => {
     const text = await Deno.readTextFile(tempFile);
     assertStringIncludes(text, "\\change_deleted");
     assertStringIncludes(text, "\\tracking_changes true");
-    assertStringIncludes(text, "\\author 1 \"lq-agent\"");
+    assertMatch(text, /\\author \d+ "lq user"/);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -275,7 +275,7 @@ Deno.test("CLI - insert with trackChanges", { timeout: 10000 }, async () => {
     assertStringIncludes(text, "\\change_inserted");
     assertStringIncludes(text, "Tracked Insert");
     assertStringIncludes(text, "\\tracking_changes true");
-    assertStringIncludes(text, "\\author 1 \"lq-agent\"");
+    assertMatch(text, /\\author \d+ "lq user"/);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -377,7 +377,7 @@ Deno.test("CLI - set --find with trackChanges", { timeout: 10000 }, async () => 
     assertStringIncludes(rawText, "\\change_inserted");
     // Tracked change header properties
     assertStringIncludes(rawText, "\\tracking_changes true");
-    assertStringIncludes(rawText, "\\author 1 \"lq-agent\"");
+    assertMatch(rawText, /\\author \d+ "lq user"/);
     // Old text "writing" should appear inside change_deleted
     assertStringIncludes(rawText, "writing");
     // New text "text" should appear inside change_inserted
