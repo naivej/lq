@@ -31,8 +31,8 @@ The query engine supports traversing the CST using CSS-like syntax:
 - **Tags**: `layout` (e.g., standard paragraphs, sections), `inset` (e.g., formulas, footnotes, figures), `property` (e.g. `\family roman`).
 - **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`.
 - **Combinators**
-  - Descendant (): Finds descendants with space-separated paths. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.
-  - Sibling (`~`): Finds following siblings. Example: `layout[Section] ~ layout[Standard]` matches all Standard layouts after a Section.
+  - Descendant (` `): Finds descendants with space-separated paths. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.
+  - Sibling (` ~ `): Finds following siblings. Example: `layout[Section] ~ layout[Standard]` matches all Standard layouts after a Section.
 - **Pseudo-classes** (must follow a tag e.g., `layout:contains("text")`, `inset:first`):
   - `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`).
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
