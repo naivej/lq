@@ -71,7 +71,6 @@ The query engine supports traversing the CST using CSS-like syntax:
   - Returns `headingHierarchy` and a list of semantically valid layouts for the document's class across 4 categories: `documentLayouts`, `insetLayouts`, `insets`, `inlineProperties`.
 - `lq bib <file> [--search <text>]`
   - Extracts available citation keys from linked `.bib` bibliography files and outputs them as JSON.
-  - Only `.bib` files are supported — other file types (e.g. `.bst`) are ignored.
   - Each citation includes `key`, `author`, `title`, and `year`.
   - `--search <text>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
 - `lq dump <file> [<selector>] [--depth <n>] [--toc]`
