@@ -1,7 +1,12 @@
-// Known inset type names that can appear after \begin_inset in .lyx files.
-// Sourced from LyX 2.5.1 InsetCode.h + insetnames table in Inset.cpp,
-// cross-referenced against actual .lyx fixture files.
-// Hardcoded to keep lq self-contained (no LyX installation required).
+// Hardcoded registries of LyX file format elements, sourced from LyX 2.5.1 C++ source.
+// These are kept here to keep lq self-contained (no LyX installation required).
+//
+// Sources:
+//   Inset types:    src/InsetCode.h, src/Inset.cpp (insetnames table)
+//   Inline props:   src/Text.cpp, src/Changes.cpp, src/Font.cpp
+//   CommandInset:   src/InsetCode.h
+
+// ── Inset types ──────────────────────────────────────────────────────────────
 
 /** Top-level inset type names (first word after \begin_inset). */
 export const KNOWN_INSET_TYPES: ReadonlySet<string> = new Set([
@@ -110,3 +115,20 @@ export function validateInsetType(args: string | undefined): string | null {
   }
   return `Unknown inset type: '${primaryType}'. Known types: ${[...KNOWN_INSET_TYPES].join(", ")}`;
 }
+
+// ── Inline properties ────────────────────────────────────────────────────────
+
+/** Inline property keys that can appear as \key value inside layout/inset content.
+ *  Sourced from LyX 2.5.1: src/Text.cpp, src/Changes.cpp, src/Font.cpp */
+export const INLINE_PROPERTIES: readonly string[] = [
+  // Font properties (src/Font.cpp)
+  "family", "series", "shape", "size", "lang", "color",
+  "numeric", "nospellcheck",
+  "emph", "noun", "bar",
+  "strikeout", "xout", "uuline", "uwave",
+  // Change tracking (src/Changes.cpp, src/Text.cpp)
+  "change_inserted", "change_deleted", "change_unchanged",
+  // Legacy change tracking (older .lyx format)
+  "lyxadded", "lyxdeleted", "lyxobjdeleted", "lyxdisplayobjdeleted",
+  "lyxudisplayobjdeleted",
+];

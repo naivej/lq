@@ -1,5 +1,5 @@
 import * as path from "@std/path";
-import { KNOWN_INSET_TYPES } from "./inset_registry.ts";
+import { KNOWN_INSET_TYPES, INLINE_PROPERTIES } from "./registry.ts";
 
 export interface HeadingLevel {
   layout: string;
@@ -11,7 +11,7 @@ export interface LyxSchema {
   documentLayouts: string[];
   insetLayouts: string[];
   insets: string[];
-  inlineProperties: string[];
+  inlineProperties: readonly string[];
   headingHierarchy: HeadingLevel[];
 }
 
@@ -19,9 +19,7 @@ export const INSET_LAYOUTS = ["Plain Layout"];
 
 export const INSETS: string[] = [...KNOWN_INSET_TYPES];
 
-export const INLINE_PROPERTIES = [
-  "change_inserted", "change_deleted", "change_unchanged"
-];
+export { INLINE_PROPERTIES };
 
 /**
  * Parses a .layout or .inc file and extracts declared Styles.

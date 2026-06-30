@@ -5,7 +5,7 @@ import { getSchemaForClass, INSET_LAYOUTS, INSETS, INLINE_PROPERTIES } from "./s
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode } from "./ast.ts";
-import { validateInsetType } from "./inset_registry.ts";
+import { validateInsetType } from "./registry.ts";
 import { getCachedAst, setCachedAst, hashText, setMaxCacheEntries } from "./cache.ts";
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
