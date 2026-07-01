@@ -27,17 +27,26 @@ Commands:
   insert    Insert new blocks or properties before/after/prepend/append.
   undo      Revert tracked changes (change_deleted/change_inserted) in matched nodes.
 
-Run 'lq <command> --help' for more information on a specific command.
-Run 'lq selector --help' for the selector syntax reference.`,
+Run 'lq <command> --help' for more information on a specific command.`,
 
   selector: `lq selector - CSS-like selector to traverse the LyX document.
 
-  Tag + optional [args]     layout, inset[Formula], property[family]
-  Descendant combinator     layout[Section] inset[Formula]
-  Sibling combinator (~)    layout[Section] ~ layout[Standard]
-  Chainable Pseudo-classes  :first, :last, :nth-child(an+b), :not(sel),
-                            :adjacent(sel), :until(sel), :contains("text")
-                            :until() bounds a ~ range to stop before the next matching sibling`,
+Tag[args]: Run 'lq schema <file>' to see optional args
+  layout[documentLayouts]
+  inset[insets]
+  inset[CommandInset commandInsetSubtypes]
+  property[inlineProperties]
+  
+Combinators:
+  Space for descendant: layout[Section] inset[Formula]
+  ~ for sibling:        layout[Section] ~ layout[Standard]
+  , for OR group:       layout[Section], inset[Foot]
+
+Pseudo-classes: must follow a tag
+  :first, :last, :nth-child(an+b),
+  :contains("text"),
+  :not(selector), :adjacent(selector), :until(selector),
+  :until(selector) bounds a ~ range to stop before the next matching sibling`,
 
   read: `lq read - Output matching nodes and text content as JSON.
 
