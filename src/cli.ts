@@ -500,11 +500,42 @@ function extractAllText(node: Node): string {
   return "";
 }
 
-/** First N characters of a node's text, for concise verbose output. */
+/** First N characters of a node's text, for concise verbose output.
+ *  Uses an early-terminating walk to avoid traversing the full subtree
+ *  only to discard 99% of the result. */
 function briefText(node: Node, maxLen = 80): string {
-  const text = extractAllText(node).trim();
+  const text = extractTextUpTo(node, maxLen + 1).trim();
   if (text.length <= maxLen) return text;
   return text.substring(0, maxLen) + "...";
+}
+
+/** Like extractAllText but stops accumulating once maxLen characters
+ *  have been collected. Returns at most maxLen characters. */
+function extractTextUpTo(node: Node, maxLen: number): string {
+  if (maxLen <= 0) return "";
+  if (node.type === "text") {
+    return node.text.substring(0, maxLen);
+  }
+  if (node.type === "property") {
+    if (node.key === "change_deleted") return "\\change_deleted{".substring(0, maxLen);
+    if (node.key === "change_inserted") return "\\change_inserted{".substring(0, maxLen);
+    if (node.key === "change_unchanged") return "}".substring(0, maxLen);
+    return "";
+  }
+  if (node.type === "block") {
+    if (node.tag === "inset") {
+      const label = " inset[" + (node.args || "").trim() + "] ";
+      return label.substring(0, maxLen);
+    }
+    let result = "";
+    for (const child of node.children) {
+      const remaining = maxLen - result.length;
+      if (remaining <= 0) break;
+      result += extractTextUpTo(child, remaining);
+    }
+    return result;
+  }
+  return "";
 }
 
 /** Build a selector-like label for a node: tag[args]. */
@@ -959,7 +990,6 @@ export async function runCli(args: string[]) {
   }
 
   let ast: DocumentNode;
-  let cacheHash: string | null = null;
   try {
     // Try cache first — deserializing JSON is orders of magnitude faster
     // than line-by-line parsing for large files.
@@ -970,8 +1000,7 @@ export async function runCli(args: string[]) {
       ast = parse(text);
       // Populate cache on miss (non-fatal)
       try {
-        cacheHash = await hashText(text);
-        await setCachedAst(cacheHash, ast);
+        await setCachedAst(await hashText(text), ast);
       } catch { /* cache failures are non-fatal */ }
     }
   } catch (e: Error | unknown) {
@@ -1058,7 +1087,7 @@ export async function runCli(args: string[]) {
     // Wrap each matched node as a document root for depth-limited output
     const wrapAsDoc = (node: Node): DocumentNode => ({
       type: "document",
-      children: [structuredClone(node)],
+      children: [node],
     });
     
     if (depthStr !== undefined) {
@@ -1200,7 +1229,16 @@ export async function runCli(args: string[]) {
           insets: INSETS,
           commandInsetSubtypes: [...KNOWN_COMMAND_INSET_TYPES].sort(),
           inlineProperties: INLINE_PROPERTIES,
-          headingHierarchy: [],
+          headingHierarchy: [
+          { layout: "Part", tocLevel: -1 },
+          { layout: "Chapter", tocLevel: 0 },
+          { layout: "Section", tocLevel: 1 },
+          { layout: "Bibliography", tocLevel: 1 },
+          { layout: "Subsection", tocLevel: 2 },
+          { layout: "Subsubsection", tocLevel: 3 },
+          { layout: "Paragraph", tocLevel: 4 },
+          { layout: "Subparagraph", tocLevel: 5 },
+        ],
         },
       });
     }
@@ -1241,10 +1279,7 @@ export async function runCli(args: string[]) {
     if (countOnly) {
       const tally: Record<string, number> = {};
       for (const node of nodes) {
-        const key = node.type === "block"
-          ? node.tag + "[" + ((node.args || "").trim()) + "]"
-          : node.type;
-        tally[key] = (tally[key] || 0) + 1;
+        tally[nodeLabel(node)] = (tally[nodeLabel(node)] || 0) + 1;
       }
       result.count = tally;
     }
@@ -1354,9 +1389,7 @@ export async function runCli(args: string[]) {
 
     // Helper to accumulate per-node find counts during mutation
     const addFindCount = (node: Node, count: number) => {
-      const key = node.type === "block"
-        ? node.tag + "[" + ((node.args || "").trim()) + "]"
-        : "text";
+      const key = node.type === "block" ? nodeLabel(node) : "text";
       findPerNode[key] = (findPerNode[key] || 0) + count;
     };
 
@@ -1490,7 +1523,7 @@ export async function runCli(args: string[]) {
     }
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
-    try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+    try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
     printJson({ modified_nodes: nodes.length, changes });
@@ -1528,7 +1561,7 @@ export async function runCli(args: string[]) {
       markAsDeleted(ast.children);
       const newFileText = serialize(ast);
       await Deno.writeTextFile(filePath, newFileText);
-      try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+      try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
       await refreshPostStep(filePath, refreshMode);
       const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
       printJson({ tracked_deleted_nodes: nodes.length, changes });
@@ -1552,7 +1585,7 @@ export async function runCli(args: string[]) {
 
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
-    try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+    try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
     printJson({ deleted_nodes: nodes.length, changes });
@@ -1752,12 +1785,15 @@ export async function runCli(args: string[]) {
     let insertedCount = 0;
     let insertedBlocks = 0;
 
-    // Helper to find the parent array and index of a target node
-    const findNodeContext = (parentList: Node[], target: Node, parentBlock: BlockNode | null = null): { list: Node[]; index: number, parentBlock: BlockNode | null } | null => {
+    // Helper to find the parent array and index of a target node.
+    // Also returns the full ancestor chain (from root to parent) so that
+    // subsequent inset-context checks don't need to re-walk the tree.
+    const findNodeContext = (parentList: Node[], target: Node, parentBlock: BlockNode | null = null, ancestors: BlockNode[] = []): { list: Node[]; index: number, parentBlock: BlockNode | null, ancestorChain: BlockNode[] } | null => {
       for (let i = 0; i < parentList.length; i++) {
-        if (parentList[i] === target) return { list: parentList, index: i, parentBlock };
+        if (parentList[i] === target) return { list: parentList, index: i, parentBlock, ancestorChain: ancestors };
         if (parentList[i].type === "block") {
-          const res = findNodeContext((parentList[i] as BlockNode).children, target, parentList[i] as BlockNode);
+          const block = parentList[i] as BlockNode;
+          const res = findNodeContext(block.children, target, block, [...ancestors, block]);
           if (res) return res;
         }
       }
@@ -1782,12 +1818,12 @@ export async function runCli(args: string[]) {
 
     for (const targetNode of nodes) {
       let targetParentBlock: BlockNode | null = null;
-      let ctx: { list: Node[]; index: number; parentBlock: BlockNode | null } | null = null;
+      let ctx: { list: Node[]; index: number; parentBlock: BlockNode | null; ancestorChain: BlockNode[] } | null = null;
 
       if (position === "prepend" || position === "append" || position === "split-after") {
         if (targetNode.type !== "block") {
           printError("INVALID_TARGET", `Cannot ${position} to a non-block node.`);
-          continue;
+
         }
         targetParentBlock = targetNode as BlockNode;
         // Also find context to enable ancestor-chain checks (e.g. is this layout inside an inset?)
@@ -1822,43 +1858,41 @@ export async function runCli(args: string[]) {
           if (nodeToInsert.type === "block") {
             const block = nodeToInsert as BlockNode;
             if (block.tag === "layout" && block.args) {
-              // Walk ancestor chain to determine if we're inside an inset
+              // Determine if the target is inside an inset by walking the
+              // ancestor chain captured during the initial findNodeContext call.
               let isInsetContext = false;
             if (targetParentBlock && targetParentBlock.tag === "inset") {
               isInsetContext = true;
-            } else if (ctx && ctx.parentBlock) {
-              let ancestor: BlockNode | null = ctx.parentBlock;
-              while (ancestor) {
+            } else if (ctx) {
+              for (const ancestor of ctx.ancestorChain) {
                 if (ancestor.tag === "inset") {
                   isInsetContext = true;
                   break;
                 }
-                const ancestorCtx = findNodeContext(ast.children, ancestor);
-                ancestor = ancestorCtx ? ancestorCtx.parentBlock : null;
               }
             }
 
             if (isInsetContext) {
               if (!schema.insetLayouts.includes(block.args)) {
                 printError("INVALID_CONTEXT", `Cannot insert document layout '${block.args}' inside an Inset. Valid inset layouts are: ${schema.insetLayouts.join(", ")}`);
-                continue;
+
               }
             } else {
               if (schema.insetLayouts.includes(block.args) && !schema.documentLayouts.includes(block.args)) {
                 const contextName = targetParentBlock ? `${targetParentBlock.tag}[${targetParentBlock.args || ''}]` : 'document body';
                 printError("INVALID_CONTEXT", `Cannot insert inset layout '${block.args}' into ${contextName}.`);
-                continue;
+
               }
               if (!schema.documentLayouts.includes(block.args)) {
                 printError("INVALID_LAYOUT", `The layout '${block.args}' is not recognized in textclass '${textclassValue}'. Valid layouts: ${schema.documentLayouts.join(", ")}`);
-                continue;
+
               }
             }
           }
         } else if (nodeToInsert.type === "property") {
           if (!schema.inlineProperties.includes(nodeToInsert.key)) {
             printError("INVALID_PROPERTY", `Property '${nodeToInsert.key}' is not permitted. Valid inline properties are: ${schema.inlineProperties.join(", ")}`);
-            continue;
+
           }
         }
       }
@@ -1875,14 +1909,14 @@ export async function runCli(args: string[]) {
             printError("INVALID_CONTEXT",
               `Cannot insert layout '${block.args}' inside another layout. ` +
               `Use 'before' or 'after' to insert as a sibling.`);
-            continue;
+
           }
           // Guard: insets cannot be inserted directly into the document body.
           if (block.tag === "inset" && block.args) {
             const isDocumentContext = targetParentBlock && targetParentBlock.tag === "body";
             if (isDocumentContext) {
               printError("INVALID_CONTEXT", `Cannot insert inset directly into the document body. Insets must be inside a layout (e.g. Standard).`);
-              continue;
+
             }
           }
         }
@@ -1938,11 +1972,11 @@ export async function runCli(args: string[]) {
 
           if (totalMatches === 0) {
             printError("SPLIT_NO_MATCH", `split-after: substring '${splitMatch}' not found in matched block.`);
-            continue;
+
           }
           if (totalMatches > 1) {
             printError("SPLIT_AMBIGUOUS", `split-after: substring '${splitMatch}' appears ${totalMatches} times in matched block. Use a more specific selector or a longer match string.`);
-            continue;
+
           }
 
           // Split the text node: first half includes the match, second half is everything after
@@ -1956,15 +1990,10 @@ export async function runCli(args: string[]) {
           const textIdx = matchedTextNode!.index;
           const replacementNodes: Node[] = [{ type: "text", text: before }];
 
-          if (trackChanges) {
-            if (nodeToInsert.type === "block") {
-              const tracked = structuredClone(nodeToInsert);
-              tracked.children = wrapWithTracking(tracked.children, "inserted", insertAuthorId);
-              replacementNodes.push(tracked);
-            }
-          } else {
-            replacementNodes.push(copy);
-          }
+          // copy was cloned from nodeToInsert after the first loop already
+          // wrapped its children with tracking markers (when trackChanges is true).
+          // Use copy directly to avoid double-wrapping.
+          replacementNodes.push(copy);
 
           if (after.length > 0) {
             replacementNodes.push({ type: "text", text: after });
@@ -1974,8 +2003,10 @@ export async function runCli(args: string[]) {
         } else if (position === "prepend" || position === "append") {
           if (!targetParentBlock) continue;
           if (position === "prepend") {
-            if (isLayoutBlock) targetParentBlock.children.unshift(copy, spacer);
-            else targetParentBlock.children.unshift(copy);
+            // Use splice with offset instead of unshift to preserve
+            // insertion order for multi-block payloads.
+            if (isLayoutBlock) targetParentBlock.children.splice(insertedSoFar, 0, copy, spacer);
+            else targetParentBlock.children.splice(insertedSoFar, 0, copy);
           } else {
             if (isLayoutBlock) targetParentBlock.children.push(spacer, copy);
             else targetParentBlock.children.push(copy);
@@ -2002,7 +2033,7 @@ export async function runCli(args: string[]) {
 
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
-    try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+    try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ position, label: nodeLabel(n), text: briefText(n) }));
     printJson({ inserted_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });
@@ -2125,7 +2156,7 @@ export async function runCli(args: string[]) {
     }
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
-    try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+    try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     printJson({ undone_changes: undoneCount, changes });
     return;
