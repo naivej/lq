@@ -336,9 +336,7 @@ function pushWarning(message: string) {
 }
 
 function printJson(data: unknown) {
-  // Strip the redundant 'status' field — exit code carries success/error.
   const obj = data as Record<string, unknown>;
-  delete obj.status;
   // Attach pending warnings to every JSON response
   if (_warnings.length > 0) {
     obj.warnings = [..._warnings];
@@ -798,7 +796,7 @@ export async function runCli(args: string[]) {
         try {
           const stat = await Deno.stat(configPath);
           if (stat.isFile) {
-            printJson({ status: "success", data: existing });
+            printJson({ data: existing });
             return;
           }
         } catch { /* config doesn't exist, proceed to create */ }
@@ -894,7 +892,6 @@ export async function runCli(args: string[]) {
       await Deno.mkdir(configDir, { recursive: true });
       await Deno.writeTextFile(configPath, JSON.stringify(config, null, 2));
       printJson({
-        status: "success",
         message: `Configuration saved to ${configPath}`,
         layoutsDir: dir,
         refresh: config.refresh,
@@ -1038,7 +1035,7 @@ export async function runCli(args: string[]) {
         toc = truncateTocDepth(toc, depth, 0);
       }
       
-      printJson({ status: "success", data: toc });
+      printJson({ data: toc });
       return;
     }
     
@@ -1075,9 +1072,9 @@ export async function runCli(args: string[]) {
         const maxDepth = computeMaxDepth(ast, 0);
         if (depth > maxDepth) {
           pushWarning(`Depth ${depth} exceeds document depth (${maxDepth}). Showing full CST.`);
-          printJson({ status: "success", data: ast });
+          printJson({ data: ast });
         } else {
-          printJson({ status: "success", data: truncateAtDepth(ast, depth, 0) });
+          printJson({ data: truncateAtDepth(ast, depth, 0) });
         }
       } else {
         const results = roots.map(root => {
@@ -1090,15 +1087,15 @@ export async function runCli(args: string[]) {
           return truncateAtDepth(doc, depth, 0);
         });
         const data = roots.length === 1 ? results[0] : results;
-        printJson({ status: "success", count: roots.length, data });
+        printJson({ count: roots.length, data });
       }
     } else {
       if (useFullAst) {
-        printJson({ status: "success", data: ast });
+        printJson({ data: ast });
       } else {
         const docs = roots.map(wrapAsDoc);
         const data = roots.length === 1 ? docs[0] : docs;
-        printJson({ status: "success", count: roots.length, data });
+        printJson({ count: roots.length, data });
       }
     }
     return;
@@ -1172,7 +1169,7 @@ export async function runCli(args: string[]) {
       });
     }
 
-    printJson({ status: "success", data: uniqueCitations });
+    printJson({ data: uniqueCitations });
     return;
   }
 
@@ -1192,11 +1189,10 @@ export async function runCli(args: string[]) {
     
     try {
       const schema = await getSchemaForClass(textclassNode.value, layoutsDir);
-      printJson({ status: "success", data: schema });
+      printJson({ data: schema });
     } catch (e: Error | unknown) {
       pushWarning(`Could not read layout file for textclass '${textclassNode.value}': ${(e as Error).message}`);
       printJson({
-        status: "success",
         data: {
           textclass: textclassNode.value,
           documentLayouts: [],
@@ -1240,7 +1236,7 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "read") {
-    const result: Record<string, unknown> = { status: "success" };
+    const result: Record<string, unknown> = {} ;
 
     if (countOnly) {
       const tally: Record<string, number> = {};
@@ -1497,7 +1493,7 @@ export async function runCli(args: string[]) {
     try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
-    printJson({ status: "success", modified_nodes: nodes.length, changes });
+    printJson({ modified_nodes: nodes.length, changes });
     return;
   }
 
@@ -1535,7 +1531,7 @@ export async function runCli(args: string[]) {
       try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
       await refreshPostStep(filePath, refreshMode);
       const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
-      printJson({ status: "success", tracked_deleted_nodes: nodes.length, changes });
+      printJson({ tracked_deleted_nodes: nodes.length, changes });
       return;
     }
 
@@ -1559,7 +1555,7 @@ export async function runCli(args: string[]) {
     try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
-    printJson({ status: "success", deleted_nodes: nodes.length, changes });
+    printJson({ deleted_nodes: nodes.length, changes });
     return;
   }
 
@@ -2009,7 +2005,7 @@ export async function runCli(args: string[]) {
     try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ position, label: nodeLabel(n), text: briefText(n) }));
-    printJson({ status: "success", inserted_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });
+    printJson({ inserted_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });
     return;
   }
 
@@ -2131,7 +2127,7 @@ export async function runCli(args: string[]) {
     await Deno.writeTextFile(filePath, newFileText);
     try { setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
-    printJson({ status: "success", undone_changes: undoneCount, changes });
+    printJson({ undone_changes: undoneCount, changes });
     return;
   }
 
