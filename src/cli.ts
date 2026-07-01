@@ -38,14 +38,14 @@ Tag[args]: Run 'lq schema <file>' to see optional args
   property[inlineProperties]
   
 Combinators:
-  Space for descendant: layout[Section] inset[Formula]
-  ~ for sibling:        layout[Section] ~ layout[Standard]
-  , for OR group:       layout[Section], inset[Foot]
+  Space for descendant  e.g. layout[Section] inset[Formula]
+  ~ for sibling         e.g. layout[Section] ~ layout[Standard]
+  , for OR group        e.g. layout[Section], inset[Foot]
 
-Pseudo-classes: must follow a tag
-  :first, :last, :nth-child(an+b),
+Chainable pseudo-classes: must follow a tag
+  :first, :last, :nth-child(an+b/even/odd),
   :contains("text"),
-  :not(selector), :adjacent(selector), :until(selector),
+  :not(selector), :adjacent(selector),
   :until(selector) bounds a ~ range to stop before the next matching sibling`,
 
   read: `lq read - Output matching nodes and text content as JSON.

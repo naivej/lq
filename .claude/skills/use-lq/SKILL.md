@@ -26,19 +26,25 @@ To effectively use the query engine, Users need to understand how LyX syntax map
 
 ## Query Engine
 
-The query engine supports traversing the CST using CSS-like syntax:
+The query engine supports traversing the CST using CSS-like selector:
 
-- **Tags**: `layout` (e.g., standard paragraphs, sections), `inset` (e.g., formulas, footnotes, figures), `property` (e.g. `\family roman`).
-- **Attributes**: `layout[Section]`, `inset[Formula]`, `property[family]`.
+- **Tag[args]** (Run `lq schema <file>` to see optional args)
+  - layout[documentLayouts]
+  - inset[insets]
+  - inset[CommandInset commandInsetSubtypes]
+  - property[inlineProperties]
+  
 - **Combinators**
-  - Descendant (` `): Finds descendants with space-separated paths. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.
-  - Sibling (` ~ `): Finds following siblings. Example: `layout[Section] ~ layout[Standard]` matches all Standard layouts after a Section.
-- **Pseudo-classes** (must follow a tag e.g., `layout:contains("text")`, `inset:first`):
-  - `:first`, `:last`, `:nth-child(an+b)` (supports formulas like `2n+1`, `odd`, `even`).
+  - Space for descendant. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.
+  - `~` for sibling. Example: `layout[Section] ~ layout[Standard]` matches all Standard layouts after a Section.
+  - `,` for OR group. Example: `layout[Section], inset[Foot]` matches all Section and Foot layouts.
+
+- **Chainable Pseudo-classes** (must follow a tag e.g. `layout:contains("text")`, `inset:first`)
+  - `:first`, `:last`, `:nth-child(an+b/even/odd)`,
+  - `:contains("text")` searches recursively and case-sensitively node children for text.
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
   - `:until(selector)` bounds a `~` sibling range — rejects nodes that have a sibling matching the inner selector between themselves and the anchor. Example: `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` gives all Standard paragraphs in the Introduction section.
-  - `:contains("text")` searches recursively and case-sensitively node children for text.
   - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 
 ## Context-Aware Strict Validation
