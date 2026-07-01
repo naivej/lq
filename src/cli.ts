@@ -194,8 +194,6 @@ Options:
 
   undo: `lq undo - Revert tracked changes in matched nodes.
 
-Only available when trackChanges is enabled.
-
 Usage:
   lq undo <file> <selector> [<substring>]
 
@@ -2013,17 +2011,18 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "undo") {
-    if (!trackChanges) {
-      printError("TRACK_CHANGES_OFF", "lq undo requires trackChanges to be enabled. Run 'lq init --track-changes on'.");
-      return;
-    }
     if (nodes.length === 0) {
       printError("NO_MATCH", "Selector matched no nodes to undo.");
       return;
     }
     const substring: string | undefined = restArgs.length > 0 ? restArgs.join(" ") : undefined;
 
+    // Resolve the current author's ID to only undo their own changes
+    const undoAuthorId = resolveAuthorId(ast, authorName);
+
     let undoneCount = 0;
+    let skippedOtherAuthor = 0;
+    let matchedOtherAuthor = 0;
     const undoneLabels: string[] = [];
 
     for (const node of nodes) {
@@ -2058,6 +2057,20 @@ export async function runCli(args: string[]) {
             continue;
           }
 
+          // Skip changes made by other authors
+          const authorIdMatch = child.value?.match(/^(\d+)/);
+          const changeAuthorId = authorIdMatch ? parseInt(authorIdMatch[1], 10) : null;
+          if (changeAuthorId !== undoAuthorId) {
+            skippedOtherAuthor++;
+            const enclosedText = textParts.join("");
+            if (substring !== undefined && enclosedText.includes(substring)) {
+              matchedOtherAuthor++;
+            }
+            for (let k = i; k <= j; k++) newChildren.push(node.children[k]);
+            i = j + 1;
+            continue;
+          }
+
           const enclosedText = textParts.join("");
 
           // Check if this change matches our target
@@ -2088,8 +2101,28 @@ export async function runCli(args: string[]) {
     }
 
     const changes = undoneLabels.map(l => ({ label: l }));
-    if (undoneCount === 0 && substring !== undefined) {
-      pushWarning(`--undo did not match '${substring}' in any tracked change within the selector.`);
+    if (substring !== undefined) {
+      if (undoneCount === 0 && matchedOtherAuthor > 0) {
+        const plural = matchedOtherAuthor === 1 ? "" : "s";
+        pushWarning(
+          `Substring '${substring}' matched ${matchedOtherAuthor} change${plural} by other author${plural}. ` +
+          `Only changes by you can be undone.`
+        );
+      } else if (undoneCount > 0 && matchedOtherAuthor > 0) {
+        const plural = matchedOtherAuthor === 1 ? "" : "s";
+        pushWarning(
+          `Undid ${undoneCount} of your changes. ` +
+          `${matchedOtherAuthor} matched change${plural} by other author${plural} preserved.`
+        );
+      } else if (undoneCount === 0) {
+        pushWarning(`--undo did not match '${substring}' in any tracked change within the selector.`);
+      }
+    }
+    if (substring === undefined && skippedOtherAuthor > 0) {
+      const plural = skippedOtherAuthor === 1 ? "" : "s";
+      pushWarning(
+        `${skippedOtherAuthor} change${plural} by other author${plural} preserved.`
+      );
     }
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);

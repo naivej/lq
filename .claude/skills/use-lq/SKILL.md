@@ -104,7 +104,7 @@ The query engine supports traversing the CST using CSS-like selector:
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq undo <file> <selector> [<substring>]`
-  - Requires `trackChanges: on`.
+  - Only tracked changes made by the same author can be undone.
   - Reverts tracked changes in matched nodes: `change_deleted` blocks are restored (marker removed, text kept); `change_inserted` blocks are discarded (marker and text removed).
   - Each marker is undone independently — to fully revert a `set`, run undo twice (once for the deleted text, once for the inserted text).
   - `<substring>`: Text inside the `change_deleted` or `change_inserted` block to revert. Omit to revert ALL tracked changes in matched nodes.
