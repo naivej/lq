@@ -15,7 +15,6 @@
 
 /** Shape of JSON responses from lq CLI commands. */
 export interface CliResult {
-  status: "success" | "error";
   code?: string;
   message?: string;
   inserted_nodes?: number;
@@ -92,7 +91,7 @@ export async function runCliTest(args: string[]): Promise<CliResult> {
   try {
     return JSON.parse(outputStr);
   } catch (_e) {
-    return { status: "error", message: "Failed to parse CLI output: " + outputStr };
+    return { message: "Failed to parse CLI output: " + outputStr };
   }
 }
 
@@ -134,7 +133,7 @@ export async function runCliWithEnv(args: string[], env: Record<string, string>)
   try {
     return JSON.parse(outputStr);
   } catch (_e) {
-    return { status: "error", message: "Failed to parse CLI output: " + outputStr };
+    return { message: "Failed to parse CLI output: " + outputStr };
   }
 }
 
@@ -189,7 +188,7 @@ export async function runCliWithConfig(
   try {
     return JSON.parse(outputStr);
   } catch (_e) {
-    return { status: "error", message: "Failed to parse CLI output: " + outputStr };
+    return { message: "Failed to parse CLI output: " + outputStr };
   }
 }
 

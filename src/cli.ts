@@ -336,18 +336,21 @@ function pushWarning(message: string) {
 }
 
 function printJson(data: unknown) {
+  // Strip the redundant 'status' field — exit code carries success/error.
+  const obj = data as Record<string, unknown>;
+  delete obj.status;
   // Attach pending warnings to every JSON response
   if (_warnings.length > 0) {
-    (data as Record<string, unknown>).warnings = [..._warnings];
+    obj.warnings = [..._warnings];
     _warnings.length = 0;
   } else {
-    (data as Record<string, unknown>).warnings = [];
+    obj.warnings = [];
   }
-  console.log(JSON.stringify(data, null, 2));
+  console.log(JSON.stringify(obj, null, 2));
 }
 
 function printError(code: string, message: string) {
-  printJson({ status: "error", code, message });
+  printJson({ code, message });
   Deno.exit(1);
 }
 

@@ -30,7 +30,6 @@ Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
   try {
     // Insert a new layout after Title
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--layout", "Standard", "--text", "Test Insert"]);
-    assertEquals(result.status, "success");
     assertEquals(result.inserted_nodes, 1);
 
     // Read the file and parse it to verify
@@ -80,7 +79,6 @@ Deno.test("Mutation Engine - Reject Inset in Document Body", async () => {
   try {
     await Deno.writeTextFile(rawFile, "\\begin_inset Formula\nE=mc^2\n\\end_inset");
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--raw-file", rawFile]);
-    assertEquals(result.status, "error");
     assertEquals(result.code, "INVALID_CONTEXT");
     assertStringIncludes(result.message!, "Cannot insert inset directly into the document body");
   } finally {
@@ -95,7 +93,6 @@ Deno.test("Mutation Engine - Reject Invalid Raw Strings", async () => {
   try {
     await Deno.writeTextFile(rawFile, "Just plain text");
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--raw-file", rawFile]);
-    assertEquals(result.status, "error");
     assertEquals(result.code, "INVALID_RAW");
     assertStringIncludes(result.message!, "did not parse into any valid LyX blocks or properties");
   } finally {
@@ -109,12 +106,10 @@ Deno.test("Mutation Engine - Guard Core Document Nodes", async () => {
   try {
     // Attempt to delete body
     const deleteResult = await runCliTest(["delete", tempFile, "body"]);
-    assertEquals(deleteResult.status, "error");
     assertEquals(deleteResult.code, "INVALID_CONTEXT");
     
     // Attempt to set document
     const setResult = await runCliTest(["set", tempFile, "document", "foo"]);
-    assertEquals(setResult.status, "error");
     assertEquals(setResult.code, "INVALID_CONTEXT");
   } finally {
     await Deno.remove(tempFile);
@@ -126,12 +121,10 @@ Deno.test("Mutation Engine - Reject Empty Layout Insert", async () => {
   try {
     // Attempt to insert layout without text
     let result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--layout", "Standard"]);
-    assertEquals(result.status, "error");
     assertEquals(result.code, "MISSING_ARGS");
 
     // Attempt to insert layout with whitespace-only text
     result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--layout", "Standard", "--text", "   "]);
-    assertEquals(result.status, "error");
     assertEquals(result.code, "MISSING_ARGS");
   } finally {
     await Deno.remove(tempFile);
@@ -142,7 +135,6 @@ Deno.test("Mutation Engine - Reject Unrecognized Layout Name", async () => {
   const tempFile = await createTempFile("temp_bad_layout_test.lyx");
   try {
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--layout", "NonExistentLayout", "--text", "Foo"]);
-    assertEquals(result.status, "error");
     assertEquals(result.code, "INVALID_LAYOUT");
     assertStringIncludes(result.message!, "NonExistentLayout");
   } finally {
@@ -152,7 +144,6 @@ Deno.test("Mutation Engine - Reject Unrecognized Layout Name", async () => {
 
 Deno.test("Bib Engine - Extract Citations", async () => {
   const result = await runCliTest(["bib", path.join("tests", "fixtures", "my_template.lyx")]);
-  assertEquals(result.status, "success");
   assertEquals((result.data as unknown[]).length, 15);
   const firstCit = (result.data as unknown[])[0] as { key: string, year: string };
   assertEquals(firstCit.key, "Mena2000");
