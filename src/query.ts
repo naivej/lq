@@ -1,7 +1,7 @@
 import { DocumentNode, Node, BlockNode } from "./ast.ts";
 
 export interface PseudoClass {
-  name: "first" | "last" | "nth" | "contains" | "nth-child" | "not" | "adjacent" | "until";
+  name: "first" | "last" | "contains" | "nth-child" | "not" | "adjacent" | "until";
   argRaw?: string;
 }
 
@@ -26,7 +26,7 @@ function parsePseudoClasses(suffix: string): PseudoClass[] {
     const pName = pMatch[1];
     const pArg = pMatch[2] ? pMatch[2].trim() : undefined;
 
-    if (!["first", "last", "nth", "nth-child", "contains", "not", "adjacent", "until"].includes(pName)) {
+    if (!["first", "last", "nth-child", "contains", "not", "adjacent", "until"].includes(pName)) {
       throw new Error(`Unsupported pseudo-class: :${pName}`);
     }
 
@@ -460,7 +460,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
             nextNodes = [nextNodes[0]];
           } else if (p.name === "last" && nextNodes.length > 0) {
             nextNodes = [nextNodes[nextNodes.length - 1]];
-          } else if ((p.name === "nth" || p.name === "nth-child") && p.argRaw !== undefined) {
+          } else if (p.name === "nth-child" && p.argRaw !== undefined) {
             let formula = p.argRaw;
             if (formula === "odd") formula = "2n+1";
             if (formula === "even") formula = "2n";
