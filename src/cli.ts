@@ -10,6 +10,18 @@ import { getCachedAst, setCachedAst, hashText, setMaxCacheEntries } from "./cach
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
 
+/** Standard LaTeX heading hierarchy used as fallback when .layout files are unavailable. */
+const DEFAULT_HEADING_HIERARCHY = [
+  { layout: "Part", tocLevel: -1 },
+  { layout: "Chapter", tocLevel: 0 },
+  { layout: "Section", tocLevel: 1 },
+  { layout: "Bibliography", tocLevel: 1 },
+  { layout: "Subsection", tocLevel: 2 },
+  { layout: "Subsubsection", tocLevel: 3 },
+  { layout: "Paragraph", tocLevel: 4 },
+  { layout: "Subparagraph", tocLevel: 5 },
+];
+
 const HELP_TEXTS: Record<string, string> = {
   global: `lq - A CLI Tool for Editing LyX Files
 
@@ -434,9 +446,9 @@ function truncateAtDepth(doc: DocumentNode, maxDepth: number, currentDepth: numb
 // Returns the resolved author ID (always ≥ 1).
 function resolveAuthorId(ast: DocumentNode, authorName: string): number {
   const docBlock = ast.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "document") as BlockNode;
-  if (!docBlock) return 1;
+  if (!docBlock) return 0;
   const header = docBlock.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "header") as BlockNode;
-  if (!header) return 1;
+  if (!header) return 0;
 
   // Parse existing \author <id> "<name>" entries
   let maxId = 0;
@@ -504,8 +516,11 @@ function extractAllText(node: Node): string {
  *  Uses an early-terminating walk to avoid traversing the full subtree
  *  only to discard 99% of the result. */
 function briefText(node: Node, maxLen = 80): string {
-  const text = extractTextUpTo(node, maxLen + 1).trim();
-  if (text.length <= maxLen) return text;
+  const raw = extractTextUpTo(node, maxLen + 1);
+  const text = raw.trim();
+  // Use raw (untrimmed) length to decide truncation, so leading whitespace
+  // doesn't suppress the "..." indicator.
+  if (raw.length <= maxLen) return text;
   return text.substring(0, maxLen) + "...";
 }
 
@@ -1040,16 +1055,7 @@ export async function runCli(args: string[]) {
         headingHierarchy = schema.headingHierarchy;
       } catch {
         // Fallback: standard LaTeX hierarchy
-        headingHierarchy = [
-          { layout: "Part", tocLevel: -1 },
-          { layout: "Chapter", tocLevel: 0 },
-          { layout: "Section", tocLevel: 1 },
-          { layout: "Bibliography", tocLevel: 1 },
-          { layout: "Subsection", tocLevel: 2 },
-          { layout: "Subsubsection", tocLevel: 3 },
-          { layout: "Paragraph", tocLevel: 4 },
-          { layout: "Subparagraph", tocLevel: 5 },
-        ];
+        headingHierarchy = DEFAULT_HEADING_HIERARCHY;
       }
       
       let toc = buildToc(ast, headingHierarchy);
@@ -1229,16 +1235,7 @@ export async function runCli(args: string[]) {
           insets: INSETS,
           commandInsetSubtypes: [...KNOWN_COMMAND_INSET_TYPES].sort(),
           inlineProperties: INLINE_PROPERTIES,
-          headingHierarchy: [
-          { layout: "Part", tocLevel: -1 },
-          { layout: "Chapter", tocLevel: 0 },
-          { layout: "Section", tocLevel: 1 },
-          { layout: "Bibliography", tocLevel: 1 },
-          { layout: "Subsection", tocLevel: 2 },
-          { layout: "Subsubsection", tocLevel: 3 },
-          { layout: "Paragraph", tocLevel: 4 },
-          { layout: "Subparagraph", tocLevel: 5 },
-        ],
+          headingHierarchy: DEFAULT_HEADING_HIERARCHY,
         },
       });
     }
@@ -1793,8 +1790,10 @@ export async function runCli(args: string[]) {
         if (parentList[i] === target) return { list: parentList, index: i, parentBlock, ancestorChain: ancestors };
         if (parentList[i].type === "block") {
           const block = parentList[i] as BlockNode;
-          const res = findNodeContext(block.children, target, block, [...ancestors, block]);
+          ancestors.push(block);
+          const res = findNodeContext(block.children, target, block, ancestors);
           if (res) return res;
+          ancestors.pop();
         }
       }
       return null;
@@ -1816,6 +1815,11 @@ export async function runCli(args: string[]) {
       }
     }
 
+    // Resolve author and ensure tracking header once for all target nodes
+    // and payload blocks (not per-targetNode — avoid re-scanning header N times).
+    const insertAuthorId = trackChanges ? resolveAuthorId(ast, authorName) : 0;
+    if (trackChanges) ensureTrackingChangesInHeader(ast);
+
     for (const targetNode of nodes) {
       let targetParentBlock: BlockNode | null = null;
       let ctx: { list: Node[]; index: number; parentBlock: BlockNode | null; ancestorChain: BlockNode[] } | null = null;
@@ -1823,6 +1827,7 @@ export async function runCli(args: string[]) {
       if (position === "prepend" || position === "append" || position === "split-after") {
         if (targetNode.type !== "block") {
           printError("INVALID_TARGET", `Cannot ${position} to a non-block node.`);
+          return;
 
         }
         targetParentBlock = targetNode as BlockNode;
@@ -1838,10 +1843,6 @@ export async function runCli(args: string[]) {
       // payloads maintain correct order (each subsequent block advances the
       // insertion index).
       let insertedSoFar = 0;
-
-      // Resolve author once for all payload blocks
-      const insertAuthorId = trackChanges ? resolveAuthorId(ast, authorName) : 0;
-      if (trackChanges) ensureTrackingChangesInHeader(ast);
 
       // Per-node validation for each block in the payload
       for (const nodeToInsert of newNodesToInsert) {
@@ -1889,7 +1890,7 @@ export async function runCli(args: string[]) {
               }
             }
           }
-        } else if (nodeToInsert.type === "property") {
+        } else if (schema && nodeToInsert.type === "property") {
           if (!schema.inlineProperties.includes(nodeToInsert.key)) {
             printError("INVALID_PROPERTY", `Property '${nodeToInsert.key}' is not permitted. Valid inline properties are: ${schema.inlineProperties.join(", ")}`);
 
@@ -1972,10 +1973,12 @@ export async function runCli(args: string[]) {
 
           if (totalMatches === 0) {
             printError("SPLIT_NO_MATCH", `split-after: substring '${splitMatch}' not found in matched block.`);
+            return;
 
           }
           if (totalMatches > 1) {
             printError("SPLIT_AMBIGUOUS", `split-after: substring '${splitMatch}' appears ${totalMatches} times in matched block. Use a more specific selector or a longer match string.`);
+            return;
 
           }
 
@@ -2154,10 +2157,14 @@ export async function runCli(args: string[]) {
         `${skippedOtherAuthor} change${plural} by other author${plural} preserved.`
       );
     }
-    const newFileText = serialize(ast);
-    await Deno.writeTextFile(filePath, newFileText);
-    try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
-    await refreshPostStep(filePath, refreshMode);
+    // Only write file if something actually changed (avoid spurious header
+    // mutations from resolveAuthorId when zero changes are undone).
+    if (undoneCount > 0) {
+      const newFileText = serialize(ast);
+      await Deno.writeTextFile(filePath, newFileText);
+      try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+      await refreshPostStep(filePath, refreshMode);
+    }
     printJson({ undone_changes: undoneCount, changes });
     return;
   }

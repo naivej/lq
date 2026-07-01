@@ -205,6 +205,9 @@ Deno.test("Mutation Engine - Insert Prepend Multi-Block (order preservation)", a
     assertEquals(result.inserted_nodes, 1);
 
     const text = await Deno.readTextFile(tempFile);
+    // Verify both blocks exist in the output before checking order
+    assertStringIncludes(text, "BLOCK_A");
+    assertStringIncludes(text, "BLOCK_B");
     // BLOCK_A must appear BEFORE BLOCK_B (order preserved, not reversed by unshift)
     const posA = text.indexOf("BLOCK_A");
     const posB = text.indexOf("BLOCK_B");
