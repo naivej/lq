@@ -19,14 +19,15 @@ Usage:
 Commands:
   init      Initialize the user configuration file.
   schema    Return a list of all semantically valid layouts.
-  dump      Output the document structure as JSON.
-  read      Output matching nodes and text content as JSON.
+  dump      Output the document structure.
+  read      Output matching nodes and text content.
   bib       Extract available citation keys from linked bibliography files.
   set       Overwrite the targeted nodes with new text content.
   delete    Safely delete the targeted nodes from the LyX file.
   insert    Insert new blocks or properties before/after/prepend/append.
   undo      Revert tracked changes (change_deleted/change_inserted) in matched nodes.
 
+All output is JSON.
 Run 'lq <command> --help' for more information on a specific command.`,
 
   selector: `lq selector - CSS-like selector to traverse the LyX document.
@@ -48,7 +49,7 @@ Chainable pseudo-classes: must follow a tag
   :not(selector), :adjacent(selector),
   :until(selector) bounds a ~ range to stop before the next matching sibling`,
 
-  read: `lq read - Output matching nodes and text content as JSON.
+  read: `lq read - Output matching nodes and text content.
 
 Usage:
   lq read <file> <selector> [options]
@@ -58,15 +59,14 @@ Arguments:
   <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
 
 Options:
-  --count     Return match counts by type as JSON
-              ({\"count\": {\"layout[Section]\": 12, \"layout[Standard]\": 450}}).
-  --text-only Output the text content of matched nodes as JSON with a \`text\` field.
+  --count     Return match counts by type.
+  --text-only Output the text content of matched nodes with structural annotations.
               Each matched node gets a tag[args] prefix (e.g. layout[Standard]),
-              and insets appear as inline markers (e.g. inset[Foot]). Double newline
-              between nodes. Warnings appear in the \`warnings\` array.
-  --count --text-only can be used together for both fields in one response.`,
+              with double newline between nodes.
+              Insets appear as inline markers (e.g. inset[Foot])
+              Tracked changes appear as '\change_deleted{...}' and '\change_inserted{...}' inline markers.`,
 
-  dump: `lq dump - Output the document structure as JSON.
+  dump: `lq dump - Output the document structure.
 
 Usage:
   lq dump <file> [<selector>] [options]
@@ -77,11 +77,10 @@ Arguments:
 
 Options:
   --depth <n>  Limit output to n levels deep (0 = root node only).
-               Omit for full depth. If n exceeds the subtree depth, the
-               full subtree is shown with a warning.
+               Omit for full depth.
   --toc        Output a hierarchical heading tree (table of contents)
-               instead of the document tree. --depth limits TOC nesting
-               depth. Mutually exclusive with <selector>.`,
+               instead of the document tree. 
+               Can be used with --depth, and mutually exclusive with <selector>.`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
 
@@ -91,14 +90,11 @@ Usage:
 Arguments:
   <file>      The path to the .lyx file.
 
-Note:
-  Only .bib files are supported. References to other file types (e.g. .bst style files,
-  embedded bibliographies) are silently skipped.
-
 Options:
   --search <term>           Filter citations by a case-insensitive substring match across
                             key, author, title, and year. Multiple words are AND'd — all
-                            must match. Without this flag, all citations are returned.`,
+                            must match.
+                            Omit for all citations.`,
 
   set: `lq set - Overwrite the targeted nodes with new text content.
 
@@ -110,19 +106,14 @@ Arguments:
   <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
   <new text>  The new text content to apply to the matched nodes.
 
-Options:
+lq set preserves non-text children (insets, properties) and replaces only text nodes.
+Options to change the default behaviour:
   --find <substring>   Replace all occurrences of <substring> within the matched
                        nodes' text, instead of replacing the entire text content.
-                       Use for surgical edits like typo fixes.
   --replace-all        Replace ALL children of the target block, not just text nodes.
-                       Use when you want to rebuild a block from scratch.
-                       Mutually exclusive with --find.
+                       Mutually exclusive with --find.`,
 
-By default, lq set preserves non-text children (insets, properties) and replaces
-only text nodes. Use --replace-all to wipe everything. Use --find for surgical
-substring replacement within text.`,
-
-  delete: `lq delete - Safely delete the targeted nodes from the LyX file.
+  delete: `lq delete - Delete the targeted nodes.
 
 Usage:
   lq delete <file> <selector>
@@ -134,44 +125,41 @@ Arguments:
   init: `lq init - Initialize or view the user configuration file.
 
 Usage:
-  lq init              Print current configuration (if config exists).
+  lq init              Print current configuration if exists, 
+                       otherwise initialize '~/.lq/config.json' with the default options.
   lq init [options]    Update configuration with the given options.
 
 Options:
-  --layouts-dir <path>    Explicitly set the LyX layouts directory.
-                          If omitted, lq will auto-detect the highest installed version.
-  --refresh <mode>        Configure automatic refresh after mutations (requires LyXServer).
-                          Modes:
-                            none        No refresh (default). LyX detects changes via polling.
-                            reload      Reload buffer after lq writes. Fast, but discards
-                                        unsaved in-LyX edits.
-                            save-reload Save unsaved edits first, then reload. Preserves
-                                        everything. Requires LyX to be running.
+  --layouts-dir <path>     Set the LyX layouts directory.
+                           Default: auto-detect the highest installed version.
+  --refresh <mode>         Configure automatic refresh after mutations.
+                           none (default): No refresh. LyX detects changes via polling.
+                           reload:         Reload and discards unsaved in-LyX edits. 
+                                           Requires LyXServer.
+                           save-reload:    Save unsaved edits first before reload.
+                                           Requires LyXServer.
   --track-changes <on|off> Enable or disable tracked changes for all mutation commands.
-                            Default: on.
-                            When on: set wraps old text in \\change_deleted + new in \\change_inserted,
-                                      delete wraps removed nodes in \\change_deleted,
-                                      insert wraps new content in \\change_inserted.
-  --author-name <name>      Set the author name used in tracked changes.
-                            Default: "lq user".
-  --max-cache-entries <n>  Maximum number of file caches kept in ~/.lq/cache/.
+                           On (default): set wraps old text in \\change_deleted + new in \\change_inserted,
+                                         delete wraps removed nodes in \\change_deleted,
+                                         insert wraps new content in \\change_inserted.
+  --author-name <name>     Set the author name used in tracked changes.
+                           Default: "lq user".
+  --max-cache-entries <n>  Set the maximum number of file caches kept in ~/.lq/cache/.
                            Default: 50.`,
 
-  schema: `lq schema - Return a list of all semantically valid layouts.
-
-Usage:
-  lq schema <file>
-
-Arguments:
-  <file>      The path to the .lyx file.
-
-Returns JSON with six categories:
+  schema: `lq schema - Return all semantically valid layouts across 6 categories:
   documentLayouts      Styles valid for the document class (e.g. Section, Standard).
   insetLayouts         Layouts valid inside insets (e.g. Plain Layout).
   insets               Valid inset types (e.g. Formula, Foot, CommandInset).
   commandInsetSubtypes Valid CommandInset subtypes (e.g. citation, ref, label).
   inlineProperties     Valid inline property keys (e.g. family, lang).
-  headingHierarchy     Heading layouts with their TocLevel values.`,
+  headingHierarchy     Heading layouts with their TocLevel values.
+
+Usage:
+  lq schema <file>
+
+Arguments:
+  <file>      The path to the .lyx file.`,
 
   insert: `lq insert - Insert new blocks or properties relative to a selector.
 
@@ -206,6 +194,8 @@ Options:
 
   undo: `lq undo - Revert tracked changes in matched nodes.
 
+Only available when trackChanges is enabled.
+
 Usage:
   lq undo <file> <selector> [<substring>]
 
@@ -213,14 +203,7 @@ Arguments:
   <file>       The path to the .lyx file.
   <selector>   A CSS-like selector. Run 'lq selector --help' for syntax.
   <substring>  Text inside the change_deleted or change_inserted block to revert.
-               Omit to revert ALL tracked changes in matched nodes.
-
-Only available when trackChanges is enabled (default: on). Each change_deleted or
-change_inserted marker must be undone individually.
-
-Examples:
-  lq undo file.lyx "layout[Standard]" "bad phrase"    # revert one bad edit
-  lq undo file.lyx "layout[Section]"                  # revert all changes in sections`
+               Omit to revert ALL tracked changes in matched nodes.`
 };
 
 // Helper to load user config
