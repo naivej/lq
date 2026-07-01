@@ -443,7 +443,8 @@ function truncateAtDepth(doc: DocumentNode, maxDepth: number, currentDepth: numb
 // - If the name matches an existing author, return its ID.
 // - Otherwise, auto-assign a new ID (max existing + 1, or 1 if none exist)
 //   and add a new \author entry to the header.
-// Returns the resolved author ID (always ≥ 1).
+// Returns the resolved author ID (always ≥ 0; returns 0 only when the
+// document or header block is missing, which indicates a malformed .lyx file).
 function resolveAuthorId(ast: DocumentNode, authorName: string): number {
   const docBlock = ast.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "document") as BlockNode;
   if (!docBlock) return 0;
@@ -518,9 +519,9 @@ function extractAllText(node: Node): string {
 function briefText(node: Node, maxLen = 80): string {
   const raw = extractTextUpTo(node, maxLen + 1);
   const text = raw.trim();
-  // Use raw (untrimmed) length to decide truncation, so leading whitespace
-  // doesn't suppress the "..." indicator.
-  if (raw.length <= maxLen) return text;
+  // Use trimmed length: a node with leading whitespace should not falsely
+  // trigger truncation just because ExtractTextUpTo consumed whitespace chars.
+  if (text.length <= maxLen) return text;
   return text.substring(0, maxLen) + "...";
 }
 
@@ -1276,7 +1277,8 @@ export async function runCli(args: string[]) {
     if (countOnly) {
       const tally: Record<string, number> = {};
       for (const node of nodes) {
-        tally[nodeLabel(node)] = (tally[nodeLabel(node)] || 0) + 1;
+        const label = nodeLabel(node);
+        tally[label] = (tally[label] || 0) + 1;
       }
       result.count = tally;
     }
@@ -1386,7 +1388,7 @@ export async function runCli(args: string[]) {
 
     // Helper to accumulate per-node find counts during mutation
     const addFindCount = (node: Node, count: number) => {
-      const key = node.type === "block" ? nodeLabel(node) : "text";
+      const key = node.type === "block" ? nodeLabel(node) : node.type;
       findPerNode[key] = (findPerNode[key] || 0) + count;
     };
 
@@ -1844,8 +1846,12 @@ export async function runCli(args: string[]) {
       // insertion index).
       let insertedSoFar = 0;
 
+      // Clone payload to avoid mutating shared nodes across target iterations.
+      // Without this, wrapWithTracking on iteration 2 wraps already-wrapped children.
+      const payload = newNodesToInsert.map(n => structuredClone(n));
+
       // Per-node validation for each block in the payload
-      for (const nodeToInsert of newNodesToInsert) {
+      for (const nodeToInsert of payload) {
         if (trackChanges) {
           if (nodeToInsert.type === "block") {
             nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted", insertAuthorId);
@@ -1889,11 +1895,12 @@ export async function runCli(args: string[]) {
 
               }
             }
-          }
-        } else if (schema && nodeToInsert.type === "property") {
-          if (!schema.inlineProperties.includes(nodeToInsert.key)) {
-            printError("INVALID_PROPERTY", `Property '${nodeToInsert.key}' is not permitted. Valid inline properties are: ${schema.inlineProperties.join(", ")}`);
+          } else if ((nodeToInsert as Node).type === "property") {
+            const prop = nodeToInsert as unknown as PropertyNode;
+            if (!schema.inlineProperties.includes(prop.key)) {
+              printError("INVALID_PROPERTY", `Property '${prop.key}' is not permitted. Valid inline properties are: ${schema.inlineProperties.join(", ")}`);
 
+            }
           }
         }
       }
