@@ -498,13 +498,18 @@ function ensureTrackingChangesInHeader(ast: DocumentNode): void {
  *  emit inline \change_*{} markers so the user can see pending edits at a
  *  glance.  The {} wrapper form is a deliberate simplification of LyX source
  *  syntax for readability — see dev log 45 for rationale. */
-function extractAllText(node: Node, maxLen = Infinity): string {
+function extractAllText(node: Node, maxLen = Infinity, inMarker = false): string {
   if (maxLen <= 0) return "";
   if (node.type === "text") return node.text.substring(0, maxLen);
   if (node.type === "property") {
-    if (node.key === "change_deleted") return "\\change_deleted{".substring(0, maxLen);
-    if (node.key === "change_inserted") return "\\change_inserted{".substring(0, maxLen);
-    if (node.key === "change_unchanged") return "}".substring(0, maxLen);
+    if (node.key === "change_deleted" || node.key === "change_inserted") {
+      const close = inMarker ? "}" : "";
+      const open = "\\" + node.key + "{";
+      return (close + open).substring(0, maxLen);
+    }
+    if (node.key === "change_unchanged") {
+      return inMarker ? "}".substring(0, maxLen) : "";
+    }
     return "";
   }
   if (node.type === "block") {
@@ -513,10 +518,15 @@ function extractAllText(node: Node, maxLen = Infinity): string {
       return label.substring(0, maxLen);
     }
     let result = "";
+    let markerOpen = inMarker;
     for (const child of node.children) {
       const remaining = maxLen - result.length;
       if (remaining <= 0) break;
-      result += extractAllText(child, remaining);
+      result += extractAllText(child, remaining, markerOpen);
+      if (child.type === "property") {
+        if (child.key === "change_deleted" || child.key === "change_inserted") markerOpen = true;
+        else if (child.key === "change_unchanged") markerOpen = false;
+      }
     }
     return result;
   }
@@ -539,6 +549,9 @@ function briefText(node: Node, maxLen = 80): string {
 function nodeLabel(node: Node): string {
   if (node.type === "block") {
     return node.tag + "[" + ((node.args || "").trim()) + "]";
+  }
+  if (node.type === "property") {
+    return node.type + "[" + node.key + "]";
   }
   return node.type;
 }
@@ -1797,7 +1810,7 @@ export async function runCli(args: string[]) {
             const c = children[i];
             if (c.type === "property") {
               if (c.key === "change_deleted") depth++;
-              else if (c.key === "change_unchanged" && depth > 0) depth--;
+              else if ((c.key === "change_inserted" || c.key === "change_unchanged") && depth > 0) depth--;
               continue;
             }
             if (c.type === "text") {
@@ -2106,7 +2119,7 @@ export async function runCli(args: string[]) {
     if (substring === undefined && skippedOtherAuthor > 0) {
       const plural = skippedOtherAuthor === 1 ? "" : "s";
       pushWarning(
-        `${skippedOtherAuthor} change${plural} by other author${plural} preserved.`
+        `${skippedOtherAuthor} pre-existing tracked change${plural} from another author left unchanged.`
       );
     }
     // Only write file if something actually changed (avoid spurious header
