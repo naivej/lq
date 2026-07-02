@@ -195,7 +195,7 @@ export async function runCliWithConfig(
 /**
  * Create a modifiable temp copy of the main test fixture.
  */
-const FIXTURE = "tests/fixtures/my_template.lyx";
+const FIXTURE = new URL("./fixtures/my_template.lyx", import.meta.url);
 
 export async function createTempFixture(name: string): Promise<string> {
   const tempDir = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";

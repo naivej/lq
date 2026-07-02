@@ -15,18 +15,8 @@ import { parse } from "../src/parser.ts";
 import { BlockNode, TextNode } from "../src/ast.ts";
 import { CliResult, runCliTest, runCliWithConfig, createTempFixture } from "./helpers.ts";
 
-const FIXTURE_DIR = "tests/fixtures";
-
-// Helper to create a temporary copy of a template for testing mutations
-async function createTempFile(name: string): Promise<string> {
-  const sourcePath = path.join(FIXTURE_DIR, "my_template.lyx");
-  const tempPath = path.join(FIXTURE_DIR, name);
-  await Deno.copyFile(sourcePath, tempPath);
-  return tempPath;
-}
-
 Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
-  const tempFile = await createTempFile("temp_spacer_test.lyx");
+  const tempFile = await createTempFixture("temp_spacer_test.lyx");
   try {
     // Insert a new layout after Title
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--layout", "Standard", "--text", "Test Insert"]);
@@ -74,7 +64,7 @@ Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
 });
 
 Deno.test("Mutation Engine - Reject Inset in Document Body", async () => {
-  const tempFile = await createTempFile("temp_inset_test.lyx");
+  const tempFile = await createTempFixture("temp_inset_test.lyx");
   const rawFile = await Deno.makeTempFile({ suffix: ".raw" });
   try {
     await Deno.writeTextFile(rawFile, "\\begin_inset Formula\nE=mc^2\n\\end_inset");
@@ -88,7 +78,7 @@ Deno.test("Mutation Engine - Reject Inset in Document Body", async () => {
 });
 
 Deno.test("Mutation Engine - Reject Invalid Raw Strings", async () => {
-  const tempFile = await createTempFile("temp_raw_test.lyx");
+  const tempFile = await createTempFixture("temp_raw_test.lyx");
   const rawFile = await Deno.makeTempFile({ suffix: ".raw" });
   try {
     await Deno.writeTextFile(rawFile, "Just plain text");
@@ -102,7 +92,7 @@ Deno.test("Mutation Engine - Reject Invalid Raw Strings", async () => {
 });
 
 Deno.test("Mutation Engine - Guard Core Document Nodes", async () => {
-  const tempFile = await createTempFile("temp_guard_test.lyx");
+  const tempFile = await createTempFixture("temp_guard_test.lyx");
   try {
     // Attempt to delete body
     const deleteResult = await runCliTest(["delete", tempFile, "body"]);
@@ -117,7 +107,7 @@ Deno.test("Mutation Engine - Guard Core Document Nodes", async () => {
 });
 
 Deno.test("Mutation Engine - Reject Empty Layout Insert", async () => {
-  const tempFile = await createTempFile("temp_empty_test.lyx");
+  const tempFile = await createTempFixture("temp_empty_test.lyx");
   try {
     // Attempt to insert layout without text
     let result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--layout", "Standard"]);
@@ -132,7 +122,7 @@ Deno.test("Mutation Engine - Reject Empty Layout Insert", async () => {
 });
 
 Deno.test("Mutation Engine - Reject Unrecognized Layout Name", async () => {
-  const tempFile = await createTempFile("temp_bad_layout_test.lyx");
+  const tempFile = await createTempFixture("temp_bad_layout_test.lyx");
   try {
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--layout", "NonExistentLayout", "--text", "Foo"]);
     assertEquals(result.code, "INVALID_LAYOUT");
@@ -143,7 +133,7 @@ Deno.test("Mutation Engine - Reject Unrecognized Layout Name", async () => {
 });
 
 Deno.test("Mutation Engine - Insert Before Position", async () => {
-  const tempFile = await createTempFile("temp_before_test.lyx");
+  const tempFile = await createTempFixture("temp_before_test.lyx");
   try {
     // Insert a layout before Author
     const result = await runCliTest(["insert", tempFile, "layout[Author]", "before", "--layout", "Standard", "--text", "Before Author"]);
@@ -158,7 +148,7 @@ Deno.test("Mutation Engine - Insert Before Position", async () => {
 });
 
 Deno.test("Mutation Engine - Insert Append Position", async () => {
-  const tempFile = await createTempFile("temp_append_test.lyx");
+  const tempFile = await createTempFixture("temp_append_test.lyx");
   try {
     // Append a footnote inside the Title layout (footnote is an inset, valid inside layouts)
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "append", "--footnote", "Appended footnote"]);
@@ -173,7 +163,7 @@ Deno.test("Mutation Engine - Insert Append Position", async () => {
 });
 
 Deno.test("Mutation Engine - Insert Prepend Position (single block)", async () => {
-  const tempFile = await createTempFile("temp_prepend_test.lyx");
+  const tempFile = await createTempFixture("temp_prepend_test.lyx");
   try {
     // Prepend a footnote inside the Title layout (footnote is an inset, valid inside layouts)
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "prepend", "--footnote", "Prepended footnote"]);
@@ -192,7 +182,7 @@ Deno.test("Mutation Engine - Insert Prepend Position (single block)", async () =
 });
 
 Deno.test("Mutation Engine - Insert Prepend Multi-Block (order preservation)", async () => {
-  const tempFile = await createTempFile("temp_prepend_multi.lyx");
+  const tempFile = await createTempFixture("temp_prepend_multi.lyx");
   const rawFile = await Deno.makeTempFile({ suffix: ".raw" });
   try {
     // Create raw file with two Plain Layout blocks (valid inside insets): BlockA then BlockB
@@ -219,7 +209,7 @@ Deno.test("Mutation Engine - Insert Prepend Multi-Block (order preservation)", a
 });
 
 Deno.test("Mutation Engine - Insert Split-After Position", async () => {
-  const tempFile = await createTempFile("temp_split_after_test.lyx");
+  const tempFile = await createTempFixture("temp_split_after_test.lyx");
   try {
     // Split Title's text "Title" after "Tit" and insert a footnote (inset, valid inside layouts)
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "split-after", "Tit", "--footnote", "Split footnote"]);
@@ -269,7 +259,7 @@ Deno.test("Mutation Engine - Insert Split-After with trackChanges", { timeout: 1
 
 // Item 5 fix: split-after with --text (no layout wrapper)
 Deno.test("Mutation Engine - Insert Split-After with --text", async () => {
-  const tempFile = await createTempFile("temp_split_text.lyx");
+  const tempFile = await createTempFixture("temp_split_text.lyx");
   try {
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "split-after", "Tit", "--text", "NEW"]);
     assertEquals(result.matched_nodes, 1);
@@ -319,7 +309,7 @@ Deno.test("Mutation Engine - Insert Split-After with --text and trackChanges", {
 
 // Item 1 fix: multi-block split-after order preservation
 Deno.test("Mutation Engine - Insert Split-After Multi-Block (order preservation)", async () => {
-  const tempFile = await createTempFile("temp_split_multi.lyx");
+  const tempFile = await createTempFixture("temp_split_multi.lyx");
   const rawFile = await Deno.makeTempFile({ suffix: ".raw" });
   try {
     // Create raw file with two footnote insets: FN_A then FN_B
@@ -342,6 +332,74 @@ Deno.test("Mutation Engine - Insert Split-After Multi-Block (order preservation)
     const posA = text.indexOf("FN_A");
     const posB = text.indexOf("FN_B");
     assertEquals(posA < posB, true, "FN_A should appear before FN_B (order must be preserved)");
+  } finally {
+    await Deno.remove(tempFile);
+    try { await Deno.remove(rawFile); } catch { /* ignore */ }
+  }
+});
+
+// T1: Multi-target insert with trackChanges — verifies no double-wrapping
+// regression (dev log 61 fix 1.2: payload cloned per target iteration)
+Deno.test("Mutation Engine - Multi-Target Insert with trackChanges (no double-wrap)", { timeout: 10000 }, async () => {
+  // Create a custom file with exactly 2 body-level Standard layouts
+  const tempFile = await Deno.makeTempFile({ suffix: ".lyx" });
+  try {
+    await Deno.writeTextFile(tempFile,
+      "#LyX 2.5 created this file.\n" +
+      "\\begin_document\n\\begin_header\n\\end_header\n" +
+      "\\begin_body\n" +
+      "\\begin_layout Standard\nTarget A\n\\end_layout\n" +
+      "\\begin_layout Standard\nTarget B\n\\end_layout\n" +
+      "\\end_body\n\\end_document\n"
+    );
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "after", "--layout", "Standard", "--text", "TRACKED"],
+      { trackChanges: true },
+    );
+    assertEquals(result.matched_nodes, 2);
+
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\tracking_changes true");
+    assertStringIncludes(text, "TRACKED");
+
+    // Verify no double-wrapping: max nesting depth of \change_inserted = 1
+    const allMatches = [...text.matchAll(/\\change_inserted|\\change_unchanged/g)];
+    let insertDepth = 0;
+    let maxDepth = 0;
+    for (const m of allMatches) {
+      if (m[0] === "\\change_inserted") {
+        insertDepth++;
+        if (insertDepth > maxDepth) maxDepth = insertDepth;
+      } else {
+        insertDepth--;
+      }
+    }
+    assertEquals(maxDepth, 1, "Multi-target insert should never double-wrap \\change_inserted markers");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// T4: Multi-block raw-file after — order preserved (BLOCK_A before BLOCK_B)
+// regression guard (dev log 59 fix 1.2: order reversal on after position)
+Deno.test("Mutation Engine - Multi-Block Raw-File After (order preservation)", async () => {
+  const tempFile = await createTempFixture("temp_after_multi.lyx");
+  const rawFile = await Deno.makeTempFile({ suffix: ".raw" });
+  try {
+    await Deno.writeTextFile(rawFile,
+      "\\begin_layout Standard\nBLOCK_A\n\\end_layout\n" +
+      "\\begin_layout Standard\nBLOCK_B\n\\end_layout\n"
+    );
+    const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--raw-file", rawFile]);
+    assertEquals(result.matched_nodes, 1);
+
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "BLOCK_A");
+    assertStringIncludes(text, "BLOCK_B");
+    // BLOCK_A must appear BEFORE BLOCK_B (order preserved, not reversed)
+    const posA = text.indexOf("BLOCK_A");
+    const posB = text.indexOf("BLOCK_B");
+    assertEquals(posA < posB, true, "BLOCK_A should appear before BLOCK_B (order must be preserved)");
   } finally {
     await Deno.remove(tempFile);
     try { await Deno.remove(rawFile); } catch { /* ignore */ }
