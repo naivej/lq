@@ -1753,8 +1753,14 @@ export async function runCli(args: string[]) {
         ],
       });
     } else if (flags.text) {
-      printError("TEXT_ONLY_INSERT", "Cannot insert bare text. You must wrap text in a layout using the --layout flag (e.g., --layout 'Standard' --text 'foo').");
-      return;
+      if (position === "split-after") {
+        // Insert bare text nodes at the split point — these are valid inline
+        // children of a layout's text stream (no layout wrapper needed).
+        newNodesToInsert.push({ type: "text", text: flags.text } as Node);
+      } else {
+        printError("TEXT_ONLY_INSERT", "Cannot insert bare text. You must wrap text in a layout using the --layout flag (e.g., --layout 'Standard' --text 'foo').");
+        return;
+      }
     }
 
     if (newNodesToInsert.length === 0) {
@@ -1827,6 +1833,76 @@ export async function runCli(args: string[]) {
       // insertion index).
       let insertedSoFar = 0;
 
+      // --- Hoisted split-after match search (runs once per target, not per payload node) ---
+      // The match search was previously inside the payload loop, causing multi-block
+      // payloads to splice at the same textIdx each iteration (order reversal bug).
+      let splitParentList: Node[] | null = null;
+      let splitTextIdx = -1;
+      let splitInsertOffset = 0;
+      let splitAfterText = "";
+      if (position === "split-after" && targetParentBlock) {
+        // Collect descendant text nodes, skipping text inside \change_deleted blocks.
+        const allTextNodes: { node: Node & { type: "text" }; parentList: Node[]; index: number }[] = [];
+        const collectTextNodes = (children: Node[], deletedDepth = 0) => {
+          let depth = deletedDepth;
+          for (let i = 0; i < children.length; i++) {
+            const c = children[i];
+            if (c.type === "property") {
+              if (c.key === "change_deleted") depth++;
+              else if (c.key === "change_unchanged" && depth > 0) depth--;
+              continue;
+            }
+            if (c.type === "text") {
+              if (depth === 0) {
+                allTextNodes.push({ node: c, parentList: children, index: i });
+              }
+            } else if (c.type === "block") {
+              collectTextNodes((c as BlockNode).children, depth);
+            }
+          }
+        };
+        collectTextNodes(targetParentBlock.children);
+
+        let totalMatches = 0;
+        let matchedTextNode: (typeof allTextNodes)[0] | null = null;
+        let matchOffset = -1;
+        for (const tn of allTextNodes) {
+          let searchFrom = 0;
+          while ((searchFrom = tn.node.text.indexOf(splitMatch!, searchFrom)) !== -1) {
+            totalMatches++;
+            if (!matchedTextNode) {
+              matchedTextNode = tn;
+              matchOffset = searchFrom;
+            }
+            searchFrom++;
+          }
+        }
+
+        if (totalMatches === 0) {
+          printError("SPLIT_NO_MATCH", `split-after: substring '${splitMatch}' not found in matched block.`);
+          return;
+        }
+        if (totalMatches > 1) {
+          printError("SPLIT_AMBIGUOUS", `split-after: substring '${splitMatch}' appears ${totalMatches} times in matched block. Use a more specific selector or a longer match string.`);
+          return;
+        }
+
+        // Split the text node and replace it with [before, after].
+        // Payload nodes are inserted between them in the loop below.
+        const fullText = matchedTextNode!.node.text;
+        const splitEnd = matchOffset + splitMatch!.length;
+        const before = fullText.substring(0, splitEnd);
+        splitAfterText = fullText.substring(splitEnd);
+        splitParentList = matchedTextNode!.parentList;
+        splitTextIdx = matchedTextNode!.index;
+
+        const initialNodes: Node[] = [{ type: "text", text: before }];
+        if (splitAfterText.length > 0) {
+          initialNodes.push({ type: "text", text: splitAfterText });
+        }
+        splitParentList.splice(splitTextIdx, 1, ...initialNodes);
+      }
+
       // Clone payload to avoid mutating shared nodes across target iterations.
       // Without this, wrapWithTracking on iteration 2 wraps already-wrapped children.
       const payload = newNodesToInsert.map(n => structuredClone(n));
@@ -1836,6 +1912,10 @@ export async function runCli(args: string[]) {
         if (trackChanges) {
           if (nodeToInsert.type === "block") {
             nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted", insertAuthorId);
+          } else if (nodeToInsert.type === "text" && position === "split-after") {
+            // Tracking markers are generated inline at the splice point below.
+            // wrapWithTracking is the wrong tool for bare text nodes — it expects
+            // an array of children to wrap inside blocks.
           } else {
             printError("TRACKING_ERROR", "Cannot track bare text nodes. Wrap in a layout block.");
             return;
@@ -1916,81 +1996,25 @@ export async function runCli(args: string[]) {
         const copy = structuredClone(nodeToInsert);
 
         if (position === "split-after") {
-          if (!targetParentBlock) continue;
-          // Collect descendant text nodes, skipping text inside \change_deleted
-          // blocks (those represent old/replaced content, not valid targets for
-          // new insertions). Uses a depth counter (not a boolean) so that nested
-          // track changes (double-wrap from re-editing) are handled correctly:
-          // inner \change_unchanged decrements depth but outer block still >0.
-          const allTextNodes: { node: Node & { type: "text" }; parentList: Node[]; index: number }[] = [];
-          const collectTextNodes = (children: Node[], deletedDepth = 0) => {
-            let depth = deletedDepth;
-            for (let i = 0; i < children.length; i++) {
-              const c = children[i];
-              if (c.type === "property") {
-                if (c.key === "change_deleted") depth++;
-                else if (c.key === "change_unchanged" && depth > 0) depth--;
-                continue;
-              }
-              if (c.type === "text") {
-                if (depth === 0) {
-                  allTextNodes.push({ node: c, parentList: children, index: i });
-                }
-              } else if (c.type === "block") {
-                collectTextNodes((c as BlockNode).children, depth);
-              }
-            }
-          };
-          collectTextNodes(targetParentBlock.children);
-
-          let totalMatches = 0;
-          let matchedTextNode: (typeof allTextNodes)[0] | null = null;
-          let matchOffset = -1;
-
-          for (const tn of allTextNodes) {
-            let searchFrom = 0;
-            while ((searchFrom = tn.node.text.indexOf(splitMatch!, searchFrom)) !== -1) {
-              totalMatches++;
-              if (!matchedTextNode) {
-                matchedTextNode = tn;
-                matchOffset = searchFrom;
-              }
-              searchFrom++; // continue searching for additional matches
-            }
+          if (!splitParentList) continue;
+          // Insert payload node after the "before" half of the split text.
+          // splitTextIdx points to the "before" node; payload goes after it.
+          // splitInsertOffset tracks how many nodes from previous payload
+          // iterations have already been inserted (fixes multi-block order).
+          const insertIdx = splitTextIdx + 1 + splitInsertOffset;
+          if (trackChanges && nodeToInsert.type === "text") {
+            // Generate change tracking markers inline for bare text nodes.
+            const ts = Math.floor(Date.now() / 1000).toString();
+            splitParentList.splice(insertIdx, 0,
+              { type: "property", key: "change_inserted", value: `${insertAuthorId} ${ts}` },
+              copy,
+              { type: "property", key: "change_unchanged" }
+            );
+            splitInsertOffset += 3;
+          } else {
+            splitParentList.splice(insertIdx, 0, copy);
+            splitInsertOffset++;
           }
-
-          if (totalMatches === 0) {
-            printError("SPLIT_NO_MATCH", `split-after: substring '${splitMatch}' not found in matched block.`);
-            return;
-
-          }
-          if (totalMatches > 1) {
-            printError("SPLIT_AMBIGUOUS", `split-after: substring '${splitMatch}' appears ${totalMatches} times in matched block. Use a more specific selector or a longer match string.`);
-            return;
-
-          }
-
-          // Split the text node: first half includes the match, second half is everything after
-          const fullText = matchedTextNode!.node.text;
-          const splitEnd = matchOffset + splitMatch!.length;
-          const before = fullText.substring(0, splitEnd);
-          const after = fullText.substring(splitEnd);
-
-          // Replace the original text node with: before + [new nodes] + after (if non-empty)
-          const parentList = matchedTextNode!.parentList;
-          const textIdx = matchedTextNode!.index;
-          const replacementNodes: Node[] = [{ type: "text", text: before }];
-
-          // copy was cloned from nodeToInsert after the first loop already
-          // wrapped its children with tracking markers (when trackChanges is true).
-          // Use copy directly to avoid double-wrapping.
-          replacementNodes.push(copy);
-
-          if (after.length > 0) {
-            replacementNodes.push({ type: "text", text: after });
-          }
-
-          parentList.splice(textIdx, 1, ...replacementNodes);
         } else if (position === "prepend" || position === "append") {
           if (!targetParentBlock) continue;
           if (position === "prepend") {

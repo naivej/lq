@@ -267,6 +267,87 @@ Deno.test("Mutation Engine - Insert Split-After with trackChanges", { timeout: 1
   }
 });
 
+// Item 5 fix: split-after with --text (no layout wrapper)
+Deno.test("Mutation Engine - Insert Split-After with --text", async () => {
+  const tempFile = await createTempFile("temp_split_text.lyx");
+  try {
+    const result = await runCliTest(["insert", tempFile, "layout[Title]", "split-after", "Tit", "--text", "NEW"]);
+    assertEquals(result.matched_nodes, 1);
+
+    const text = await Deno.readTextFile(tempFile);
+    // Text nodes are serialized with \n separators, so we check order, not concatenation.
+    const titIdx = text.indexOf("Tit");
+    const newIdx = text.indexOf("NEW");
+    const leIdx = text.indexOf("le", newIdx);
+    assertEquals(titIdx < newIdx && newIdx < leIdx, true, "NEW should appear between 'Tit' and 'le'");
+  } finally {
+    await Deno.remove(tempFile);
+  }
+});
+
+// Item 5 fix: split-after with --text + trackChanges
+Deno.test("Mutation Engine - Insert Split-After with --text and trackChanges", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_split_text_tc.lyx");
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Title]", "split-after", "Tit", "--text", "NEW"],
+      { trackChanges: true },
+    );
+
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_inserted");
+    assertStringIncludes(text, "NEW");
+    assertStringIncludes(text, "\\change_unchanged");
+
+    // Verify no double-wrapping
+    const allMatches = [...text.matchAll(/\\change_inserted|\\change_unchanged/g)];
+    let insertDepth = 0;
+    let maxDepth = 0;
+    for (const m of allMatches) {
+      if (m[0] === "\\change_inserted") {
+        insertDepth++;
+        if (insertDepth > maxDepth) maxDepth = insertDepth;
+      } else {
+        insertDepth--;
+      }
+    }
+    assertEquals(maxDepth, 1, "Should never nest \\change_inserted markers (no double-wrapping)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// Item 1 fix: multi-block split-after order preservation
+Deno.test("Mutation Engine - Insert Split-After Multi-Block (order preservation)", async () => {
+  const tempFile = await createTempFile("temp_split_multi.lyx");
+  const rawFile = await Deno.makeTempFile({ suffix: ".raw" });
+  try {
+    // Create raw file with two footnote insets: FN_A then FN_B
+    await Deno.writeTextFile(rawFile,
+      "\\begin_inset Foot\n" +
+      "\\begin_layout Plain Layout\nFN_A\n\\end_layout\n" +
+      "\\end_inset\n" +
+      "\\begin_inset Foot\n" +
+      "\\begin_layout Plain Layout\nFN_B\n\\end_layout\n" +
+      "\\end_inset\n"
+    );
+    const result = await runCliTest(["insert", tempFile, "layout[Title]", "split-after", "Tit", "--raw-file", rawFile]);
+    assertEquals(result.matched_nodes, 1);
+
+    const text = await Deno.readTextFile(tempFile);
+    // Both footnotes should exist
+    assertStringIncludes(text, "FN_A");
+    assertStringIncludes(text, "FN_B");
+    // FN_A must appear BEFORE FN_B (order preserved, not reversed)
+    const posA = text.indexOf("FN_A");
+    const posB = text.indexOf("FN_B");
+    assertEquals(posA < posB, true, "FN_A should appear before FN_B (order must be preserved)");
+  } finally {
+    await Deno.remove(tempFile);
+    try { await Deno.remove(rawFile); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("Bib Engine - Extract Citations", async () => {
   const result = await runCliTest(["bib", path.join("tests", "fixtures", "my_template.lyx")]);
   assertEquals((result.data as unknown[]).length, 15);
