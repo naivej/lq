@@ -1839,7 +1839,6 @@ export async function runCli(args: string[]) {
       let splitParentList: Node[] | null = null;
       let splitTextIdx = -1;
       let splitInsertOffset = 0;
-      let splitAfterText = "";
       if (position === "split-after" && targetParentBlock) {
         // Collect descendant text nodes, skipping text inside \change_deleted blocks.
         const allTextNodes: { node: Node & { type: "text" }; parentList: Node[]; index: number }[] = [];
@@ -1892,7 +1891,7 @@ export async function runCli(args: string[]) {
         const fullText = matchedTextNode!.node.text;
         const splitEnd = matchOffset + splitMatch!.length;
         const before = fullText.substring(0, splitEnd);
-        splitAfterText = fullText.substring(splitEnd);
+        const splitAfterText = fullText.substring(splitEnd);
         splitParentList = matchedTextNode!.parentList;
         splitTextIdx = matchedTextNode!.index;
 
