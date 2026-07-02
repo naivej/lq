@@ -631,8 +631,18 @@ function hasTrackedChanges(children: Node[]): boolean {
   return false;
 }
 
-function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted", authorId: number): Node[] {
-  const ts = Math.floor(Date.now() / 1000).toString();
+function wrapInChangeMarkers(
+  content: Node[], type: "inserted" | "deleted", authorId: number, ts: string
+): Node[] {
+  return [
+    { type: "property", key: `change_${type}`, value: `${authorId} ${ts}` },
+    ...content,
+    { type: "property", key: "change_unchanged" },
+  ];
+}
+
+function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted", authorId: number, ts?: string): Node[] {
+  const trackingTs = ts ?? Math.floor(Date.now() / 1000).toString();
   
   const result: Node[] = [];
   // Buffer consecutive text nodes to wrap them under a single change marker pair,
@@ -641,9 +651,7 @@ function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted", authorId:
   
   function flushTextBuffer() {
     if (textBuffer.length > 0) {
-      result.push({ type: "property", key: `change_${type}`, value: `${authorId} ${ts}` });
-      for (const tn of textBuffer) result.push(tn);
-      result.push({ type: "property", key: "change_unchanged" });
+      result.push(...wrapInChangeMarkers(textBuffer, type, authorId, trackingTs));
       textBuffer = [];
     }
   }
@@ -656,12 +664,10 @@ function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted", authorId:
       if (n.type === "block") {
         const b = n as BlockNode;
         if (b.tag === "layout") {
-          b.children = wrapWithTracking(b.children, type, authorId);
+          b.children = wrapWithTracking(b.children, type, authorId, trackingTs);
           result.push(b);
         } else if (b.tag === "inset") {
-          result.push({ type: "property", key: `change_${type}`, value: `${authorId} ${ts}` });
-          result.push(b);
-          result.push({ type: "property", key: "change_unchanged" });
+          result.push(...wrapInChangeMarkers([b], type, authorId, trackingTs));
         } else {
           result.push(b);
         }
@@ -705,15 +711,9 @@ function replaceWithTracking(
       result.push({ type: "text", text: remaining.substring(0, idx) });
     }
 
-    // The matched substring (tracked as deleted)
-    result.push({ type: "property", key: "change_deleted", value: `${authorId} ${ts}` });
-    result.push({ type: "text", text: findStr });
-    result.push({ type: "property", key: "change_unchanged" });
-
-    // The replacement (tracked as inserted)
-    result.push({ type: "property", key: "change_inserted", value: `${authorId} ${ts}` });
-    result.push({ type: "text", text: replacement });
-    result.push({ type: "property", key: "change_unchanged" });
+    // The matched substring (tracked as deleted) + replacement (tracked as inserted)
+    result.push(...wrapInChangeMarkers([{ type: "text", text: findStr }], "deleted", authorId, ts));
+    result.push(...wrapInChangeMarkers([{ type: "text", text: replacement }], "inserted", authorId, ts));
 
     remaining = remaining.substring(idx + findStr.length);
   }
@@ -1440,23 +1440,15 @@ export async function runCli(args: string[]) {
           }
           if (replaceAll) {
             node.children = [
-              { type: "property", key: "change_deleted", value: `${tcAid} ${tcTs}` },
-              ...node.children,
-              { type: "property", key: "change_unchanged" },
-              { type: "property", key: "change_inserted", value: `${tcAid} ${tcTs}` },
-              { type: "text", text: newValue },
-              { type: "property", key: "change_unchanged" },
+              ...wrapInChangeMarkers(node.children, "deleted", tcAid, tcTs),
+              ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
             ];
           } else {
             const nonTextChildren = node.children.filter(c => c.type !== "text");
             const oldTextNodes = node.children.filter(c => c.type === "text");
             node.children = [
-              { type: "property", key: "change_deleted", value: `${tcAid} ${tcTs}` },
-              ...oldTextNodes,
-              { type: "property", key: "change_unchanged" },
-              { type: "property", key: "change_inserted", value: `${tcAid} ${tcTs}` },
-              { type: "text", text: newValue },
-              { type: "property", key: "change_unchanged" },
+              ...wrapInChangeMarkers(oldTextNodes, "deleted", tcAid, tcTs),
+              ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
               ...nonTextChildren,
             ];
           }
@@ -1519,6 +1511,7 @@ export async function runCli(args: string[]) {
     if (trackChanges) {
       // Track-changes mode: wrap matched nodes in change_deleted markers instead of removing them
       const authorId = resolveAuthorId(ast, authorName);
+      const deleteTs = Math.floor(Date.now() / 1000).toString();
       ensureTrackingChangesInHeader(ast);
       const nodesToMark = new Set(nodes);
 
@@ -1527,9 +1520,9 @@ export async function runCli(args: string[]) {
           const child = children[i];
           if (nodesToMark.has(child)) {
             if (child.type === "block") {
-              child.children = wrapWithTracking(child.children, "deleted", authorId);
+              child.children = wrapWithTracking(child.children, "deleted", authorId, deleteTs);
             } else if (child.type === "text" || child.type === "property") {
-              const wrapped = wrapWithTracking([child], "deleted", authorId);
+              const wrapped = wrapWithTracking([child], "deleted", authorId, deleteTs);
               children.splice(i, 1, ...wrapped);
             }
           } else if (child.type === "block") {
@@ -1807,6 +1800,7 @@ export async function runCli(args: string[]) {
     // Resolve author and ensure tracking header once for all target nodes
     // and payload blocks (not per-targetNode — avoid re-scanning header N times).
     const insertAuthorId = trackChanges ? resolveAuthorId(ast, authorName) : 0;
+    const insertTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
     if (trackChanges) ensureTrackingChangesInHeader(ast);
 
     for (const targetNode of nodes) {
@@ -1873,7 +1867,7 @@ export async function runCli(args: string[]) {
               matchedTextNode = tn;
               matchOffset = searchFrom;
             }
-            searchFrom++;
+            searchFrom += splitMatch!.length;
           }
         }
 
@@ -1910,7 +1904,7 @@ export async function runCli(args: string[]) {
       for (const nodeToInsert of payload) {
         if (trackChanges) {
           if (nodeToInsert.type === "block") {
-            nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted", insertAuthorId);
+            nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted", insertAuthorId, insertTs);
           } else if (nodeToInsert.type === "text" && position === "split-after") {
             // Tracking markers are generated inline at the splice point below.
             // wrapWithTracking is the wrong tool for bare text nodes — it expects
@@ -2003,13 +1997,9 @@ export async function runCli(args: string[]) {
           const insertIdx = splitTextIdx + 1 + splitInsertOffset;
           if (trackChanges && nodeToInsert.type === "text") {
             // Generate change tracking markers inline for bare text nodes.
-            const ts = Math.floor(Date.now() / 1000).toString();
-            splitParentList.splice(insertIdx, 0,
-              { type: "property", key: "change_inserted", value: `${insertAuthorId} ${ts}` },
-              copy,
-              { type: "property", key: "change_unchanged" }
-            );
-            splitInsertOffset += 3;
+            const wrapped = wrapInChangeMarkers([copy], "inserted", insertAuthorId, insertTs);
+            splitParentList.splice(insertIdx, 0, ...wrapped);
+            splitInsertOffset += wrapped.length;
           } else {
             splitParentList.splice(insertIdx, 0, copy);
             splitInsertOffset++;
