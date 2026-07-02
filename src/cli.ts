@@ -190,8 +190,8 @@ Arguments:
 Options:
   --layout <name>              Name of the layout to insert (e.g., 'Standard').
   --text <content>             Text content for the new layout (required with --layout).
-  --raw-file <path>            Read raw LyX string from a file. Use this for complex
-                               structures like nested formulas and batch insertion.
+  --raw-file <path>            Read raw LyX blocks from a file.
+                               Example: \begin_layout Standard\nHello\n\end_layout
   --cite <key>                 Insert a citation inset for the given BibTeX key.
   --cite-cmd <command>         Citation command: cite, citet (default),
                                citep, citeauthor, citeyear, citeyearpar, citebyear,
@@ -443,12 +443,16 @@ function truncateAtDepth(doc: DocumentNode, maxDepth: number, currentDepth: numb
 // - If the name matches an existing author, return its ID.
 // - Otherwise, auto-assign a new ID (max existing + 1, or 1 if none exist)
 //   and add a new \author entry to the header.
+
+function getHeader(ast: DocumentNode): BlockNode | undefined {
+  const doc = ast.children.find(c => c.type === "block" && c.tag === "document") as BlockNode | undefined;
+  return doc?.children.find(c => c.type === "block" && c.tag === "header") as BlockNode | undefined;
+}
+
 // Returns the resolved author ID (always ≥ 0; returns 0 only when the
 // document or header block is missing, which indicates a malformed .lyx file).
 function resolveAuthorId(ast: DocumentNode, authorName: string): number {
-  const docBlock = ast.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "document") as BlockNode;
-  if (!docBlock) return 0;
-  const header = docBlock.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "header") as BlockNode;
+  const header = getHeader(ast);
   if (!header) return 0;
 
   // Parse existing \author <id> "<name>" entries
@@ -473,9 +477,7 @@ function resolveAuthorId(ast: DocumentNode, authorName: string): number {
 // tracked changes on file open. Without this, \change_deleted and \change_inserted
 // markers are silently stripped by LyX.
 function ensureTrackingChangesInHeader(ast: DocumentNode): void {
-  const docBlock = ast.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "document") as BlockNode;
-  if (!docBlock) return;
-  const header = docBlock.children.find((c: Node) => c.type === "block" && (c as BlockNode).tag === "header") as BlockNode;
+  const header = getHeader(ast);
   if (!header) return;
   
   const existing = header.children.find((c: Node) => c.type === "property" && c.key === "tracking_changes") as PropertyNode | undefined;
@@ -496,42 +498,9 @@ function ensureTrackingChangesInHeader(ast: DocumentNode): void {
  *  emit inline \change_*{} markers so the user can see pending edits at a
  *  glance.  The {} wrapper form is a deliberate simplification of LyX source
  *  syntax for readability — see dev log 45 for rationale. */
-function extractAllText(node: Node): string {
-  if (node.type === "text") return node.text;
-  if (node.type === "property") {
-    if (node.key === "change_deleted") return "\\change_deleted{";
-    if (node.key === "change_inserted") return "\\change_inserted{";
-    if (node.key === "change_unchanged") return "}";
-    return "";
-  }
-  if (node.type === "block") {
-    if (node.tag === "inset") {
-      return " inset[" + (node.args || "").trim() + "] ";
-    }
-    return node.children.map(extractAllText).join("");
-  }
-  return "";
-}
-
-/** First N characters of a node's text, for concise verbose output.
- *  Uses an early-terminating walk to avoid traversing the full subtree
- *  only to discard 99% of the result. */
-function briefText(node: Node, maxLen = 80): string {
-  const raw = extractTextUpTo(node, maxLen + 1);
-  const text = raw.trim();
-  // Use trimmed length: a node with leading whitespace should not falsely
-  // trigger truncation just because ExtractTextUpTo consumed whitespace chars.
-  if (text.length <= maxLen) return text;
-  return text.substring(0, maxLen) + "...";
-}
-
-/** Like extractAllText but stops accumulating once maxLen characters
- *  have been collected. Returns at most maxLen characters. */
-function extractTextUpTo(node: Node, maxLen: number): string {
+function extractAllText(node: Node, maxLen = Infinity): string {
   if (maxLen <= 0) return "";
-  if (node.type === "text") {
-    return node.text.substring(0, maxLen);
-  }
+  if (node.type === "text") return node.text.substring(0, maxLen);
   if (node.type === "property") {
     if (node.key === "change_deleted") return "\\change_deleted{".substring(0, maxLen);
     if (node.key === "change_inserted") return "\\change_inserted{".substring(0, maxLen);
@@ -547,11 +516,23 @@ function extractTextUpTo(node: Node, maxLen: number): string {
     for (const child of node.children) {
       const remaining = maxLen - result.length;
       if (remaining <= 0) break;
-      result += extractTextUpTo(child, remaining);
+      result += extractAllText(child, remaining);
     }
     return result;
   }
   return "";
+}
+
+/** First N characters of a node's text, for concise verbose output.
+ *  Uses an early-terminating walk to avoid traversing the full subtree
+ *  only to discard 99% of the result. */
+function briefText(node: Node, maxLen = 80): string {
+  const raw = extractAllText(node, maxLen + 1);
+  const text = raw.trim();
+  // Use trimmed length: a node with leading whitespace should not falsely
+  // trigger truncation just because extractAllText consumed whitespace chars.
+  if (text.length <= maxLen) return text;
+  return text.substring(0, maxLen) + "...";
 }
 
 /** Build a selector-like label for a node: tag[args]. */
@@ -1652,7 +1633,7 @@ export async function runCli(args: string[]) {
         const tempAst = parse(rawContent, true);
         const validNodes = tempAst.children.filter(c => c.type === "block" || c.type === "property");
         if (validNodes.length === 0) {
-          printError("INVALID_RAW", "The --raw-file content did not parse into any valid LyX blocks or properties. (e.g. expected \\begin_layout, got plain text)");
+          printError("INVALID_RAW", "The --raw-file content did not parse into any valid LyX blocks or properties. Expected content like: \\begin_layout Standard\nYour text\n\\end_layout");
           return;
         }
 
@@ -2046,7 +2027,7 @@ export async function runCli(args: string[]) {
     try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ position, label: nodeLabel(n), text: briefText(n) }));
-    printJson({ inserted_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });
+    printJson({ matched_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });
     return;
   }
 

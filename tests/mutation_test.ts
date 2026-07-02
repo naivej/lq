@@ -30,7 +30,7 @@ Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
   try {
     // Insert a new layout after Title
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "after", "--layout", "Standard", "--text", "Test Insert"]);
-    assertEquals(result.inserted_nodes, 1);
+    assertEquals(result.matched_nodes, 1);
 
     // Read the file and parse it to verify
     const text = await Deno.readTextFile(tempFile);
@@ -147,7 +147,7 @@ Deno.test("Mutation Engine - Insert Before Position", async () => {
   try {
     // Insert a layout before Author
     const result = await runCliTest(["insert", tempFile, "layout[Author]", "before", "--layout", "Standard", "--text", "Before Author"]);
-    assertEquals(result.inserted_nodes, 1);
+    assertEquals(result.matched_nodes, 1);
 
     const text = await Deno.readTextFile(tempFile);
     // Standard should appear before Author
@@ -162,7 +162,7 @@ Deno.test("Mutation Engine - Insert Append Position", async () => {
   try {
     // Append a footnote inside the Title layout (footnote is an inset, valid inside layouts)
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "append", "--footnote", "Appended footnote"]);
-    assertEquals(result.inserted_nodes, 1);
+    assertEquals(result.matched_nodes, 1);
 
     const text = await Deno.readTextFile(tempFile);
     // The footnote should appear inside Title, after its existing text
@@ -177,7 +177,7 @@ Deno.test("Mutation Engine - Insert Prepend Position (single block)", async () =
   try {
     // Prepend a footnote inside the Title layout (footnote is an inset, valid inside layouts)
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "prepend", "--footnote", "Prepended footnote"]);
-    assertEquals(result.inserted_nodes, 1);
+    assertEquals(result.matched_nodes, 1);
 
     const text = await Deno.readTextFile(tempFile);
     // The footnote should appear inside Title, before Title's existing text
@@ -202,7 +202,7 @@ Deno.test("Mutation Engine - Insert Prepend Multi-Block (order preservation)", a
     );
     // Prepend into the first Foot inset
     const result = await runCliTest(["insert", tempFile, "inset[Foot]:first", "prepend", "--raw-file", rawFile]);
-    assertEquals(result.inserted_nodes, 1);
+    assertEquals(result.matched_nodes, 1);
 
     const text = await Deno.readTextFile(tempFile);
     // Verify both blocks exist in the output before checking order
@@ -223,7 +223,7 @@ Deno.test("Mutation Engine - Insert Split-After Position", async () => {
   try {
     // Split Title's text "Title" after "Tit" and insert a footnote (inset, valid inside layouts)
     const result = await runCliTest(["insert", tempFile, "layout[Title]", "split-after", "Tit", "--footnote", "Split footnote"]);
-    assertEquals(result.inserted_nodes, 1);
+    assertEquals(result.matched_nodes, 1);
 
     const text = await Deno.readTextFile(tempFile);
     // Text should be split: "Tit" then footnote, then "le"

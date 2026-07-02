@@ -29,17 +29,18 @@ To effectively use the query engine, Users need to understand how LyX syntax map
 The query engine supports traversing the CST using CSS-like selector:
 
 - **Tag[args]** (Run `lq schema <file>` to see optional args)
+
   - layout[documentLayouts]
   - inset[insets]
   - inset[CommandInset commandInsetSubtypes]
   - property[inlineProperties]
-  
 - **Combinators**
+
   - Space for descendant. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.
   - `~` for sibling. Example: `layout[Section] ~ layout[Standard]` matches all Standard layouts after a Section.
   - `,` for OR group. Example: `layout[Section], inset[Foot]` matches all Section and Foot layouts.
-
 - **Chainable Pseudo-classes** (must follow a tag e.g. `layout:contains("text")`, `inset:first`)
+
   - `:first`, `:last`, `:nth-child(an+b/even/odd)`,
   - `:contains("text")` searches recursively and case-sensitively node children for text.
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
@@ -120,7 +121,7 @@ The query engine supports traversing the CST using CSS-like selector:
     - `--ref <label> [--ref-cmd <command>]`: Insert a cross-reference inset. Valid `--ref-cmd` values: `ref` (default), `eqref`, `pageref`, `vpageref`, `vref`, `nameref`, `formatted`, `labelonly`.
     - `--label <name>`: Insert a label inset (`CommandInset label`) with the given name.
     - `--footnote <text>`: Insert a footnote inset (`Foot`) containing a `Plain Layout` with the given text. For complex footnotes (citations, cross-refs, math), use the two-pass approach: create the skeleton with `--footnote`, then populate with `split-after` and other helpers.
-    - `--raw-file <path>`: The power-user option for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params). Read raw LyX syntax from a file and parse it into CST nodes.
+    - `--raw-file <path>`: The power-user option for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params). Read raw LyX syntax from a file and parse it into CST nodes. Example: `\begin_layout Standard\nHello\n\end_layout`
 
 # Best Practices
 
