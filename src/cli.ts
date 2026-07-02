@@ -1922,16 +1922,16 @@ export async function runCli(args: string[]) {
               // Determine if the target is inside an inset by walking the
               // ancestor chain captured during the initial findNodeContext call.
               let isInsetContext = false;
-            if (targetParentBlock && targetParentBlock.tag === "inset") {
-              isInsetContext = true;
-            } else if (ctx) {
-              for (const ancestor of ctx.ancestorChain) {
-                if (ancestor.tag === "inset") {
-                  isInsetContext = true;
-                  break;
+              if (targetParentBlock && targetParentBlock.tag === "inset") {
+                isInsetContext = true;
+              } else if (ctx) {
+                for (const ancestor of ctx.ancestorChain) {
+                  if (ancestor.tag === "inset") {
+                    isInsetContext = true;
+                    break;
+                  }
                 }
               }
-            }
 
             if (isInsetContext) {
               if (!schema.insetLayouts.includes(block.args)) {
@@ -1960,26 +1960,23 @@ export async function runCli(args: string[]) {
       }
 
       // --- Schema-independent structural guards (always run) ---
-      for (const nodeToInsert of newNodesToInsert) {
-        if (nodeToInsert.type === "block") {
-          const block = nodeToInsert as BlockNode;
-          // Guard: prepend/append/split-after must not nest a layout inside another layout.
-          // Only text nodes and insets are valid children of document layouts.
-          if (block.tag === "layout" && block.args &&
-              (position === "prepend" || position === "append" || position === "split-after") &&
-              targetParentBlock && targetParentBlock.tag === "layout") {
-            printError("INVALID_CONTEXT",
-              `Cannot insert layout '${block.args}' inside another layout. ` +
-              `Use 'before' or 'after' to insert as a sibling.`);
+      if (nodeToInsert.type === "block") {
+        const block = nodeToInsert as BlockNode;
+        // Guard: prepend/append/split-after must not nest a layout inside another layout.
+        if (block.tag === "layout" && block.args &&
+            (position === "prepend" || position === "append" || position === "split-after") &&
+            targetParentBlock && targetParentBlock.tag === "layout") {
+          printError("INVALID_CONTEXT",
+            `Cannot insert layout '${block.args}' inside another layout. ` +
+            `Use 'before' or 'after' to insert as a sibling.`);
 
-          }
-          // Guard: insets cannot be inserted directly into the document body.
-          if (block.tag === "inset" && block.args) {
-            const isDocumentContext = targetParentBlock && targetParentBlock.tag === "body";
-            if (isDocumentContext) {
-              printError("INVALID_CONTEXT", `Cannot insert inset directly into the document body. Insets must be inside a layout (e.g. Standard).`);
+        }
+        // Guard: insets cannot be inserted directly into the document body.
+        if (block.tag === "inset" && block.args) {
+          const isDocumentContext = targetParentBlock && targetParentBlock.tag === "body";
+          if (isDocumentContext) {
+            printError("INVALID_CONTEXT", `Cannot insert inset directly into the document body. Insets must be inside a layout (e.g. Standard).`);
 
-            }
           }
         }
       }
@@ -2028,8 +2025,11 @@ export async function runCli(args: string[]) {
             }
           }
         }
-        // Track items inserted: layout blocks insert 2 items (block + spacer), others 1
-        insertedSoFar += isLayoutBlock ? 2 : 1;
+        // Track items inserted: layout blocks insert 2 items (block + spacer), others 1.
+        // split-after uses splitInsertOffset; append uses push — both don't need this.
+        if (position !== "split-after" && position !== "append") {
+          insertedSoFar += isLayoutBlock ? 2 : 1;
+        }
         insertedBlocks++;
       }
       insertedCount++;
