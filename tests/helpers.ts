@@ -20,9 +20,12 @@ export interface CliResult {
   matched_nodes?: number;
   modified_nodes?: number;
   deleted_nodes?: number;
+  undone_nodes?: number;
+  undone_changes?: number;
   count?: number | Record<string, number>;
   text?: string;
   data?: unknown;
+  warnings?: string[];
 }
 
 /**

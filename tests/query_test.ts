@@ -188,4 +188,20 @@ Deno.test("Query Engine on LyX Document", async () => {
   // Combinator test: :not() with inner :contains() and outer tag
   const notInnerContains = query(ast, 'layout[Standard]:not(:contains("tracked changes"))');
   assertEquals(notInnerContains.length > 0, true); // Parses, excludes the one with tracked changes
+
+  // T6: Chained :contains() pseudo-classes work as AND
+  // layout[Standard]:contains('writing'):contains('paper') matches only
+  // Standard layouts that contain BOTH 'writing' AND 'paper'
+  const dualContains = query(ast, "layout[Standard]:contains('writing'):contains('paper')");
+  assertEquals(dualContains.length, 1);
+  // Individual :contains() queries should match more (superset)
+  const onlyWriting = query(ast, "layout[Standard]:contains('writing')");
+  const onlyPaper = query(ast, "layout[Standard]:contains('paper')");
+  assertEquals(dualContains.length <= onlyWriting.length, true, "AND should not match more than either single filter");
+  assertEquals(dualContains.length <= onlyPaper.length, true, "AND should not match more than either single filter");
+  // Verify chained :contains() parse produces two pseudos on same selector part
+  const dualParsed = parseSelector("layout[Standard]:contains('writing'):contains('paper')");
+  assertEquals(dualParsed[0][0].pseudos!.length, 2);
+  assertEquals(dualParsed[0][0].pseudos![0].name, "contains");
+  assertEquals(dualParsed[0][0].pseudos![1].name, "contains");
 });

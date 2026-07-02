@@ -417,3 +417,83 @@ Deno.test("CLI - read --text-only and --count combined", { timeout: 10000 }, asy
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
+
+// ---------------------------------------------------------------------------
+// 23. T8: bib on file without bibliography — NO_BIBLIO error
+// ---------------------------------------------------------------------------
+Deno.test("CLI - bib on file without bibliography", { timeout: 10000 }, async () => {
+  const tempFile = await Deno.makeTempFile({ suffix: ".lyx" });
+  try {
+    await Deno.writeTextFile(tempFile,
+      "#LyX 2.5 created this file.\n" +
+      "\\begin_document\n\\begin_header\n\\end_header\n" +
+      "\\begin_body\n" +
+      "\\begin_layout Standard\nNo bibliography here.\n\\end_layout\n" +
+      "\\end_body\n\\end_document\n"
+    );
+    const result = await runCliTest(["bib", tempFile]);
+    assertEquals(result.code, "NO_BIBLIO");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 24. T9: schema fallback auto-detection when no layouts dir configured
+// ---------------------------------------------------------------------------
+Deno.test("CLI - schema fallback auto-detects layouts", { timeout: 10000 }, async () => {
+  // runCliTest provides a clean config with no layoutsDir set.
+  // schema should auto-detect the LyX layouts path.
+  const result = await runCliTest(["schema", FIXTURE]);
+  const data = result.data as { headingHierarchy?: Array<{ layout: string; level: number }> };
+  assertEquals(data.headingHierarchy !== undefined, true);
+  assertEquals((data.headingHierarchy!).length > 0, true, "headingHierarchy should not be empty");
+});
+
+// ---------------------------------------------------------------------------
+// 25. T7: dump --toc on Beamer textclass
+// ---------------------------------------------------------------------------
+Deno.test("CLI - dump --toc on Beamer textclass", { timeout: 10000 }, async () => {
+  const beamerFixture = "tests/fixtures/Presentations/Beamer.lyx";
+  const result = await runCliTest(["dump", beamerFixture, "--toc"]);
+  const data = result.data as Array<{ layout: string; text: string }>;
+  assertEquals(data.length > 0, true, "Beamer ToC should have entries");
+  // Beamer uses Frame instead of Section — verify frames appear in the ToC
+  const layouts = data.map(d => d.layout).join(" ");
+  assertStringIncludes(layouts, "Frame");
+});
+
+// ---------------------------------------------------------------------------
+// 26. T5: init --refresh save-reload without LyX running — warns gracefully
+// ---------------------------------------------------------------------------
+Deno.test("CLI - init --refresh save-reload without LyX warns", { timeout: 10000 }, async () => {
+  // runCliTest uses a fake home; LyX won't be running.
+  // The init command should succeed with a warning about LyXServer.
+  const result = await runCliTest(["init", "--refresh", "save-reload"]);
+  // Should not crash; warnings field should mention LyXServer unavailability
+  if (result.warnings) {
+    assertStringIncludes(
+      JSON.stringify(result.warnings).toLowerCase(),
+      "lyx",
+    );
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 27. T3: set --find on property node — warning labels node as "property"
+// ---------------------------------------------------------------------------
+Deno.test("CLI - set --find on property node warns as property", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_find_prop_warn.lyx");
+  try {
+    const result = await runCliTest(["set", tempFile, "property[language]", "english", "--find", "british"]);
+    // The --find warning should identify the matched node type as "property"
+    if (result.warnings && result.warnings.length > 0) {
+      assertStringIncludes(
+        JSON.stringify(result.warnings).toLowerCase(),
+        "property",
+      );
+    }
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});

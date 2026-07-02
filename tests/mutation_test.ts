@@ -406,6 +406,27 @@ Deno.test("Mutation Engine - Multi-Block Raw-File After (order preservation)", a
   }
 });
 
+// T2: undo with zero changes — verifies no spurious \author pollution
+// (dev log 60 fix 1.3: undo on clean file should not write anything)
+Deno.test("Mutation Engine - Undo with Zero Changes (no spurious author)", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_undo_clean.lyx");
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout"],
+      { trackChanges: true },
+    );
+    assertEquals(result.undone_changes, 0);
+    // Re-read the file and verify no NEW \author was added
+    // (the fixture may already have \author entries from its header)
+    const text = await Deno.readTextFile(tempFile);
+    const authorCount = (text.match(/\\author/g) || []).length;
+    // A clean fixture should have 0 or 1 \author entries (from the template header)
+    assertEquals(authorCount <= 1, true, "Undo on clean file should not add spurious \\author entries");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("Bib Engine - Extract Citations", async () => {
   const result = await runCliTest(["bib", path.join("tests", "fixtures", "my_template.lyx")]);
   assertEquals((result.data as unknown[]).length, 15);
