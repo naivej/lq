@@ -359,7 +359,7 @@ function printJson(data: unknown) {
   console.log(JSON.stringify(obj, null, 2));
 }
 
-function printError(code: string, message: string) {
+function printError(code: string, message: string): never {
   printJson({ code, message });
   Deno.exit(1);
 }
@@ -795,13 +795,11 @@ export async function runCli(args: string[]) {
     // Validate --refresh value
     if (refresh !== undefined && refresh !== "none" && refresh !== "reload" && refresh !== "save-reload") {
       printError("INVALID_FLAG", `--refresh must be 'none', 'reload', or 'save-reload', got: '${refresh}'`);
-      return;
     }
 
     // Validate --track-changes value
     if (trackChangesFlag !== undefined && trackChangesFlag !== "on" && trackChangesFlag !== "off") {
       printError("INVALID_FLAG", `--track-changes must be 'on' or 'off', got: '${trackChangesFlag}'`);
-      return;
     }
 
     // Validate --max-cache-entries value
@@ -810,7 +808,6 @@ export async function runCli(args: string[]) {
       const n = parseInt(maxCacheEntriesStr, 10);
       if (isNaN(n) || n < 0) {
         printError("INVALID_FLAG", `--max-cache-entries must be a non-negative integer, got: '${maxCacheEntriesStr}'`);
-        return;
       }
       maxCacheEntries = n;
     }
@@ -839,17 +836,14 @@ export async function runCli(args: string[]) {
       const stat = await Deno.stat(dir);
       if (!stat.isDirectory) {
         printError("INVALID_DIR", `The path '${dir}' is not a directory. Please provide a valid --layouts-dir.`);
-        return;
       }
     } catch {
       printError("DIR_NOT_FOUND", `Could not find layouts directory at '${dir}'. Please provide it manually via --layouts-dir.`);
-      return;
     }
 
     const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
     if (!homeDir) {
       printError("NO_HOME", "Could not determine home directory to save config.");
-      return;
     }
 
     const configDir = path.join(homeDir, ".lq");
@@ -893,7 +887,6 @@ export async function runCli(args: string[]) {
     if (authorNameFlag !== undefined) {
       if (authorNameFlag.length === 0) {
         printError("INVALID_FLAG", "--author-name must be a non-empty string.");
-        return;
       }
       config.authorName = authorNameFlag;
     } else {
@@ -935,7 +928,6 @@ export async function runCli(args: string[]) {
 
   if (cleanArgs.length < 2) {
     printError("MISSING_ARGS", "Usage: lq <command> <file> [selector] [value]. Run 'lq --help' for details.");
-    return;
   }
 
   // Extract --count and --text-only flags early (before positional arg destructuring)
@@ -948,7 +940,6 @@ export async function runCli(args: string[]) {
   
   if (command !== "init" && !filePath.endsWith(".lyx")) {
     printError("INVALID_EXTENSION", "Target file must have a .lyx extension.");
-    return;
   }
 
   // Load user config (shared by all commands: cache sizing, refresh, track-changes)
@@ -983,7 +974,6 @@ export async function runCli(args: string[]) {
     text = await Deno.readTextFile(filePath);
   } catch (_e) {
     printError("FILE_NOT_FOUND", `Could not read file: ${filePath}`);
-    return; // for type safety
   }
 
   let ast: DocumentNode;
@@ -1002,7 +992,6 @@ export async function runCli(args: string[]) {
     }
   } catch (e: Error | unknown) {
     printError("PARSE_ERROR", (e as Error).message);
-    return;
   }
 
   if (command === "dump") {
@@ -1020,7 +1009,6 @@ export async function runCli(args: string[]) {
     if (tocMode) {
       if (dumpSelector) {
         printError("FLAG_CONFLICT", "--toc and selector are mutually exclusive.");
-        return;
       }
       // Get heading hierarchy from schema
       const textclassNode = query(ast, "textclass")[0];
@@ -1028,7 +1016,6 @@ export async function runCli(args: string[]) {
         ? textclassNode.value : null;
       if (!textclass) {
         printError("NO_TEXTCLASS", "Could not determine textclass from the document.");
-        return;
       }
       let headingHierarchy: { layout: string; tocLevel: number }[];
       try {
@@ -1047,7 +1034,6 @@ export async function runCli(args: string[]) {
         const depth = parseInt(depthStr, 10);
         if (isNaN(depth) || depth < 0) {
           printError("INVALID_FLAG", "--depth must be a non-negative integer.");
-          return;
         }
         toc = truncateTocDepth(toc, depth, 0);
       }
@@ -1063,11 +1049,9 @@ export async function runCli(args: string[]) {
         roots = query(ast, dumpSelector);
       } catch (e: Error | unknown) {
         printError("INVALID_SELECTOR", (e as Error).message);
-        return;
       }
       if (roots.length === 0) {
         printError("NO_MATCH", "Selector matched no nodes to dump.");
-        return;
       }
       useFullAst = false;
     }
@@ -1082,7 +1066,6 @@ export async function runCli(args: string[]) {
       const depth = parseInt(depthStr, 10);
       if (isNaN(depth) || depth < 0) {
         printError("INVALID_FLAG", "--depth must be a non-negative integer.");
-        return;
       }
       
       if (useFullAst) {
@@ -1124,7 +1107,6 @@ export async function runCli(args: string[]) {
     const bibtexNodes = query(ast, "inset[CommandInset bibtex]");
     if (bibtexNodes.length === 0) {
       printError("NO_BIBLIO", "No bibliography files found in the document.");
-      return;
     }
 
     const citations: Citation[] = [];
@@ -1161,7 +1143,6 @@ export async function runCli(args: string[]) {
               citations.push(...parsed);
             } catch (e: Error | unknown) {
               printError("BIB_READ_ERROR", `Could not read or parse bib file '${bibPath}': ${(e as Error).message}`);
-              return;
             }
           }
         }
@@ -1170,7 +1151,6 @@ export async function runCli(args: string[]) {
 
     if (bibFileCount === 0) {
       printError("NO_BIBFILE", "No .bib files referenced in the document. The bib command only processes .bib bibliography files.");
-      return;
     }
     
     // Deduplicate citations by key
@@ -1195,13 +1175,11 @@ export async function runCli(args: string[]) {
     const layoutsDir = config.layoutsDir || await getDefaultLayoutsDir();
     if (!layoutsDir) {
       printError("NO_CONFIG", "No layouts directory found. Run 'lq init' to auto-detect and save your LyX layouts path.");
-      return;
     }
 
     const textclassNode = query(ast, "textclass")[0];
     if (!textclassNode || textclassNode.type !== "property" || !textclassNode.value) {
       printError("NO_TEXTCLASS", "Could not determine textclass from the document.");
-      return;
     }
     
     try {
@@ -1226,7 +1204,6 @@ export async function runCli(args: string[]) {
 
   if (!selector) {
     printError("MISSING_SELECTOR", "A CSS selector is required for this command.");
-    return;
   }
 
   let nodes: Node[] = [];
@@ -1234,7 +1211,6 @@ export async function runCli(args: string[]) {
     nodes = query(ast, selector);
   } catch (e: Error | unknown) {
     printError("INVALID_SELECTOR", (e as Error).message);
-    return;
   }
 
   // Warn if :until() is used without a preceding ~ combinator: without ~
@@ -1315,7 +1291,6 @@ export async function runCli(args: string[]) {
   const unsafeNodes = nodes.filter(n => (n.type === "block" && (n.tag === "body" || n.tag === "header" || n.tag === "document")));
   if (unsafeNodes.length > 0 && ["set", "delete", "insert"].includes(command)) {
     printError("INVALID_CONTEXT", "Cannot mutate core document structures ('document', 'body', 'header') directly. Target specific layouts or properties instead.");
-    return;
   }
 
   // Mutation commands below
@@ -1335,24 +1310,20 @@ export async function runCli(args: string[]) {
 
     if (nodes.length === 0) {
       printError("NO_MATCH", "Selector matched no nodes to set.");
-      return;
     }
 
     // --find and --replace-all are mutually exclusive
     if (findStr !== undefined && replaceAll) {
       printError("FLAG_CONFLICT", "--find and --replace-all are mutually exclusive. --find does surgical substring replacement; --replace-all wipes all children.");
-      return;
     }
 
     // --find requires a non-empty substring
     if (findStr !== undefined && findStr.length === 0) {
       printError("INVALID_FLAG", "--find requires a non-empty substring to search for.");
-      return;
     }
 
     if (flags._.length === 0) {
       printError("MISSING_ARGS", "A new text value is required for the 'set' command.");
-      return;
     }
 
     const newValue = flags._.join(" ");
@@ -1479,7 +1450,6 @@ export async function runCli(args: string[]) {
     if (findStr !== undefined) {
       if (totalFindMatches === 0) {
         printError("NO_MATCH", `--find '${findStr}' matched no occurrences within the targeted nodes.`);
-        return;
       }
       const plural = totalFindMatches === 1 ? "" : "s";
       const nodeList = Object.entries(findPerNode)
@@ -1505,7 +1475,6 @@ export async function runCli(args: string[]) {
   if (command === "delete") {
     if (nodes.length === 0) {
       printError("NO_MATCH", "Selector matched no nodes to delete.");
-      return;
     }
 
     if (trackChanges) {
@@ -1568,7 +1537,6 @@ export async function runCli(args: string[]) {
   if (command === "insert") {
     if (nodes.length === 0) {
       printError("NO_MATCH", "Selector matched no nodes to insert around.");
-      return;
     }
 
     const position = restArgs[0];
@@ -1579,13 +1547,11 @@ export async function runCli(args: string[]) {
       splitMatch = restArgs[1];
       if (!splitMatch || splitMatch === "") {
         printError("MISSING_ARGS", "split-after requires a non-empty match string, e.g. split-after monetary policy");
-        return;
       }
     }
 
     if (!["before", "after", "prepend", "append", "split-after"].includes(position)) {
       printError("INVALID_POSITION", "Position must be 'before', 'after', 'prepend', 'append', or 'split-after' (followed by the match string as the next argument).");
-      return;
     }
 
     // Parse flags (skip position and optional split-after match arg)
@@ -1604,7 +1570,6 @@ export async function runCli(args: string[]) {
 
     if (flagCount > 1) {
       printError("FLAG_CONFLICT", "You cannot mix --raw-file, --layout, --cite, --ref, --label, or --footnote. Please provide exactly one generation strategy.");
-      return;
     }
 
     // Resolve --raw-file by reading the file content
@@ -1614,7 +1579,6 @@ export async function runCli(args: string[]) {
         rawContent = await Deno.readTextFile(flags["raw-file"]);
       } catch (e: Error | unknown) {
         printError("FILE_NOT_FOUND", `Could not read --raw-file '${flags["raw-file"]}': ${(e as Error).message}`);
-        return;
       }
     }
 
@@ -1627,7 +1591,6 @@ export async function runCli(args: string[]) {
         const validNodes = tempAst.children.filter(c => c.type === "block" || c.type === "property");
         if (validNodes.length === 0) {
           printError("INVALID_RAW", "The --raw-file content did not parse into any valid LyX blocks or properties. Expected content like: \\begin_layout Standard\nYour text\n\\end_layout");
-          return;
         }
 
         // Validate inset types in raw content (warning only)
@@ -1639,7 +1602,6 @@ export async function runCli(args: string[]) {
         for (const n of validNodes) newNodesToInsert.push(n);
       } catch (e: Error | unknown) {
         printError("PARSE_ERROR", `Failed to parse raw LyX string: ${(e as Error).message}`);
-        return;
       }
     } else if (flags.layout) {
       // Validate the layout against the schema (loaded from config)
@@ -1651,7 +1613,6 @@ export async function runCli(args: string[]) {
                const schema = await getSchemaForClass(textclassNode.value, config.layoutsDir);
                if (!schema.documentLayouts.includes(flags.layout) && !schema.insetLayouts.includes(flags.layout)) {
                  printError("INVALID_LAYOUT", `The layout '${flags.layout}' is not permitted in textclass '${textclassNode.value}'. Allowed document layouts: ${schema.documentLayouts.join(", ")}`);
-                 return;
                }
             } catch (_e) {
                // Layout files unavailable — skip validation, insert proceeds
@@ -1672,7 +1633,6 @@ export async function runCli(args: string[]) {
         // We'll allow it but log a warning to stderr if we want, or just enforce text if we want to be strict.
         // Wait, since the AI explicitly complained about it (O1), let's enforce it to prevent empty layouts.
         printError("MISSING_ARGS", "A non-empty --text argument is required when inserting a new --layout to prevent empty blocks.");
-        return;
       }
     } else if (flags.cite) {
       const citeCmd = flags["cite-cmd"] || "citet";
@@ -1681,7 +1641,6 @@ export async function runCli(args: string[]) {
         "fullcite", "footfullcite", "nocite", "keyonly"];
       if (!validCiteCmds.includes(citeCmd)) {
         printError("INVALID_FLAG", `Invalid --cite-cmd '${citeCmd}'. Valid values: ${validCiteCmds.join(", ")}`);
-        return;
       }
       newNodesToInsert.push({
         type: "block",
@@ -1700,7 +1659,6 @@ export async function runCli(args: string[]) {
         "nameref", "formatted", "labelonly"];
       if (!validRefCmds.includes(refCmd)) {
         printError("INVALID_FLAG", `Invalid --ref-cmd '${refCmd}'. Valid values: ${validRefCmds.join(", ")}`);
-        return;
       }
       newNodesToInsert.push({
         type: "block",
@@ -1752,13 +1710,11 @@ export async function runCli(args: string[]) {
         newNodesToInsert.push({ type: "text", text: flags.text } as Node);
       } else {
         printError("TEXT_ONLY_INSERT", "Cannot insert bare text. You must wrap text in a layout using the --layout flag (e.g., --layout 'Standard' --text 'foo').");
-        return;
       }
     }
 
     if (newNodesToInsert.length === 0) {
       printError("MISSING_CONTENT", "You must provide --layout, --raw-file, --cite, --ref, --label, or --footnote to insert.");
-      return;
     }
 
     let insertedCount = 0;
@@ -1810,7 +1766,6 @@ export async function runCli(args: string[]) {
       if (position === "prepend" || position === "append" || position === "split-after") {
         if (targetNode.type !== "block") {
           printError("INVALID_TARGET", `Cannot ${position} to a non-block node.`);
-          return;
 
         }
         targetParentBlock = targetNode as BlockNode;
@@ -1873,11 +1828,9 @@ export async function runCli(args: string[]) {
 
         if (totalMatches === 0) {
           printError("SPLIT_NO_MATCH", `split-after: substring '${splitMatch}' not found in matched block.`);
-          return;
         }
         if (totalMatches > 1) {
           printError("SPLIT_AMBIGUOUS", `split-after: substring '${splitMatch}' appears ${totalMatches} times in matched block. Use a more specific selector or a longer match string.`);
-          return;
         }
 
         // Split the text node and replace it with [before, after].
@@ -1911,7 +1864,6 @@ export async function runCli(args: string[]) {
             // an array of children to wrap inside blocks.
           } else {
             printError("TRACKING_ERROR", "Cannot track bare text nodes. Wrap in a layout block.");
-            return;
           }
         }
 
@@ -2047,7 +1999,6 @@ export async function runCli(args: string[]) {
   if (command === "undo") {
     if (nodes.length === 0) {
       printError("NO_MATCH", "Selector matched no nodes to undo.");
-      return;
     }
     const substring: string | undefined = restArgs.length > 0 ? restArgs.join(" ") : undefined;
 
