@@ -181,28 +181,32 @@ Usage:
 Arguments:
   <file>      The path to the .lyx file.
   <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
-  <position>  Where to insert: 'before', 'after', 'prepend', 'append', or 'split-after'
-              followed by <match> as the next positional argument.
-              It splits a text node right after the exact, case-sensitive substring
-              and inserts new content at that point.
-              Only proceeds if the match appears exactly once in the block.
+  <position>  Where to insert relative to each matched target:
+              'before' / 'after'   Insert as a sibling of the target (for layouts).
+              'prepend' / 'append' Insert as a child of the target (for insets, text
+                                   inside a layout, etc.).
+              'split-after <text>' Split the target's text right after the exact,
+                                   case-sensitive <text> substring and insert new
+                                   content at the split point. Only proceeds if <text>
+                                   appears exactly once in the target. Text inside
+                                   \\change_deleted blocks is skipped.
 
-Options:
-  --layout <name>              Name of the layout to insert (e.g., 'Standard').
-  --text <content>             Text content for the new layout (required with --layout).
-  --raw-file <path>            Read raw LyX blocks from a file.
-                               Example: \begin_layout Standard\nHello\n\end_layout
-  --cite <key>                 Insert a citation inset for the given BibTeX key.
-  --cite-cmd <command>         Citation command: cite, citet (default),
-                               citep, citeauthor, citeyear, citeyearpar, citebyear,
+Options (provide exactly one generation helper):
+  --layout <name> --text <content>  Insert a layout block with the given name and text.
+                               --text requires --layout, except with 'split-after' 
+                               where bare --text inserts inline text.
+  --raw-file <path>            Read and parse raw LyX syntax from a file.
+                               Example: \\begin_layout Standard\\nHello\\n\\end_layout
+  --cite <key> [--cite-cmd <cmd>]  Insert a CommandInset citation for the given BibTeX key.
+                               --cite-cmd (optional): citet (default), cite, citep,
+                               citeauthor, citeyear, citeyearpar, citebyear,
                                footcite, autocite, citetitle, fullcite, footfullcite,
                                nocite, keyonly.
-  --ref <label>                Insert a cross-reference inset for the given label.
-  --ref-cmd <command>          Reference command: ref (default), eqref,
+  --ref <label> [--ref-cmd <cmd>]  Insert a CommandInset cross-reference for the given label.
+                               --ref-cmd (optional): ref (default), eqref,
                                pageref, vpageref, vref, nameref, formatted, labelonly.
-  --label <name>               Insert a label inset with the given name.
-  --footnote <text>            Insert a footnote inset containing a Plain Layout
-                               with the given text.`,
+  --label <name>               Insert a CommandInset label with the given name.
+  --footnote <text>            Insert a Foot inset containing a Plain Layout with <text>.`,
 
   undo: `lq undo - Revert tracked changes in matched nodes.
 

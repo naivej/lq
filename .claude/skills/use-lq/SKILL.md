@@ -116,7 +116,7 @@ The query engine supports traversing the CST using CSS-like selector:
     - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
     - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in current text (text inside `\change_deleted` blocks is skipped — those represent old/replaced content, not valid targets for new insertions).
   - Helpers (must provide exactly one generation strategy):
-    - `--layout <name> --text <content>`: The safest option. Automatically generates a valid LyX block with the specified text.
+    - `--layout <name> --text <content>`: Insert a layout block with the given name and text (e.g., --layout 'Standard' --text 'Hello world'). --text requires --layout, except with 'split-after' where bare --text inserts inline text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
     - `--ref <label> [--ref-cmd <command>]`: Insert a cross-reference inset. Valid `--ref-cmd` values: `ref` (default), `eqref`, `pageref`, `vpageref`, `vref`, `nameref`, `formatted`, `labelonly`.
     - `--label <name>`: Insert a label inset (`CommandInset label`) with the given name.
