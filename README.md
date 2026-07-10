@@ -2,7 +2,7 @@
 
 `lq` is a standalone CLI tool designed to parse, query, and mutate LyX documents  (`.lyx` files) using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
 
-Quick start
+### Quick start
 
 - Download the binary or build for your platform with `deno task build`
 - Configure with `lq init`
@@ -11,10 +11,9 @@ Quick start
 ### Highlights
 
 - `lq` mutates `.lyx` files in the same way as LyX (verified by LyX source code).
-- CLI + skills designed for **AI agents**.
-- Various helpers, including **cross-reference and citation**.
-- **Undo-able tracked change**.
-- **Auto refresh** opened `.lyx` files using [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
+- CLI + skills designed for **autonomous agents**.
+- Collaborate with agents in **auto refreshed** LyX GUI through [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
+- Agents make **tracked changes**, allowing easy review.
 
 ### Limitations
 
