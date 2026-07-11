@@ -1,6 +1,6 @@
 ---
 name: use-lq
-description: Read, edit, and manipulate lyx documents (.lyx files)
+description: Use lq to parse, query, and mutate LyX (.lyx) documents. Use when the user wants to edit a .lyx file, read or query document structure, insert citations/cross-references/footnotes/labels, undo tracked changes, or navigate a LyX document's table of contents.
 allowed-tools: Bash(lq *)
 ---
 # User Manual
@@ -127,14 +127,14 @@ The query engine supports traversing the CST using CSS-like selector:
 
 ## Before you start
 
-1. **Make sure `lq` is configured**: Always run `lq init` first to set up / confirm configeration. But **NEVER change configreation** without clear instructions or consent from the user.
-2. **Embrace the Git Workflow**: Work in a version-controlled workspace. `git stage` before mutating, then review with `git diff`. If you don't like the result, `git restore` reverts everything — or `lq undo` reverts individual tracked changes without touching other edits. There is no `--dry-run` flag because git + undo cover the same need.
-3. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Any raw LaTeX (like equations inside `inset[Formula]`) is treated as pure string data. Do not try to parse the LaTeX syntax itself; simply target the `inset[Formula]` node and replace its text content.
+1. **Run `lq init`**: Confirm configuration is set. Only change configuration with explicit user consent.
+2. **Stage before mutating**: `git stage`, then review with `git diff`. `git restore` reverts everything; `lq undo` reverts individual tracked changes without touching other edits. There is no `--dry-run` flag because git + undo cover the same need.
+3. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Raw LaTeX (like equations inside `inset[Formula]`) is pure string data. Target the `inset[Formula]` node and replace its text content.
 4. **Stop for LyXServer errors**: If `lq` cannot connect LyXServer, stop immediately and ask the user to turn on LyXServer or turn off auto refresh.
 
 ## Smart query
 
-Navigate large documents strategically with a zoom-in approach:
+Navigate large documents strategically with a zoom-in approach with scoped queries:
 
 | You want to…                              | Use this                                                                                                                             |
 | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
@@ -154,7 +154,6 @@ Navigate large documents strategically with a zoom-in approach:
 | Find a citation key                        | `lq bib <file> --search "keyword"`                                                                                                 |
 | Revert a tracked change                    | `lq undo <file> "<selector>" "bad text"`                                                                                           |
 
-**Never:** read the whole document at once, bare `lq dump`, bare `lq read "layout"` without `--text-only`, or bare `lq bib`.
 
 ## Safe Mutation Workflow
 
@@ -169,7 +168,7 @@ When modifying a document, follow this safe workflow:
 1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
 2. **Test Blast Radius**: Run `lq read <file> <selector> --count` first. The subtype breakdown (e.g. `{"layout[Section]": 8, "layout[Standard]": 120}`) tells you the composition — if you meant to target sections but see 120 Standard layouts, your selector is wrong. Narrow before mutating.
 3. **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`. **Keep `new_text` scoped to only the changed substring.** `--find` operates on individual text nodes; `new_text` is the literal replacement, not merged with surrounding nodes.
-4. **Tracked changes**: Undo un-wanted changes before appling new changes. Re-editing a node that already has pending tracked changes produces a warning, because the new edit will nest inside existing markers (double-wrap).
+4. **Clean pending changes first**: Undo unwanted tracked changes before applying new ones. Re-editing a node with pending tracked changes produces a warning (new edits nest inside existing markers).
 
 ## HOW-TO
 
@@ -199,7 +198,6 @@ When modifying a document, follow this safe workflow:
    \end_inset
    ```
 
-   See the reference syntax table below for all param defaults.
 2. **Citations**: Before inserting a citation, find citation keys with:
 
    ```bash
@@ -217,8 +215,7 @@ When modifying a document, follow this safe workflow:
    \end_inset
    ```
 
-   See the citation syntax table below for all param defaults.
-3. **List Items (Itemize, Enumerate, Description)**: Do NOT use `\item` — it is a LaTeX command, not a `.lyx` file format token. LyX never writes `\item` to `.lyx` files and would discard it as an "Unknown token". Instead, each list item is a **separate paragraph** with the list layout:
+3. **List Items (Itemize, Enumerate, Description)**: Each list item is a **separate paragraph** with the list layout. LyX uses repeated `\begin_layout Itemize` blocks (not `\item`, which is a LaTeX command LyX discards as an "Unknown token"):
 
    ```
    \begin_layout Itemize
@@ -239,66 +236,4 @@ When modifying a document, follow this safe workflow:
 
 # LyX Syntax Reference
 
-## Citation Inset (`CommandInset citation`)
-
-```
-\begin_inset CommandInset citation
-LatexCommand citet
-key "Einstein1905"
-literal "false"
-after ""
-before ""
-\end_inset
-```
-
-| Param            | Default        | Notes                                      |
-| ---------------- | -------------- | ------------------------------------------ |
-| `key`          | *(required)* | BibTeX citation key                        |
-| `literal`      | `"false"`    | `"true"` bypasses cite engine formatting |
-| `after`        | `""`         | Text after citation, e.g.`"p. 42"`       |
-| `before`       | `""`         | Text before citation, e.g.`"see "`       |
-| `pretextlist`  | `""`         | Multi-citation preamble                    |
-| `posttextlist` | `""`         | Multi-citation postamble                   |
-
-Omit params that use the default — LyX only writes non-default values.
-
-## Cross-Reference Inset (`CommandInset ref`)
-
-```
-\begin_inset CommandInset ref
-LatexCommand ref
-reference "sec:Section_label"
-plural "false"
-caps "false"
-noprefix "false"
-nolink "false"
-tuple "list"
-\end_inset
-```
-
-| Param         | Default        | Notes                                    |
-| ------------- | -------------- | ---------------------------------------- |
-| `reference` | *(required)* | Label name                               |
-| `plural`    | `"false"`    | "Section" → "Sections"                  |
-| `caps`      | `"false"`    | Capitalize prefix                        |
-| `noprefix`  | `"false"`    | Hide "Section"/"Figure" prefix           |
-| `nolink`    | `"false"`    | No hyperlink                             |
-| `tuple`     | `"list"`     | `"list"` or `"range"` for multi-refs |
-
-The `plural`/`caps`/`noprefix`/`nolink`/`tuple` params are LyX-internal — they affect GUI display, not LaTeX output.
-
-## Note Insets
-
-The `Note` inset family has three subtypes. All use `\begin_inset Note <subtype>`:
-
-| Syntax                          | LyX UI Name          | Output                                                         |
-| ------------------------------- | -------------------- | -------------------------------------------------------------- |
-| `\begin_inset Note Note`      | **LyX Note**   | Internal notes that will not appear in LaTex or PDF output     |
-| `\begin_inset Note Comment`   | **Comment**    | Internal notes that will appear in LaTex but not in PDF output |
-| `\begin_inset Note Greyedout` | **Greyed Out** | This note will appear in the output as text in a color         |
-
-You should skip these notes when reading the LyX document, and MUST NOT edit existing ones. You can add new notes to store metadata or comments.
-
-## More Examples
-
-Use official templates at `path/to/lyx/templates/**/*.lyx` and official help files at `path/to/lyx/Resources/doc/*.lyx` to understand more about LyX syntax.
+For raw inset syntax (citation params, cross-reference params, note inset subtypes), read [`SYNTAX.md`](SYNTAX.md). Load it when constructing `--raw-file` payloads or when you need exact parameter defaults for a citation or cross-reference inset.
