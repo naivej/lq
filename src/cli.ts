@@ -1070,6 +1070,9 @@ export async function runCli(args: string[]) {
       printError("MISSING_ARGS", "Usage: lq new <file> [--template <official-name-or-path>].");
     }
     const destinationArg = String(flags._[0]);
+    if (destinationArg.trim().length === 0) {
+      printError("MISSING_ARGS", "Usage: lq new <file> [--template <official-name-or-path>].");
+    }
     const destination = destinationArg.toLowerCase().endsWith(".lyx")
       ? destinationArg
       : `${destinationArg}.lyx`;
@@ -1118,20 +1121,19 @@ export async function runCli(args: string[]) {
         }
       } else {
         const personalPath = expandHomePath(requested);
+        const templateSuggestions = isExplicitPersonalTemplatePath(requested)
+          ? {}
+          : { availableTemplates: officialTemplates.map(t => ({ displayName: t.displayName, officialPath: t.rawPath })) };
         try {
           const stat = await Deno.stat(personalPath);
           if (!stat.isFile) {
-            printError("TEMPLATE_NOT_FOUND", `Template '${requested}' is not a file.`, {
-              availableTemplates: officialTemplates.map(t => ({ displayName: t.displayName, officialPath: t.rawPath })),
-            });
+            printError("TEMPLATE_NOT_FOUND", `Template '${requested}' is not a file.`, templateSuggestions);
           }
           content = await Deno.readTextFile(personalPath);
           source = "personal";
         } catch (e) {
           if (e instanceof Deno.errors.NotFound) {
-            printError("TEMPLATE_NOT_FOUND", `Could not find template '${requested}'.`, {
-              availableTemplates: officialTemplates.map(t => ({ displayName: t.displayName, officialPath: t.rawPath })),
-            });
+            printError("TEMPLATE_NOT_FOUND", `Could not find template '${requested}'.`, templateSuggestions);
           }
           printError("TEMPLATE_READ_ERROR", `Could not read template '${requested}': ${(e as Error).message}`);
         }

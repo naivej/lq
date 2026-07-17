@@ -10,7 +10,7 @@
  * Run from lq/ directory: deno test -A tests/cli_test.ts
  */
 
-import { assertEquals, assertStringIncludes, assertGreater, assertMatch } from "@std/assert";
+import { assertEquals, assertStringIncludes, assertGreater, assertMatch, assertRejects } from "@std/assert";
 import { parse } from "../src/parser.ts";
 import { serialize } from "../src/serializer.ts";
 import { runCliTest, runCliRaw, runCliWithEnv, runCliWithConfig, createTempFixture } from "./helpers.ts";
@@ -131,6 +131,17 @@ Deno.test("CLI - new lists official templates when none match", { timeout: 10000
   }
 });
 
+Deno.test("CLI - new omits official templates for missing explicit personal path", { timeout: 10000 }, async () => {
+  const result = await runCliTest([
+    "new",
+    `temp_new_missing_personal_${crypto.randomUUID()}.lyx`,
+    "--template",
+    `./missing_personal_template_${crypto.randomUUID()}.lyx`,
+  ]);
+  assertEquals(result.code, "TEMPLATE_NOT_FOUND");
+  assertEquals(result.availableTemplates, undefined);
+});
+
 Deno.test("CLI - new copies explicit personal template", { timeout: 10000 }, async () => {
   const personalTemplate = await Deno.makeTempFile({ suffix: ".lyx" });
   const destination = `temp_new_personal_${crypto.randomUUID()}.lyx`;
@@ -176,6 +187,11 @@ Deno.test("CLI - new refuses to overwrite an existing destination", { timeout: 1
 Deno.test("CLI - new rejects invalid arguments", { timeout: 10000 }, async () => {
   const extra = await runCliTest(["new", "first", "second"]);
   assertEquals(extra.code, "MISSING_ARGS");
+
+  const emptyDestination = ".lyx";
+  const empty = await runCliTest(["new", ""]);
+  assertEquals(empty.code, "MISSING_ARGS");
+  await assertRejects(() => Deno.stat(emptyDestination), Deno.errors.NotFound);
 
   const unknown = await runCliTest(["new", "document", "--unknown"]);
   assertEquals(unknown.code, "INVALID_FLAG");
