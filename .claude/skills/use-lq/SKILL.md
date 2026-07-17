@@ -1,11 +1,11 @@
 ---
 name: use-lq
-description: Use lq to parse, query, and mutate LyX (.lyx) documents. Use when the user wants to edit a .lyx file, read or query document structure, insert citations/cross-references/footnotes/labels, undo tracked changes, or navigate a LyX document's table of contents.
+description: Use lq to create, parse, query, and mutate LyX (.lyx) documents. Use when the user wants to create, read, or edit a .lyx file.
 allowed-tools: Bash(lq *)
 ---
 # User Manual
 
-`lq` is a standalone CLI tool designed to parse, query, and mutate LyX (`.lyx`) documents.
+`lq` is a standalone CLI tool designed to create,parse, query, and mutate LyX (`.lyx`) documents.
 
 At its core, `lq` operates on a simple lifecycle:
 
@@ -71,6 +71,13 @@ The query engine supports traversing the CST using CSS-like selector:
     - Insert wraps new content in `\change_inserted`
   - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`.
   - `--author-name <name>`: Set the author name used in tracked changes. Default: `"lq user"`.
+
+### Create a document
+
+- `lq new <file> [--template <official-name-or-path>]`
+  - Creates `<file>` in the current working directory; `.lyx` is appended when omitted.
+  - Without `--template`, creates an empty article document.
+  - `--template` accepts an official template name or a template path. Note: Copies only the selected `.lyx` file. Linked images, bibliography files, child documents, and other companion assets are not copied.
 
 ### Query
 

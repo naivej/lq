@@ -13,7 +13,7 @@ import { assertEquals, assertStringIncludes } from "@std/assert";
 import * as path from "@std/path";
 import { parse } from "../src/parser.ts";
 import { BlockNode, TextNode } from "../src/ast.ts";
-import { CliResult, runCliTest, runCliWithConfig, createTempFixture } from "./helpers.ts";
+import { runCliTest, runCliWithConfig, createTempFixture } from "./helpers.ts";
 
 Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
   const tempFile = await createTempFixture("temp_spacer_test.lyx");
@@ -227,7 +227,7 @@ Deno.test("Mutation Engine - Insert Split-After with trackChanges", { timeout: 1
   const tempFile = await createTempFixture("temp_split_tc.lyx");
   try {
     // split-after with trackChanges enabled — should NOT double-wrap
-    const result = await runCliWithConfig(
+    await runCliWithConfig(
       ["insert", tempFile, "layout[Title]", "split-after", "Tit", "--footnote", "Tracked split"],
       { trackChanges: true },
     );
@@ -279,7 +279,7 @@ Deno.test("Mutation Engine - Insert Split-After with --text", async () => {
 Deno.test("Mutation Engine - Insert Split-After with --text and trackChanges", { timeout: 10000 }, async () => {
   const tempFile = await createTempFixture("temp_split_text_tc.lyx");
   try {
-    const result = await runCliWithConfig(
+    await runCliWithConfig(
       ["insert", tempFile, "layout[Title]", "split-after", "Tit", "--text", "NEW"],
       { trackChanges: true },
     );

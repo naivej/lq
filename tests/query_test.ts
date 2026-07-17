@@ -140,7 +140,7 @@ Deno.test("Query Engine on LyX Document", async () => {
   assertEquals(stdNoFormula.length > 0, true);
 
   // All Standard layouts: those with Formula + those without should equal total
-  const stdWithFormula = query(ast, 'layout[Standard] inset[Formula]');
+  const _stdWithFormula = query(ast, 'layout[Standard] inset[Formula]');
   const allStd = query(ast, 'layout[Standard]');
   // Every Standard that has a Formula is excluded by :not()
   // So stdNoFormula + (unique std parents of stdWithFormula) <= allStd

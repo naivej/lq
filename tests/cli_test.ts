@@ -29,6 +29,102 @@ Deno.test("CLI - global help", { timeout: 10000 }, async () => {
   assertStringIncludes(stdout, "schema");
   assertStringIncludes(stdout, "insert");
   assertStringIncludes(stdout, "init");
+  assertStringIncludes(stdout, "new");
+});
+
+// ---------------------------------------------------------------------------
+// 1b. new command
+// ---------------------------------------------------------------------------
+Deno.test("CLI - new creates minimal article document", { timeout: 10000 }, async () => {
+  const destination = `temp_new_minimal_${crypto.randomUUID()}.lyx`;
+  try {
+    const result = await runCliTest(["new", destination]);
+    assertEquals(result.source, "minimal");
+    const text = await Deno.readTextFile(destination);
+    assertStringIncludes(text, "\\textclass article");
+    assertStringIncludes(text, "\\begin_layout Standard");
+  } finally {
+    try { await Deno.remove(destination); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - new resolves official GUI template name", { timeout: 10000 }, async () => {
+  const resources = await Deno.makeTempDir({ prefix: "lq_new_resources" });
+  const layoutsDir = `${resources}/layouts`;
+  const templatesDir = `${resources}/templates/Articles`;
+  const destination = `temp_new_official_${crypto.randomUUID()}.lyx`;
+  const rawName = "American_Astronomical_Society_%28AASTeX_v._6.3.1%29.lyx";
+  const templateText = "#LyX 2.5 created this file.\nOfficial template content.\n";
+  try {
+    await Deno.mkdir(layoutsDir, { recursive: true });
+    await Deno.mkdir(templatesDir, { recursive: true });
+    await Deno.writeTextFile(`${templatesDir}/${rawName}`, templateText);
+    const result = await runCliWithConfig(
+      ["new", destination, "--template", "American Astronomical Society (AASTeX v. 6.3.1)"],
+      { layoutsDir },
+    );
+    assertEquals(result.source, "official");
+    assertEquals(await Deno.readTextFile(destination), templateText);
+  } finally {
+    try { await Deno.remove(destination); } catch { /* ignore */ }
+    try { await Deno.remove(resources, { recursive: true }); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - new rejects ambiguous official template basename", { timeout: 10000 }, async () => {
+  const resources = await Deno.makeTempDir({ prefix: "lq_new_resources" });
+  const layoutsDir = `${resources}/layouts`;
+  try {
+    await Deno.mkdir(`${resources}/templates/Articles`, { recursive: true });
+    await Deno.mkdir(`${resources}/templates/Books`, { recursive: true });
+    await Deno.mkdir(layoutsDir, { recursive: true });
+    await Deno.writeTextFile(`${resources}/templates/Articles/Shared.lyx`, "article");
+    await Deno.writeTextFile(`${resources}/templates/Books/Shared.lyx`, "book");
+    const result = await runCliWithConfig(
+      ["new", `temp_new_ambiguous_${crypto.randomUUID()}.lyx`, "--template", "Shared"],
+      { layoutsDir },
+    );
+    assertEquals(result.code, "AMBIGUOUS_TEMPLATE");
+    assertEquals((result as unknown as { candidates: unknown[] }).candidates.length, 2);
+  } finally {
+    try { await Deno.remove(resources, { recursive: true }); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - new lists official templates when none match", { timeout: 10000 }, async () => {
+  const resources = await Deno.makeTempDir({ prefix: "lq_new_resources" });
+  const layoutsDir = `${resources}/layouts`;
+  try {
+    await Deno.mkdir(`${resources}/templates/Articles`, { recursive: true });
+    await Deno.mkdir(layoutsDir, { recursive: true });
+    await Deno.writeTextFile(`${resources}/templates/Articles/Example_%28Official%29.lyx`, "template");
+    const result = await runCliWithConfig(
+      ["new", `temp_new_missing_${crypto.randomUUID()}.lyx`, "--template", "Does not exist"],
+      { layoutsDir },
+    );
+    assertEquals(result.code, "TEMPLATE_NOT_FOUND");
+    assertEquals(result.availableTemplates?.[0], {
+      displayName: "Articles/Example (Official)",
+      officialPath: "Articles/Example_%28Official%29.lyx",
+    });
+  } finally {
+    try { await Deno.remove(resources, { recursive: true }); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - new copies explicit personal template", { timeout: 10000 }, async () => {
+  const personalTemplate = await Deno.makeTempFile({ suffix: ".lyx" });
+  const destination = `temp_new_personal_${crypto.randomUUID()}.lyx`;
+  const templateText = "#LyX personal template\n";
+  try {
+    await Deno.writeTextFile(personalTemplate, templateText);
+    const result = await runCliTest(["new", destination, "--template", personalTemplate]);
+    assertEquals(result.source, "personal");
+    assertEquals(await Deno.readTextFile(destination), templateText);
+  } finally {
+    try { await Deno.remove(personalTemplate); } catch { /* ignore */ }
+    try { await Deno.remove(destination); } catch { /* ignore */ }
+  }
 });
 
 // ---------------------------------------------------------------------------
@@ -101,7 +197,7 @@ Deno.test("CLI - bib search (no match)", { timeout: 10000 }, async () => {
 Deno.test("CLI - set command success", { timeout: 10000 }, async () => {
   const tempFile = await createTempFixture("temp_cli_set_test.lyx");
   try {
-    const result = await runCliTest(["set", tempFile, "layout[Title]", "Changed Title"]);
+    await runCliTest(["set", tempFile, "layout[Title]", "Changed Title"]);
 
     // Verify the text actually changed in the file
     const readResult = await runCliTest(["read", tempFile, "layout[Title]"]);
@@ -124,7 +220,7 @@ Deno.test("CLI - delete command success", { timeout: 10000 }, async () => {
     const totalBefore = Object.values(countBefore).reduce((a, b) => a + b, 0);
 
     // Delete the first Standard layout
-    const result = await runCliTest(["delete", tempFile, "layout[Standard]:first"]);
+    await runCliTest(["delete", tempFile, "layout[Standard]:first"]);
 
     // Verify count decreased by 1
     const after = await runCliTest(["read", "--count", tempFile, "layout[Standard]"]);
@@ -164,7 +260,7 @@ Deno.test("CLI - init success with fake home", { timeout: 10000 }, async () => {
   // Need a valid layouts dir — use the fixture directory (it's a real dir)
   const layoutsDir = await Deno.makeTempDir({ prefix: "lq_test_layouts" });
   try {
-    const result = await runCliWithEnv(
+    await runCliWithEnv(
       ["init", "--layouts-dir", layoutsDir],
       { HOME: tmpHome, USERPROFILE: tmpHome },
     );
@@ -188,7 +284,7 @@ Deno.test("CLI - init success with fake home", { timeout: 10000 }, async () => {
 Deno.test("CLI - set with trackChanges", { timeout: 10000 }, async () => {
   const tempFile = await createTempFixture("temp_tc_set.lyx");
   try {
-    const result = await runCliWithConfig(
+    await runCliWithConfig(
       ["set", tempFile, "layout[Title]", "Tracked Title"],
       { trackChanges: true },
     );
@@ -221,7 +317,7 @@ Deno.test("CLI - delete with trackChanges", { timeout: 10000 }, async () => {
     const totalBefore = Object.values(countBefore).reduce((a, b) => a + b, 0);
 
     // Delete the first Standard layout with trackChanges
-    const result = await runCliWithConfig(
+    await runCliWithConfig(
       ["delete", tempFile, "layout[Standard]:first"],
       { trackChanges: true },
     );
@@ -251,7 +347,7 @@ Deno.test("CLI - delete with trackChanges", { timeout: 10000 }, async () => {
 Deno.test("CLI - insert with trackChanges", { timeout: 10000 }, async () => {
   const tempFile = await createTempFixture("temp_tc_insert.lyx");
   try {
-    const result = await runCliWithConfig(
+    await runCliWithConfig(
       ["insert", tempFile, "layout[Title]", "after", "--layout", "Standard", "--text", "Tracked Insert"],
       { trackChanges: true },
     );
@@ -273,7 +369,7 @@ Deno.test("CLI - set --find basic substring replacement", { timeout: 10000 }, as
   const tempFile = await createTempFixture("temp_find_basic.lyx");
   try {
     // The fixture has text "Some writing in " in a Standard layout
-    const result = await runCliTest(["set", tempFile, "layout[Standard]:contains('writing')", "text", "--find", "writing"]);
+    await runCliTest(["set", tempFile, "layout[Standard]:contains('writing')", "text", "--find", "writing"]);
 
     // Verify via read: "writing" → "text" in the matched node
     const readResult = await runCliTest(["read", tempFile, "layout[Standard]:contains('text')"]);
@@ -298,7 +394,7 @@ Deno.test("CLI - set --find replaces all occurrences", { timeout: 10000 }, async
   const tempFile = await createTempFixture("temp_find_multi.lyx");
   try {
     // "paper" appears twice as text in a Standard layout
-    const result = await runCliTest(["set", tempFile, "layout[Standard]:contains('paper')", "article", "--find", "paper"]);
+    await runCliTest(["set", tempFile, "layout[Standard]:contains('paper')", "article", "--find", "paper"]);
 
     // Verify via read: all "paper" → "article" in the matched node's text
     const readResult = await runCliTest(["read", tempFile, "layout[Standard]:contains('article')"]);
@@ -346,7 +442,7 @@ Deno.test("CLI - set --find and --replace-all conflict", { timeout: 10000 }, asy
 Deno.test("CLI - set --find with trackChanges", { timeout: 10000 }, async () => {
   const tempFile = await createTempFixture("temp_find_tc.lyx");
   try {
-    const result = await runCliWithConfig(
+    await runCliWithConfig(
       ["set", tempFile, "layout[Standard]:contains('writing')", "text", "--find", "writing"],
       { trackChanges: true },
     );
@@ -374,7 +470,7 @@ Deno.test("CLI - set --find on property node", { timeout: 10000 }, async () => {
   const tempFile = await createTempFixture("temp_find_prop.lyx");
   try {
     // The fixture has \language british (and \quotes_style british, but we target language)
-    const result = await runCliTest(["set", tempFile, "property[language]", "english", "--find", "british"]);
+    await runCliTest(["set", tempFile, "property[language]", "english", "--find", "british"]);
 
     // Verify the specific property changed
     const readResult = await runCliTest(["read", tempFile, "property[language]"]);
@@ -464,18 +560,22 @@ Deno.test("CLI - dump --toc on Beamer textclass", { timeout: 10000 }, async () =
 });
 
 // ---------------------------------------------------------------------------
-// 26. T5: init --refresh save-reload without LyX running — warns gracefully
+// 26. T5: init --refresh save-reload succeeds regardless of LyXServer state
 // ---------------------------------------------------------------------------
-Deno.test("CLI - init --refresh save-reload without LyX warns", { timeout: 10000 }, async () => {
-  // runCliTest uses a fake home; LyX won't be running.
-  // The init command should succeed with a warning about LyXServer.
-  const result = await runCliTest(["init", "--refresh", "save-reload"]);
-  // Should not crash; warnings field should mention LyXServer unavailability
-  if (result.warnings) {
-    assertStringIncludes(
-      JSON.stringify(result.warnings).toLowerCase(),
-      "lyx",
+Deno.test("CLI - init --refresh save-reload succeeds", { timeout: 10000 }, async () => {
+  // Use a dedicated home: changing refresh here must not affect later tests
+  // that share runCliTest's safe refresh=none configuration.
+  const tmpHome = await Deno.makeTempDir({ prefix: "lq_test_refresh_home" });
+  const layoutsDir = await Deno.makeTempDir({ prefix: "lq_test_refresh_layouts" });
+  try {
+    const result = await runCliWithEnv(
+      ["init", "--layouts-dir", layoutsDir, "--refresh", "save-reload"],
+      { HOME: tmpHome, USERPROFILE: tmpHome },
     );
+    assertEquals(result.refresh, "save-reload");
+  } finally {
+    try { await Deno.remove(tmpHome, { recursive: true }); } catch { /* ignore */ }
+    try { await Deno.remove(layoutsDir, { recursive: true }); } catch { /* ignore */ }
   }
 });
 

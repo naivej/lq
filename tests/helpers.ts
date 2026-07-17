@@ -26,6 +26,10 @@ export interface CliResult {
   text?: string;
   data?: unknown;
   warnings?: string[];
+  source?: "minimal" | "official" | "personal";
+  candidates?: unknown[];
+  availableTemplates?: Array<{ displayName: string; officialPath: string }>;
+  refresh?: string;
 }
 
 /**
@@ -150,7 +154,7 @@ export async function runCliWithEnv(args: string[], env: Record<string, string>)
  */
 export async function runCliWithConfig(
   args: string[],
-  overrides: Partial<{ refresh: string; trackChanges: boolean }>,
+  overrides: Partial<{ refresh: string; trackChanges: boolean; layoutsDir: string }>,
 ): Promise<CliResult> {
   const tmp = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";
   const key = JSON.stringify(overrides);

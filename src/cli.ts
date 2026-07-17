@@ -30,6 +30,7 @@ Usage:
 
 Commands:
   init      Initialize the user configuration file.
+  new       Create a new LyX document, optionally from a template.
   schema    Return a list of all semantically valid layouts.
   dump      Output the document structure.
   read      Output matching nodes and text content.
@@ -159,6 +160,25 @@ Options:
   --max-cache-entries <n>  Set the maximum number of file caches kept in ~/.lq/cache/.
                            Default: 50.`,
 
+  new: `lq new - Create a new LyX document.
+
+Usage:
+  lq new <file> [--template <official-name-or-path>]
+
+Arguments:
+  <file>      Destination file. The .lyx suffix is added if omitted.
+
+Options:
+  --template <name-or-path>
+              Use an official LyX template or personal .lyx template. Official
+              templates accept their GUI display name (for example,
+              "American Astronomical Society (AASTeX v. 6.3.1)") or their
+              raw relative path. A display basename must be unique.
+
+Without --template, creates a minimal article document with an empty Standard layout.
+Templates copy only the selected .lyx file; referenced images, bibliographies, and
+child documents are not copied.`,
+
   schema: `lq schema - Return all semantically valid layouts across 6 categories:
   documentLayouts      Styles valid for the document class (e.g. Section, Standard).
   insetLayouts         Layouts valid inside insets (e.g. Plain Layout).
@@ -227,6 +247,30 @@ interface UserConfig {
   trackChanges?: boolean;
   maxCacheEntries?: number;
   authorName?: string;
+}
+
+const MINIMAL_ARTICLE_DOCUMENT = `#LyX 2.5 created this file. For more info see https://www.lyx.org/
+\\lyxformat 643
+\\begin_document
+\\begin_header
+\\textclass article
+\\end_header
+
+\\begin_body
+
+\\begin_layout Standard
+
+\\end_layout
+
+\\end_body
+\\end_document
+`;
+
+interface OfficialTemplate {
+  rawPath: string;
+  displayName: string;
+  displayBasename: string;
+  filePath: string;
 }
 
 async function loadUserConfig(): Promise<UserConfig> {
@@ -343,6 +387,76 @@ async function getDefaultLayoutsDir(): Promise<string> {
   }
 }
 
+function templateDisplayName(rawPath: string): string {
+  const withoutExtension = rawPath.replace(/\.lyx$/i, "");
+  try {
+    return decodeURIComponent(withoutExtension).replaceAll("_", " ");
+  } catch {
+    return withoutExtension.replaceAll("_", " ");
+  }
+}
+
+function normalizeTemplateName(name: string): string {
+  const normalized = name.replaceAll("\\", "/").replace(/^\.\//, "").replace(/\.lyx$/i, "");
+  return Deno.build.os === "windows" ? normalized.toLowerCase() : normalized;
+}
+
+async function listOfficialTemplates(templatesDir: string): Promise<OfficialTemplate[]> {
+  const templates: OfficialTemplate[] = [];
+  try {
+    for await (const entry of Deno.readDir(templatesDir)) {
+      if (!entry.isFile || !entry.name.toLowerCase().endsWith(".lyx")) continue;
+      const filePath = path.join(templatesDir, entry.name);
+      const rawPath = entry.name;
+      const displayName = templateDisplayName(rawPath);
+      templates.push({ rawPath, displayName, displayBasename: path.basename(displayName), filePath });
+    }
+  } catch {
+    return [];
+  }
+
+  // readDir is recursive only when traversed explicitly.
+  const dirs: string[] = [];
+  try {
+    for await (const entry of Deno.readDir(templatesDir)) {
+      if (entry.isDirectory) dirs.push(entry.name);
+    }
+  } catch {
+    return templates;
+  }
+  for (const dir of dirs) {
+    const nested = await listOfficialTemplates(path.join(templatesDir, dir));
+    for (const template of nested) {
+      const rawPath = `${dir}/${template.rawPath}`;
+      const displayName = `${templateDisplayName(dir)}/${template.displayName}`;
+      templates.push({
+        rawPath,
+        displayName,
+        displayBasename: template.displayBasename,
+        filePath: template.filePath,
+      });
+    }
+  }
+  return templates.sort((a, b) => a.displayName.localeCompare(b.displayName));
+}
+
+async function getTemplatesDir(): Promise<string> {
+  const config = await loadUserConfig();
+  const layoutsDir = config.layoutsDir || await getDefaultLayoutsDir();
+  return path.join(path.dirname(layoutsDir), "templates");
+}
+
+function isExplicitPersonalTemplatePath(value: string): boolean {
+  return path.isAbsolute(value) || value.startsWith("./") || value.startsWith(".\\") ||
+    value.startsWith("../") || value.startsWith("..\\") || value.startsWith("~");
+}
+
+function expandHomePath(value: string): string {
+  if (value !== "~" && !value.startsWith("~/") && !value.startsWith("~\\")) return value;
+  const home = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+  return home ? path.join(home, value.slice(2)) : value;
+}
+
 // Warnings accumulator — all warnings go to stdout JSON, never stderr.
 // Each printJson call flushes and clears the accumulator.
 const _warnings: string[] = [];
@@ -363,8 +477,8 @@ function printJson(data: unknown) {
   console.log(JSON.stringify(obj, null, 2));
 }
 
-function printError(code: string, message: string): never {
-  printJson({ code, message });
+function printError(code: string, message: string, details: Record<string, unknown> = {}): never {
+  printJson({ code, message, ...details });
   Deno.exit(1);
 }
 
@@ -940,6 +1054,92 @@ export async function runCli(args: string[]) {
     } catch (e: Error | unknown) {
       printError("WRITE_ERROR", `Failed to write config file: ${(e as Error).message}`);
     }
+    return;
+  }
+
+  if (commandArg === "new") {
+    const flags = parseArgs(cleanArgs.slice(1), { string: ["template"] });
+    if (flags._.length !== 1) {
+      printError("MISSING_ARGS", "Usage: lq new <file> [--template <official-name-or-path>].");
+    }
+    const destinationArg = String(flags._[0]);
+    const destination = destinationArg.toLowerCase().endsWith(".lyx")
+      ? destinationArg
+      : `${destinationArg}.lyx`;
+    try {
+      await Deno.stat(destination);
+      printError("FILE_EXISTS", `Refusing to overwrite existing file: ${destination}`);
+    } catch (e) {
+      if (!(e instanceof Deno.errors.NotFound)) {
+        printError("WRITE_ERROR", `Could not inspect destination '${destination}': ${(e as Error).message}`);
+      }
+    }
+
+    const requestedTemplate = flags.template;
+    let source: "minimal" | "official" | "personal" = "minimal";
+    let content = MINIMAL_ARTICLE_DOCUMENT;
+    let template: OfficialTemplate | undefined;
+
+    if (requestedTemplate !== undefined) {
+      const templatesDir = await getTemplatesDir();
+      const officialTemplates = await listOfficialTemplates(templatesDir);
+      const requested = String(requestedTemplate);
+      if (!isExplicitPersonalTemplatePath(requested)) {
+        const normalized = normalizeTemplateName(requested);
+        template = officialTemplates.find(t => normalizeTemplateName(t.rawPath) === normalized) ||
+          officialTemplates.find(t => normalizeTemplateName(t.displayName) === normalized);
+        if (!template) {
+          const matches = officialTemplates.filter(t => normalizeTemplateName(t.displayBasename) === normalized);
+          if (matches.length === 1) {
+            template = matches[0];
+          } else if (matches.length > 1) {
+            printError(
+              "AMBIGUOUS_TEMPLATE",
+              `Template '${requested}' matches multiple official templates. Use a display-relative name or raw relative path.`,
+              { candidates: matches.map(t => ({ displayName: t.displayName, officialPath: t.rawPath })) },
+            );
+          }
+        }
+      }
+
+      if (template) {
+        try {
+          content = await Deno.readTextFile(template.filePath);
+          source = "official";
+        } catch (e) {
+          printError("TEMPLATE_READ_ERROR", `Could not read official template '${template.rawPath}': ${(e as Error).message}`);
+        }
+      } else {
+        const personalPath = expandHomePath(requested);
+        try {
+          const stat = await Deno.stat(personalPath);
+          if (!stat.isFile) {
+            printError("TEMPLATE_NOT_FOUND", `Template '${requested}' is not a file.`, {
+              availableTemplates: officialTemplates.map(t => ({ displayName: t.displayName, officialPath: t.rawPath })),
+            });
+          }
+          content = await Deno.readTextFile(personalPath);
+          source = "personal";
+        } catch (e) {
+          if (e instanceof Deno.errors.NotFound) {
+            printError("TEMPLATE_NOT_FOUND", `Could not find template '${requested}'.`, {
+              availableTemplates: officialTemplates.map(t => ({ displayName: t.displayName, officialPath: t.rawPath })),
+            });
+          }
+          printError("TEMPLATE_READ_ERROR", `Could not read template '${requested}': ${(e as Error).message}`);
+        }
+      }
+    }
+
+    try {
+      await Deno.mkdir(path.dirname(path.resolve(destination)), { recursive: true });
+      await Deno.writeTextFile(destination, content);
+    } catch (e) {
+      printError("WRITE_ERROR", `Could not create '${destination}': ${(e as Error).message}`);
+    }
+    printJson({ file: path.resolve(destination), source, ...(template ? {
+      template: { displayName: template.displayName, officialPath: template.rawPath },
+    } : {}) });
     return;
   }
 
