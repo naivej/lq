@@ -37,7 +37,7 @@ When `lq` mutates document structure with the `insert` command, it enforces sema
 
 - **Core CST guards**: `document`, `body`, and `header` cannot be mutated directly.
 - **Malformed `--raw-file` syntax** is rejected (doesn't parse as valid LyX).
-- **Unknown inset types in `--raw-file`** produce a warning to stderr but don't block the insertion. This uses a hardcoded registry of known LyX engine inset types (sourced from LyX's `InsetCode.h`; There is no inset at the textclass level) and matches LyX's own permissive read path.
+- **Unknown inset types in `--raw-file`** produce a warning in the JSON response's `warnings` field but don't block the insertion. This uses a hardcoded registry of known LyX engine inset types (sourced from LyX's `InsetCode.h`; There is no inset at the textclass level) and matches LyX's own permissive read path.
 
 **Checks that require `.layout` files** (enabled when `~/.lq/config.json` has a `layoutsDir`, silently skipped otherwise):
 

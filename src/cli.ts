@@ -1165,7 +1165,7 @@ export async function runCli(args: string[]) {
   const [command, filePath, selector, ...restArgs] = positionalArgs;
   
   if (command !== "init" && !filePath.endsWith(".lyx")) {
-    printError("INVALID_EXTENSION", "Target file must have a .lyx extension.");
+    printError("INVALID_EXTENSION", `Target file '${filePath}' must have a .lyx extension. Select the LyX document to edit.`);
   }
 
   // Load user config (shared by all commands: cache sizing, refresh, track-changes)
@@ -1277,7 +1277,7 @@ export async function runCli(args: string[]) {
         printError("INVALID_SELECTOR", (e as Error).message);
       }
       if (roots.length === 0) {
-        printError("NO_MATCH", "Selector matched no nodes to dump.");
+        printError("NO_MATCH", `Selector matched no nodes to dump. Run 'lq read ${filePath} "${dumpSelector}" --count' to verify or refine the selector.`);
       }
       useFullAst = false;
     }
@@ -1332,7 +1332,7 @@ export async function runCli(args: string[]) {
     const bibFlags = parseArgs(bibArgs, { string: ["search"] });
     const bibtexNodes = query(ast, "inset[CommandInset bibtex]");
     if (bibtexNodes.length === 0) {
-      printError("NO_BIBLIO", "No bibliography files found in the document.");
+      printError("NO_BIBLIO", "No bibliography inset was found. Inspect the document with 'lq read <file> \"inset[CommandInset bibtex]\"' or add a bibliography in LyX, then rerun 'lq bib'.");
     }
 
     const citations: Citation[] = [];
@@ -1376,7 +1376,7 @@ export async function runCli(args: string[]) {
     }
 
     if (bibFileCount === 0) {
-      printError("NO_BIBFILE", "No .bib files referenced in the document. The bib command only processes .bib bibliography files.");
+      printError("NO_BIBFILE", "No .bib files are referenced by the bibliography inset. Add a .bib file in LyX, then rerun 'lq bib'.");
     }
     
     // Deduplicate citations by key
@@ -1429,7 +1429,7 @@ export async function runCli(args: string[]) {
   }
 
   if (!selector) {
-    printError("MISSING_SELECTOR", "A CSS selector is required for this command.");
+    printError("MISSING_SELECTOR", "A CSS selector is required for this command. Run 'lq selector --help' for selector syntax.");
   }
 
   let nodes: Node[] = [];
@@ -1535,7 +1535,7 @@ export async function runCli(args: string[]) {
     const findStr: string | undefined = typeof flags["find"] === "string" ? flags["find"] : undefined;
 
     if (nodes.length === 0) {
-      printError("NO_MATCH", "Selector matched no nodes to set.");
+      printError("NO_MATCH", `Selector matched no nodes to set. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
     }
 
     // --find and --replace-all are mutually exclusive
@@ -1675,7 +1675,7 @@ export async function runCli(args: string[]) {
     // After loop: check if --find had any matches
     if (findStr !== undefined) {
       if (totalFindMatches === 0) {
-        printError("NO_MATCH", `--find '${findStr}' matched no occurrences within the targeted nodes.`);
+        printError("NO_MATCH", `--find '${findStr}' matched no occurrences within the targeted nodes. Run 'lq read ${filePath} "${selector}" --text-only' to inspect their text.`);
       }
       const plural = totalFindMatches === 1 ? "" : "s";
       const nodeList = Object.entries(findPerNode)
@@ -1700,7 +1700,7 @@ export async function runCli(args: string[]) {
 
   if (command === "delete") {
     if (nodes.length === 0) {
-      printError("NO_MATCH", "Selector matched no nodes to delete.");
+      printError("NO_MATCH", `Selector matched no nodes to delete. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
     }
 
     if (trackChanges) {
@@ -1762,7 +1762,7 @@ export async function runCli(args: string[]) {
 
   if (command === "insert") {
     if (nodes.length === 0) {
-      printError("NO_MATCH", "Selector matched no nodes to insert around.");
+      printError("NO_MATCH", `Selector matched no nodes to insert around. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
     }
 
     const position = restArgs[0];
@@ -2224,7 +2224,7 @@ export async function runCli(args: string[]) {
 
   if (command === "undo") {
     if (nodes.length === 0) {
-      printError("NO_MATCH", "Selector matched no nodes to undo.");
+      printError("NO_MATCH", `Selector matched no nodes to undo. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
     }
     const substring: string | undefined = restArgs.length > 0 ? restArgs.join(" ") : undefined;
 
@@ -2347,5 +2347,5 @@ export async function runCli(args: string[]) {
     return;
   }
 
-  printError("UNKNOWN_COMMAND", `Unknown command: ${command}`);
+  printError("UNKNOWN_COMMAND", `Unknown command: ${command}. Run 'lq --help' to list available commands.`);
 }

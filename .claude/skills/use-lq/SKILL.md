@@ -22,7 +22,7 @@ To effectively use the query engine, Users need to understand how LyX syntax map
 - **Inset Nodes**: Structures like `\begin_inset Formula` map to an `inset` tag with a `Formula` argument. Users select them using `inset[Formula]`.
 - **Property Nodes**: Single-line settings like `\textclass article` map to property nodes.
 - **Text Nodes**: The actual text content inside layouts and insets.
-- **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child.
+- **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child. Use a sibling range such as `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` to retrieve paragraphs following a heading.
 
 ## Query Engine
 

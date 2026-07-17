@@ -217,6 +217,7 @@ Deno.test("CLI - per-command help (read)", { timeout: 10000 }, async () => {
 Deno.test("CLI - reject non-.lyx files", { timeout: 10000 }, async () => {
   const result = await runCliTest(["read", "not-a-lyx.txt", "layout"]);
   assertEquals(result.code, "INVALID_EXTENSION");
+  assertStringIncludes(result.message!, "Select the LyX document");
 });
 
 // ---------------------------------------------------------------------------
@@ -225,6 +226,18 @@ Deno.test("CLI - reject non-.lyx files", { timeout: 10000 }, async () => {
 Deno.test("CLI - missing arguments", { timeout: 10000 }, async () => {
   const result = await runCliTest(["read"]);
   assertEquals(result.code, "MISSING_ARGS");
+});
+
+Deno.test("CLI - missing selector recommends selector help", { timeout: 10000 }, async () => {
+  const result = await runCliTest(["read", FIXTURE]);
+  assertEquals(result.code, "MISSING_SELECTOR");
+  assertStringIncludes(result.message!, "lq selector --help");
+});
+
+Deno.test("CLI - unknown command recommends global help", { timeout: 10000 }, async () => {
+  const result = await runCliTest(["unknown", FIXTURE, "layout"]);
+  assertEquals(result.code, "UNKNOWN_COMMAND");
+  assertStringIncludes(result.message!, "lq --help");
 });
 
 // ---------------------------------------------------------------------------
@@ -491,6 +504,7 @@ Deno.test("CLI - set --find no match errors", { timeout: 10000 }, async () => {
   try {
     const result = await runCliTest(["set", tempFile, "layout[Standard]:first", "replacement", "--find", "nonexistent_xyz"]);
     assertEquals(result.code, "NO_MATCH");
+    assertStringIncludes(result.message!, "--text-only");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -602,6 +616,7 @@ Deno.test("CLI - bib on file without bibliography", { timeout: 10000 }, async ()
     );
     const result = await runCliTest(["bib", tempFile]);
     assertEquals(result.code, "NO_BIBLIO");
+    assertStringIncludes(result.message!, "inset[CommandInset bibtex]");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
