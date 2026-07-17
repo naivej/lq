@@ -437,7 +437,7 @@ async function listOfficialTemplates(templatesDir: string): Promise<OfficialTemp
       });
     }
   }
-  return templates.sort((a, b) => a.displayName.localeCompare(b.displayName));
+  return templates.sort((a, b) => a.displayName < b.displayName ? -1 : a.displayName > b.displayName ? 1 : 0);
 }
 
 async function getTemplatesDir(): Promise<string> {
@@ -1059,6 +1059,13 @@ export async function runCli(args: string[]) {
 
   if (commandArg === "new") {
     const flags = parseArgs(cleanArgs.slice(1), { string: ["template"] });
+    const unknownFlags = Object.keys(flags).filter(key => key !== "_" && key !== "template");
+    if (unknownFlags.length > 0) {
+      printError("INVALID_FLAG", `Unknown option: --${unknownFlags[0]}.`);
+    }
+    if (cleanArgs.includes("--template") && flags.template === "") {
+      printError("INVALID_FLAG", "--template requires a value.");
+    }
     if (flags._.length !== 1) {
       printError("MISSING_ARGS", "Usage: lq new <file> [--template <official-name-or-path>].");
     }

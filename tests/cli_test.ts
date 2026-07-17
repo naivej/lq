@@ -11,6 +11,8 @@
  */
 
 import { assertEquals, assertStringIncludes, assertGreater, assertMatch } from "@std/assert";
+import { parse } from "../src/parser.ts";
+import { serialize } from "../src/serializer.ts";
 import { runCliTest, runCliRaw, runCliWithEnv, runCliWithConfig, createTempFixture } from "./helpers.ts";
 
 const FIXTURE = "tests/fixtures/my_template.lyx";
@@ -36,15 +38,18 @@ Deno.test("CLI - global help", { timeout: 10000 }, async () => {
 // 1b. new command
 // ---------------------------------------------------------------------------
 Deno.test("CLI - new creates minimal article document", { timeout: 10000 }, async () => {
-  const destination = `temp_new_minimal_${crypto.randomUUID()}.lyx`;
+  const destination = `temp_new_minimal_${crypto.randomUUID()}`;
+  const destinationPath = `${destination}.lyx`;
   try {
     const result = await runCliTest(["new", destination]);
     assertEquals(result.source, "minimal");
-    const text = await Deno.readTextFile(destination);
+    const text = await Deno.readTextFile(destinationPath);
+    assertStringIncludes(text, "\\lyxformat 643");
     assertStringIncludes(text, "\\textclass article");
     assertStringIncludes(text, "\\begin_layout Standard");
+    assertEquals(serialize(parse(text)), text);
   } finally {
-    try { await Deno.remove(destination); } catch { /* ignore */ }
+    try { await Deno.remove(destinationPath); } catch { /* ignore */ }
   }
 });
 
@@ -53,6 +58,7 @@ Deno.test("CLI - new resolves official GUI template name", { timeout: 10000 }, a
   const layoutsDir = `${resources}/layouts`;
   const templatesDir = `${resources}/templates/Articles`;
   const destination = `temp_new_official_${crypto.randomUUID()}.lyx`;
+  const rawDestination = `temp_new_official_raw_${crypto.randomUUID()}.lyx`;
   const rawName = "American_Astronomical_Society_%28AASTeX_v._6.3.1%29.lyx";
   const templateText = "#LyX 2.5 created this file.\nOfficial template content.\n";
   try {
@@ -65,8 +71,16 @@ Deno.test("CLI - new resolves official GUI template name", { timeout: 10000 }, a
     );
     assertEquals(result.source, "official");
     assertEquals(await Deno.readTextFile(destination), templateText);
+
+    const rawResult = await runCliWithConfig(
+      ["new", rawDestination, "--template", `Articles/${rawName}`],
+      { layoutsDir },
+    );
+    assertEquals(rawResult.source, "official");
+    assertEquals(await Deno.readTextFile(rawDestination), templateText);
   } finally {
     try { await Deno.remove(destination); } catch { /* ignore */ }
+    try { await Deno.remove(rawDestination); } catch { /* ignore */ }
     try { await Deno.remove(resources, { recursive: true }); } catch { /* ignore */ }
   }
 });
@@ -97,6 +111,7 @@ Deno.test("CLI - new lists official templates when none match", { timeout: 10000
   try {
     await Deno.mkdir(`${resources}/templates/Articles`, { recursive: true });
     await Deno.mkdir(layoutsDir, { recursive: true });
+    await Deno.writeTextFile(`${resources}/templates/Articles/Zebra.lyx`, "zebra");
     await Deno.writeTextFile(`${resources}/templates/Articles/Example_%28Official%29.lyx`, "template");
     const result = await runCliWithConfig(
       ["new", `temp_new_missing_${crypto.randomUUID()}.lyx`, "--template", "Does not exist"],
@@ -106,6 +121,10 @@ Deno.test("CLI - new lists official templates when none match", { timeout: 10000
     assertEquals(result.availableTemplates?.[0], {
       displayName: "Articles/Example (Official)",
       officialPath: "Articles/Example_%28Official%29.lyx",
+    });
+    assertEquals(result.availableTemplates?.[1], {
+      displayName: "Articles/Zebra",
+      officialPath: "Articles/Zebra.lyx",
     });
   } finally {
     try { await Deno.remove(resources, { recursive: true }); } catch { /* ignore */ }
@@ -125,6 +144,44 @@ Deno.test("CLI - new copies explicit personal template", { timeout: 10000 }, asy
     try { await Deno.remove(personalTemplate); } catch { /* ignore */ }
     try { await Deno.remove(destination); } catch { /* ignore */ }
   }
+});
+
+Deno.test("CLI - new copies personal template relative to the working directory", { timeout: 10000 }, async () => {
+  const personalTemplate = `temp_new_personal_source_${crypto.randomUUID()}.lyx`;
+  const destination = `temp_new_personal_relative_${crypto.randomUUID()}.lyx`;
+  const templateText = "#LyX relative personal template\n";
+  try {
+    await Deno.writeTextFile(personalTemplate, templateText);
+    const result = await runCliTest(["new", destination, "--template", personalTemplate]);
+    assertEquals(result.source, "personal");
+    assertEquals(await Deno.readTextFile(destination), templateText);
+  } finally {
+    try { await Deno.remove(personalTemplate); } catch { /* ignore */ }
+    try { await Deno.remove(destination); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - new refuses to overwrite an existing destination", { timeout: 10000 }, async () => {
+  const destination = `temp_new_existing_${crypto.randomUUID()}.lyx`;
+  try {
+    await Deno.writeTextFile(destination, "original");
+    const result = await runCliTest(["new", destination]);
+    assertEquals(result.code, "FILE_EXISTS");
+    assertEquals(await Deno.readTextFile(destination), "original");
+  } finally {
+    try { await Deno.remove(destination); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - new rejects invalid arguments", { timeout: 10000 }, async () => {
+  const extra = await runCliTest(["new", "first", "second"]);
+  assertEquals(extra.code, "MISSING_ARGS");
+
+  const unknown = await runCliTest(["new", "document", "--unknown"]);
+  assertEquals(unknown.code, "INVALID_FLAG");
+
+  const missingValue = await runCliTest(["new", "document", "--template"]);
+  assertEquals(missingValue.code, "INVALID_FLAG");
 });
 
 // ---------------------------------------------------------------------------
