@@ -32,6 +32,8 @@ Deno.test("CLI - global help", { timeout: 10000 }, async () => {
   assertStringIncludes(stdout, "insert");
   assertStringIncludes(stdout, "init");
   assertStringIncludes(stdout, "new");
+  assertStringIncludes(stdout, "Commands return JSON. Help text is plain text.");
+  assertStringIncludes(stdout, "mark them deleted when tracking is enabled");
 });
 
 // ---------------------------------------------------------------------------
@@ -209,6 +211,11 @@ Deno.test("CLI - per-command help (read)", { timeout: 10000 }, async () => {
   assertStringIncludes(stdout, "--count");
   assertStringIncludes(stdout, "<file>");
   assertStringIncludes(stdout, "<selector>");
+});
+
+Deno.test("CLI - per-command help (insert)", { timeout: 10000 }, async () => {
+  const { stdout } = await runCliRaw(["insert", "--help"]);
+  assertStringIncludes(stdout, "split-after <text> [options]");
 });
 
 // ---------------------------------------------------------------------------

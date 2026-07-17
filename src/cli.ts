@@ -36,11 +36,11 @@ Commands:
   read      Output matching nodes and text content.
   bib       Extract available citation keys from linked bibliography files.
   set       Overwrite the targeted nodes with new text content.
-  delete    Safely delete the targeted nodes from the LyX file.
-  insert    Insert new blocks or properties before/after/prepend/append.
+  delete    Delete targeted nodes or mark them deleted when tracking is enabled.
+  insert    Insert new blocks or properties relative to matched nodes.
   undo      Revert tracked changes (change_deleted/change_inserted) in matched nodes.
 
-All output is JSON.
+Commands return JSON. Help text is plain text.
 Run 'lq <command> --help' for more information on a specific command.`,
 
   selector: `lq selector - CSS-like selector to traverse the LyX document.
@@ -126,7 +126,7 @@ Options to change the default behaviour:
   --replace-all        Replace ALL children of the target block, not just text nodes.
                        Mutually exclusive with --find.`,
 
-  delete: `lq delete - Delete the targeted nodes.
+  delete: `lq delete - Delete targeted nodes or mark them deleted when tracking is enabled.
 
 Usage:
   lq delete <file> <selector>
