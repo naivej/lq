@@ -2,7 +2,7 @@
   <picture style="display:inline-block; margin-right:12px;">
     <source media="(prefers-color-scheme: dark)" srcset="icon.svg">
     <source media="(prefers-color-scheme: light)" srcset="icon-light.svg">
-    <img src="icon-light.svg" alt="lq — a companion for LyX" width="48" height="48" style="vertical-align:-6px; display:inline-block;">
+    <img src="icon-light.svg" alt="lq — a companion for LyX" width="48" height="48" style="vertical-align:-10px; display:inline-block;">
   </picture>
   lq - A CLI Tool for Editing LyX documents
 </h1>
