@@ -1,8 +1,8 @@
 <h1 align="center">
   <picture style="display:inline-block; margin-right:12px;">
-    <source media="(prefers-color-scheme: dark)" srcset="icon.svg">
-    <source media="(prefers-color-scheme: light)" srcset="icon-light.svg">
-    <img src="icon-light.svg" alt="lq - a CLI tool for LyX" width="48" height="48" style="vertical-align:-10px; display:inline-block;">
+    <source media="(prefers-color-scheme: dark)" srcset="brand/icon.svg">
+    <source media="(prefers-color-scheme: light)" srcset="brand/icon-light.svg">
+    <img src="brand/icon-light.svg" alt="lq - a CLI tool for LyX" width="48" height="48" style="vertical-align:-10px; display:inline-block;">
   </picture>
   lq - a CLI tool for LyX
 </h1>
