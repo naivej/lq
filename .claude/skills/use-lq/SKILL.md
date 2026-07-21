@@ -5,7 +5,7 @@ allowed-tools: Bash(lq *)
 ---
 # User Manual
 
-`lq` is a standalone CLI tool designed to create,parse, query, and mutate LyX (`.lyx`) documents.
+`lq` is a standalone CLI tool designed to create, parse, query, and mutate LyX (`.lyx`) documents.
 
 At its core, `lq` operates on a simple lifecycle:
 
