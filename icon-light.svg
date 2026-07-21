@@ -1,11 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img" aria-label="lq">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 134" width="128" height="128" role="img" aria-label="lq">
   <title>lq — a CLI companion for LyX</title>
-  <rect width="128" height="128" rx="23" fill="#f7f4ec"/>
-  <rect x="0.5" y="0.5" width="127" height="127" rx="22.5" fill="none" stroke="#d0d7de" stroke-width="1"/>
-  <path d="M 24 48 L 44 64" fill="none" stroke="#c2410c" stroke-width="6" stroke-linecap="round"/>
-  <path d="M 44 64 L 24 80" fill="none" stroke="#e5a418" stroke-width="6" stroke-linecap="round"/>
-  <text x="54" y="74" font-family="'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', monospace" font-weight="700" font-size="34" fill="#0d1117">lq</text>
-  <rect x="96" y="50" width="16" height="26" fill="#1f6feb">
-    <animate attributeName="opacity" values="1;1;0;0" dur="1s" repeatCount="indefinite"/>
-  </rect>
+  <g transform="translate(0,6)">
+    <rect width="128" height="128" rx="23" fill="#f7f4ec"/>
+    <rect x="0.5" y="0.5" width="127" height="127" rx="22.5" fill="none" stroke="#d0d7de" stroke-width="1"/>
+    <path d="M 24 48 L 44 64" fill="none" stroke="#c2410c" stroke-width="6" stroke-linecap="round"/>
+    <path d="M 44 64 L 24 80" fill="none" stroke="#e5a418" stroke-width="6" stroke-linecap="round"/>
+    <text x="54" y="74" font-family="'JetBrains Mono', ui-monospace, 'SF Mono', 'Menlo', monospace" font-weight="700" font-size="34" fill="#0d1117">lq</text>
+    <rect x="96" y="50" width="16" height="26" fill="#1f6feb">
+      <animate attributeName="opacity" values="1;1;0;0" dur="1s" repeatCount="indefinite"/>
+    </rect>
+  </g>
 </svg>
