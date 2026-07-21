@@ -77,7 +77,7 @@ The query engine supports traversing the CST using CSS-like selector:
 - `lq new <file> [--template <official-name-or-path>]`
   - Creates `<file>` in the current working directory; `.lyx` is appended when omitted.
   - Without `--template`, creates an empty article document.
-  - `--template` accepts an official template name or a template path. Note: Copies only the selected `.lyx` file. Linked images, bibliography files, child documents, and other companion assets are not copied.
+  - `--template` accepts an official template name or a template path. Note: images, bibliography files, child documents, and other companion assets linked in the template are not created.
 
 ### Query
 
