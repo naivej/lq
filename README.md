@@ -1,4 +1,10 @@
-# lq - A CLI Tool for Editing LyX documents
+<h1 align="center">
+  <picture style="display:inline-block; vertical-align:middle; margin-right:12px;">
+    <source media="(prefers-color-scheme: dark)" srcset="icon.svg">
+    <img src="icon.svg" alt="lq — a companion for LyX" width="48" style="vertical-align:middle;">
+  </picture>
+  lq - A CLI Tool for Editing LyX documents
+</h1>
 
 `lq` is a standalone CLI tool designed to create, parse, query, and mutate LyX documents  (`.lyx` files) using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
 
