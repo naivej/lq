@@ -30,7 +30,6 @@ Usage:
 
 Commands:
   init      Initialize the user configuration file.
-  new       Create a new LyX document, optionally from a template.
   schema    Return a list of all semantically valid layouts.
   dump      Output the document structure.
   read      Output matching nodes and text content.
@@ -159,25 +158,6 @@ Options:
                            Default: "lq user".
   --max-cache-entries <n>  Set the maximum number of file caches kept in ~/.lq/cache/.
                            Default: 50.`,
-
-  new: `lq new - Create a new LyX document.
-
-Usage:
-  lq new <file> [--template <official-name-or-path>]
-
-Arguments:
-  <file>      Destination file. The .lyx suffix is added if omitted.
-
-Options:
-  --template <name-or-path>
-              Use an official LyX template or personal .lyx template. Official
-              templates accept their GUI display name (for example,
-              "American Astronomical Society (AASTeX v. 6.3.1)") or their
-              raw relative path. A display basename must be unique.
-
-Without --template, creates a minimal article document with an empty Standard layout.
-Templates copy only the selected .lyx file; referenced images, bibliographies, and
-child documents are not copied.`,
 
   schema: `lq schema - Return all semantically valid layouts across 6 categories:
   documentLayouts      Styles valid for the document class (e.g. Section, Standard).
