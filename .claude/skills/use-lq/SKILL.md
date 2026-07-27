@@ -1,11 +1,11 @@
 ---
 name: use-lq
-description: Use lq to create, parse, query, and mutate LyX (.lyx) documents. Use when the user wants to create, read, or edit a .lyx file.
+description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use the LyX CLI to create, import, or export the documents.
 allowed-tools: Bash(lq *)
 ---
-# User Manual
+# `lq` User Manual
 
-`lq` is a standalone CLI tool designed to create, parse, query, and mutate LyX (`.lyx`) documents.
+`lq` is a standalone CLI tool for parsing, querying, and mutating LyX documents (`.lyx` files).
 
 At its core, `lq` operates on a simple lifecycle:
 
@@ -72,13 +72,6 @@ The query engine supports traversing the CST using CSS-like selector:
   - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`.
   - `--author-name <name>`: Set the author name used in tracked changes. Default: `"lq user"`.
 
-### Create a document
-
-- `lq new <file> [--template <official-name-or-path>]`
-  - Creates `<file>` in the current working directory; `.lyx` is appended when omitted.
-  - Without `--template`, creates an empty article document.
-  - `--template` accepts an official template name or a template path. Note: images, bibliography files, child documents, and other companion assets linked in the template are not created.
-
 ### Query
 
 - `lq schema <file>`
@@ -137,7 +130,7 @@ The query engine supports traversing the CST using CSS-like selector:
 1. **Run `lq init`**: Confirm configuration is set. Only change configuration with explicit user consent.
 2. **Stage before mutating**: `git stage`, then review with `git diff`. `git restore` reverts everything; `lq undo` reverts individual tracked changes without touching other edits. There is no `--dry-run` flag because git + undo cover the same need.
 3. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Raw LaTeX (like equations inside `inset[Formula]`) is pure string data. Target the `inset[Formula]` node and replace its text content.
-4. **Stop for LyXServer errors**: If `lq` cannot connect LyXServer, stop immediately and ask the user to turn on LyXServer or turn off auto refresh.
+4. **Connect LyXServer in save-reload mode**: see [`LyX_CLI.md`](LyX_CLI.md).
 
 ## Smart query
 
@@ -177,70 +170,80 @@ When modifying a document, follow this safe workflow:
 3. **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`. **Keep `new_text` scoped to only the changed substring.** `--find` operates on individual text nodes; `new_text` is the literal replacement, not merged with surrounding nodes.
 4. **Clean pending changes first**: Undo unwanted tracked changes before applying new ones. Re-editing a node with pending tracked changes produces a warning (new edits nest inside existing markers).
 
-## HOW-TO
+## Cross-Referencing
 
-1. **Cross-Referencing**: Before inserting a cross-reference, find the exact label names. Labels are stored as text inside `CommandInset label` insets. Query all labels with:
+Before inserting a cross-reference, find the exact label names. Labels are stored as text inside `CommandInset label` insets. Query all labels with:
 
-   ```bash
-   lq read <file> "inset[CommandInset label]"
-   ```
+```bash
+lq read <file> "inset[CommandInset label]"
+```
 
-   To filter by prefix (e.g., all section labels):
+To filter by prefix (e.g., all section labels):
 
-   ```bash
-   lq read <file> "inset[CommandInset label]:contains('sec:')"
-   ```
+```bash
+lq read <file> "inset[CommandInset label]:contains('sec:')"
+```
 
-   **Complex references via `--raw-file`**: When you need non-default params (`plural`, `caps`, `noprefix`, `nolink`, `tuple`), write the full inset to a temp file:
+**Complex references via `--raw-file`**: When you need non-default params (`plural`, `caps`, `noprefix`, `nolink`, `tuple`), write the full inset to a temp file:
 
-   ```
-   \begin_inset CommandInset ref
-   LatexCommand vref
-   reference "sec:Section_label"
-   plural "true"
-   caps "false"
-   noprefix "false"
-   nolink "false"
-   tuple "range"
-   \end_inset
-   ```
+```
+\begin_inset CommandInset ref
+LatexCommand vref
+reference "sec:Section_label"
+plural "true"
+caps "false"
+noprefix "false"
+nolink "false"
+tuple "range"
+\end_inset
+```
 
-2. **Citations**: Before inserting a citation, find citation keys with:
+## Citations
 
-   ```bash
-   lq bib <file> --search "author name"
-   ```
+Before inserting a citation, find citation keys with:
 
-   **Complex citations via `--raw-file`**: When you need `before`/`after` text, multi-citation lists, or `literal` mode, write the full inset to a temp file:
+```bash
+lq bib <file> --search "author name"
+```
 
-   ```
-   \begin_inset CommandInset citation
-   LatexCommand citet
-   key "Einstein1905"
-   literal "false"
-   after "p. 42"
-   \end_inset
-   ```
+**Complex citations via `--raw-file`**: When you need `before`/`after` text, multi-citation lists, or `literal` mode, write the full inset to a temp file:
 
-3. **List Items (Itemize, Enumerate, Description)**: Each list item is a **separate paragraph** with the list layout. LyX uses repeated `\begin_layout Itemize` blocks (not `\item`, which is a LaTeX command LyX discards as an "Unknown token"):
+```
+\begin_inset CommandInset citation
+LatexCommand citet
+key "Einstein1905"
+literal "false"
+after "p. 42"
+\end_inset
+```
 
-   ```
-   \begin_layout Itemize
-   First bullet point.
-   \end_layout
-   \begin_layout Itemize
-   Second bullet point.
-   \end_layout
-   ```
+## List Items (Itemize, Enumerate, Description): 
 
-   To insert multiple list items at once with `--raw-file`:
+Each list item is a **separate paragraph** with the list layout. LyX uses repeated `\begin_layout Itemize` blocks (not `\item`, which is a LaTeX command LyX discards as an "Unknown token"):
 
-   ```bash
-   lq insert file.lyx "layout[Standard]:last" after --raw-file /tmp/items.raw
-   ```
+```
+\begin_layout Itemize
+First bullet point.
+\end_layout
+\begin_layout Itemize
+Second bullet point.
+\end_layout
+```
 
-   For nested lists, use `\begin_deeper` / `\end_deeper` around the nested items. For enumerated lists, use `\begin_layout Enumerate` instead. For description lists, use `\begin_layout Description`.
+To insert multiple list items at once with `--raw-file`:
 
-# LyX Syntax Reference
+```bash
+lq insert file.lyx "layout[Standard]:last" after --raw-file /tmp/items.raw
+```
 
-For raw inset syntax (citation params, cross-reference params, note inset subtypes), read [`SYNTAX.md`](SYNTAX.md). Load it when constructing `--raw-file` payloads or when you need exact parameter defaults for a citation or cross-reference inset.
+For nested lists, use `\begin_deeper` / `\end_deeper` around the nested items. For enumerated lists, use `\begin_layout Enumerate` instead. For description lists, use `\begin_layout Description`.
+
+# LyX
+
+## LyX Syntax Reference
+
+For raw inset syntax (citation params, cross-reference params, note inset subtypes), read [`LyX_syntax.md`](LyX_syntax.md). Load it when constructing `--raw-file` payloads or when you need exact parameter defaults for a citation or cross-reference inset.
+
+## LyX CLI
+
+See [`LyX_CLI.md`](LyX_CLI.md) for how to create, import, and export LyX documents, and open the LyX GUI to establish a LyXServer connection using the LyX CLI.

@@ -1,7 +1,5 @@
 # LyX Syntax Reference
 
-Reference for raw LyX inset syntax. Loaded when constructing `--raw-file` payloads or understanding inset structure. See `SKILL.md` for the workflow that drives when to reach for this.
-
 ## Citation Inset (`CommandInset citation`)
 
 ```

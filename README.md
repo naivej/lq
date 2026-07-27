@@ -7,18 +7,19 @@
   lq - a CLI for LyX
 </h1>
 
-`lq` is a standalone CLI designed to create, parse, query, and mutate LyX documents  (`.lyx` files) using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
+`lq` is a standalone CLI designed to parse, query, and mutate LyX documents  (`.lyx` files) using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
 
 ### Quick start
 
 - Download the binary or build for your platform with `deno task build`
-- Configure default behaviours with `lq init`. Add `--help` flag to see options.
+- Configure default behavior with `lq init`. Run `lq init --help` to see all options.
 - Ask your agent to `/use-lq`
 
 ### Highlights
 
 - `lq` mutates `.lyx` files in the same way as LyX (verified by LyX source code).
-- CLI + skills designed for **autonomous agents**.
+- CLI + skill designed for **autonomous agents**.
+  - The skill also cover how to use LyX binary to create, import, and export LyX documents, allowing the user to work with LaTeX (and other supported format) using LyX as the translator.
 - Collaborate with agents in **auto refreshed** LyX GUI through [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
 - Agents make **tracked changes**, allowing easy review.
 
@@ -59,7 +60,6 @@ While LyX is a frontend for LaTeX, `lq` operates entirely independently of the L
 
 - **Separation of Concerns**: The tool mutates the LyX source file format directly. It does not parse, understand, or interact with LaTeX syntax.
 - **Opaque Payloads**: Any raw LaTeX existing in the document (such as within `\begin_inset Formula`, `\begin_inset ERT`, or `\begin_preamble`) is treated as opaque string data and preserved flawlessly by the lossless parser.
-- **LyX as the Translator**: By strictly adhering to the schema defined in the LyX `.layout` files, `lq` ensures that the resulting `.lyx` file is structurally sound. When the user opens the file, the LyX engine handles the final translation to LaTeX.
 
 ## [User Manual](.claude/skills/use-lq/SKILL.md)
 

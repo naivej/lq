@@ -1,0 +1,142 @@
+# LyX CLI
+
+### Resolve the LyX binary
+
+Prefer `lyx`/`tex2lyx` on `PATH` when present (typically not on Windows); otherwise invoke the full path: 
+
+```bash
+lq init    # prints layoutsDir = {installRoot}/Resources/layouts
+# lyx      = {installRoot}/bin/LyX.exe (Windows) or {installRoot}/bin/lyx (Unix)
+# tex2lyx  = {installRoot}/bin/tex2lyx.exe (or tex2lyx)
+```
+
+### Create a document
+
+**Finding official templates:**
+
+Templates live at `{installRoot}/Resources/templates/`, derived from `lq init`:
+
+```bash
+lq init    # prints layoutsDir = {installRoot}/Resources/layouts
+# templates dir = {installRoot}/Resources/templates/
+```
+
+List available templates:
+
+```bash
+# On Windows (bash):
+ls "$(dirname "$(lq init | grep layoutsDir | sed 's/.*: //')")/../templates/"**/*.lyx
+
+# Or directly (Windows/Linux/macOS):
+ls "{installRoot}/Resources/templates/"**/*.lyx
+```
+
+Templates are organized into subdirectories: `Articles/`, `Books/`, `Letters/`, `Presentations/`, `Posters/`, `Scripts/`, `Theses/`, plus locale folders (`ar/`, `ca/`, `de/`, `es/`, `fr/`, `ja/`). Template filenames use underscores and URI-encoding (e.g. `American_Astronomical_Society_%28AASTeX_v._6.3.1%29.lyx`).
+
+**Via LyX CLI (preferred):**
+
+```bash
+# Minimal new document:
+"{lyx}" -batch -x "buffer-new /abs/path/doc.lyx" -x buffer-write
+
+# From an official template (absolute path required):
+"{lyx}" -batch -x "buffer-new-template /abs/path/doc.lyx \"{installRoot}/Resources/templates/Articles/APA.lyx\"" -x buffer-write
+```
+
+`buffer-new` works with no file loaded (`NoBuffer` flag). `buffer-new-template` needs an absolute template path in batch mode (no GUI file dialog). Both commands queue via `-x` and execute sequentially. Slow (~10-30s); use the minimal fallback below if LyX is not installed.
+
+**Minimal fallback (no LyX installed):**
+
+If LyX is unavailable, write this minimal article document directly:
+
+```
+#LyX 2.5 created this file. For more info see https://www.lyx.org/
+\lyxformat 643
+\begin_document
+\begin_header
+\textclass article
+\end_header
+
+\begin_body
+
+\begin_layout Standard
+
+\end_layout
+
+\end_body
+\end_document
+```
+
+This is the same document `buffer-new` produces. It contains a single empty `Standard` paragraph in the `article` class. After creating the file, all further edits go through `lq`.
+
+### Export
+
+```bash
+"{lyx}" -batch -e pdf2 doc.lyx           # export to PDF (format short name)
+"{lyx}" -batch -E latex out.tex doc.lyx  # export to specific file (preferred for output control)
+```
+
+Common format short names for `-e`/`-E`:
+
+| Short name | Output |
+|------------|--------|
+| `pdf2` | PDF (pdflatex) — most common |
+| `pdf4` | PDF (XeTeX) — Unicode |
+| `pdf5` | PDF (LuaTeX) |
+| `latex` | LaTeX (plain) |
+| `pdflatex` | LaTeX (pdflatex) |
+| `xetex` | LaTeX (XeTeX) |
+| `dvi` | DVI |
+| `html` | HTML |
+| `xhtml` | LyXHTML |
+| `text` | Plain text |
+| `textparagraph` | Plain text, join lines |
+| `ps` | PostScript |
+| `odt` | OpenDocument (tex4ht) |
+| `rtf` | Rich Text Format |
+| `word2` | MS Word Office Open XML |
+| `docbook5` | DocBook 5 |
+| `lyx` | LyX (native) |
+
+Prefer `-E` over `-e` when you need control over the output path. `-batch` is slow (~10-30s+); not for tight edit loops. PDF requires TeX configured in LyX.
+
+### Import
+
+```bash
+"{tex2lyx}" paper.tex paper.lyx          # LaTeX → .lyx (preferred, always available)
+"{lyx}" -batch -i latex paper.tex        # same via LyX batch
+```
+
+Import formats for `-i` (any format with a converter chain to `.lyx`):
+
+| Format | Source | Availability |
+|--------|--------|--------------|
+| `latex` | LaTeX | Always (tex2lyx bundled) |
+| `literate` | Noweb | Requires `tex2lyx -n` |
+| `sweave` | Sweave | Requires R + tex2lyx |
+| `knitr` | Knitr | Requires R + tex2lyx |
+| `text` | Plain text | Built-in converter |
+| `html` | HTML | Requires Pandoc or similar |
+| `word` / `word2` | MS Word (.doc/.docx) | Requires external converter |
+| `rtf` | Rich Text Format | Requires external converter |
+| `odt` | OpenDocument | Requires external converter |
+
+`tex2lyx` is the dedicated TeX→LyX converter and is faster and more reliable than `lyx -batch -i`. For non-LaTeX formats, availability depends on what converters are installed on the system — test with a small file first.
+
+### Open GUI (for LyXServer refresh)
+
+```bash
+"{lyx}" doc.lyx                          # open in GUI, start LyXServer
+"{lyx}" -r doc.lyx                       # reuse running instance
+```
+
+Omit `-batch`. The GUI is for LyXServer connection + human review. If LyXServer is unreachable after launch, stop and ask the user — do not invent LFUN workarounds.
+
+### Requirements & notes
+
+- **LyX must be installed and configured once** before batch use. Open the GUI at least once to complete initial setup.
+- **TeX is not bundled** with LyX. PDF export needs a TeX distribution configured in LyX Preferences.
+- **Batch is slow** (~10-30s+). Use for create/import/export only.
+- **Quote paths with spaces** on all platforms.
+- **Binary name**: `LyX.exe` on Windows, `lyx` on Unix.
+- **`-batch` vs GUI**: `-batch` runs headless and exits; omit `-batch` to open the GUI and start LyXServer.
