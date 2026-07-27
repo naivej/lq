@@ -26,9 +26,6 @@ export interface CliResult {
   text?: string;
   data?: unknown;
   warnings?: string[];
-  source?: "minimal" | "official" | "personal";
-  candidates?: unknown[];
-  availableTemplates?: Array<{ displayName: string; officialPath: string }>;
   refresh?: string;
 }
 
