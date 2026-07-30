@@ -530,3 +530,92 @@ Deno.test("CLI - set --find on property node warns as property", { timeout: 1000
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
+
+// ---------------------------------------------------------------------------
+// 28. DL74 inset tracking guards — tracked set on inset block
+// ---------------------------------------------------------------------------
+Deno.test("CLI - tracked set on inset block rejects with TRACKING_ERROR", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_inset_tc_set.lyx");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "inset[CommandInset label]:first", "new label"],
+      { trackChanges: true },
+    );
+    assertEquals(result.code, "TRACKING_ERROR");
+    assertStringIncludes(result.message!, "Cannot track changes inside inset parameters");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 29. DL74 inset tracking guards — default set on inset without tracking
+// ---------------------------------------------------------------------------
+Deno.test("CLI - default set on inset block rejects with TRACKING_ERROR (tracking off)", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_inset_default_set.lyx");
+  try {
+    // runCliTest uses trackChanges=false
+    const result = await runCliTest(["set", tempFile, "inset[CommandInset label]:first", "new label"]);
+    assertEquals(result.code, "TRACKING_ERROR");
+    assertStringIncludes(result.message!, "Default 'set' on an inset would destroy its structure");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 30. DL74 inset tracking guards — untracked --find on inset (escape hatch)
+// ---------------------------------------------------------------------------
+Deno.test("CLI - untracked --find on inset block allowed", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_inset_find_ok.lyx");
+  try {
+    // Untracked --find on an inset should still work (explicit surgical edit)
+    const result = await runCliTest([
+      "set", tempFile, "inset[CommandInset label]:first", "sec:new", "--find", "sec:"
+    ]);
+    assertEquals(result.code, undefined);
+    assertEquals(result.modified_nodes, 1);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 31. DL74 inset tracking guards — delete on inset nested inside another inset
+// ---------------------------------------------------------------------------
+Deno.test("CLI - delete on nested inset rejects with TRACKING_ERROR", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_nested_inset_del.lyx");
+  try {
+    // Text insets are direct children of Tabular insets (inset inside inset)
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "inset[Text]:first"],
+      { trackChanges: true },
+    );
+    assertEquals(result.code, "TRACKING_ERROR");
+    assertStringIncludes(result.message!, "Cannot track-delete an inset nested inside another inset");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
+// 32. DL74 inset tracking guards — delete on top-level inset wraps atomically
+// ---------------------------------------------------------------------------
+Deno.test("CLI - delete on top-level inset wraps markers around whole inset", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_toplevel_inset_del.lyx");
+  try {
+    await runCliWithConfig(
+      ["delete", tempFile, "inset[Foot]:first"],
+      { trackChanges: true },
+    );
+
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_deleted");
+    // The marker must appear BEFORE \begin_inset Foot, not inside
+    assertMatch(text, /\\change_deleted[^\n]*\n\\begin_inset Foot/);
+    // The closing marker must appear AFTER \end_inset
+    assertMatch(text, /\\end_inset\n\\change_unchanged/);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
