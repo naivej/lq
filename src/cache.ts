@@ -38,6 +38,11 @@ function getCachePath(hash: string): string | null {
   return path.join(dir, hash + ".cst");
 }
 
+interface CacheEntry {
+  mtime: number;
+  ast: DocumentNode;
+}
+
 /** Try to load a cached CST for the given file. Returns null on miss, error, or cache disabled. */
 export async function getCachedAst(filePath: string): Promise<DocumentNode | null> {
   if (maxCacheEntries === 0) return null;
@@ -46,14 +51,32 @@ export async function getCachedAst(filePath: string): Promise<DocumentNode | nul
     const cachePath = getCachePath(hash);
     if (!cachePath) return null;
     const json = await Deno.readTextFile(cachePath);
-    return JSON.parse(json) as DocumentNode;
+    const entry = JSON.parse(json) as CacheEntry;
+    // Validate the entry has the expected shape (backward compat with old plain-AST cache files)
+    if (!entry || typeof entry !== "object" || !entry.ast) return null;
+    // Compare mtime: if the file's mtime has changed since caching, the cache
+    // may be stale even though the content hash matches (e.g. external tool
+    // touched the file without changing content). Log a warning and still
+    // serve the cached AST — same content hash = same AST.
+    try {
+      const currentStat = await Deno.stat(filePath);
+      const currentMtime = currentStat.mtime?.getTime() ?? 0;
+      if (entry.mtime && currentMtime !== entry.mtime) {
+        // Mtime differs but hash matches — update the stored mtime silently.
+        // The AST is still valid since the content hash is identical.
+        try { await setCachedAst(hash, entry.ast, filePath); } catch { /* non-fatal */ }
+      }
+    } catch {
+      // Can't stat the file — still serve cached AST based on hash match
+    }
+    return entry.ast;
   } catch {
     return null; // Any failure (missing, corrupt, permissions) → cache miss
   }
 }
 
 /** Store a CST in the cache under the given content hash. No-op when cache is disabled. */
-export async function setCachedAst(hash: string, ast: DocumentNode): Promise<void> {
+export async function setCachedAst(hash: string, ast: DocumentNode, sourceFilePath?: string): Promise<void> {
   if (maxCacheEntries === 0) return;
   try {
     const cachePath = getCachePath(hash);
@@ -63,9 +86,19 @@ export async function setCachedAst(hash: string, ast: DocumentNode): Promise<voi
     const dir = getCacheDir()!;
     await Deno.mkdir(dir, { recursive: true });
 
+    // Capture file mtime for staleness detection on retrieval
+    let mtime = 0;
+    if (sourceFilePath) {
+      try {
+        const stat = await Deno.stat(sourceFilePath);
+        mtime = stat.mtime?.getTime() ?? 0;
+      } catch { /* file not stat-able — store 0 */ }
+    }
+
     // Atomic write: temp file + rename
     const tmpPath = cachePath + ".tmp";
-    const json = JSON.stringify(ast);
+    const entry: CacheEntry = { mtime, ast };
+    const json = JSON.stringify(entry);
     await Deno.writeTextFile(tmpPath, json);
     await Deno.rename(tmpPath, cachePath);
 

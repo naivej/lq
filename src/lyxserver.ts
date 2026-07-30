@@ -106,7 +106,12 @@ function discoverUnixSocket(): string | null {
 async function sendViaUnixSocket(socketPath: string, lfuns: string[]): Promise<boolean> {
   let conn: Deno.Conn | null = null;
   try {
-    conn = await Deno.connect({ path: socketPath, transport: "unix" });
+    // Timeout: Deno.connect on a Unix socket hangs if the socket file exists
+    // but no process accepts. Race with a 5-second timeout.
+    conn = await Promise.race([
+      Deno.connect({ path: socketPath, transport: "unix" }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("connect timeout")), 5000)),
+    ]);
   } catch {
     return false;
   }
@@ -118,7 +123,11 @@ async function sendViaUnixSocket(socketPath: string, lfuns: string[]): Promise<b
   async function readLine(): Promise<string | null> {
     let data = "";
     while (true) {
-      const n = await conn!.read(buf);
+      // 5-second timeout per read — protects against a hung server
+      const n = await Promise.race([
+        conn!.read(buf),
+        new Promise<null>((_, reject) => setTimeout(() => reject(new Error("timeout")), 5000)),
+      ]);
       if (n === null) return data || null;
       data += decoder.decode(buf.subarray(0, n));
       const nl = data.indexOf("\n");
@@ -195,7 +204,13 @@ async function sendViaNamedPipe(pipeBase: string, lfuns: string[]): Promise<bool
   let inFile: Deno.FsFile | null = null;
 
   try {
-    inFile = await Deno.open(inPipe, { write: true });
+    // Timeout: Deno.open on a Windows named pipe blocks indefinitely if no
+    // pipe server is listening (CreateFile behavior). Race with a 5-second
+    // timeout so the caller can degrade gracefully.
+    inFile = await Promise.race([
+      Deno.open(inPipe, { write: true }),
+      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("pipe open timeout")), 5000)),
+    ]);
   } catch {
     return false;
   }
@@ -282,14 +297,20 @@ async function tryReadResponse(
  * @returns true if LyX was reachable and all commands returned INFO (not ERROR)
  */
 export async function sendLyxCommands(lfuns: string[]): Promise<boolean> {
-  if (Deno.build.os === "windows") {
-    const pipeBase = discoverWindowsPipePath();
-    if (!pipeBase) return false;
-    return await sendViaNamedPipe(pipeBase, lfuns);
-  } else {
-    const socketPath = discoverUnixSocket();
-    if (!socketPath) return false;
-    return await sendViaUnixSocket(socketPath, lfuns);
+  try {
+    if (Deno.build.os === "windows") {
+      const pipeBase = discoverWindowsPipePath();
+      if (!pipeBase) return false;
+      return await sendViaNamedPipe(pipeBase, lfuns);
+    } else {
+      const socketPath = discoverUnixSocket();
+      if (!socketPath) return false;
+      return await sendViaUnixSocket(socketPath, lfuns);
+    }
+  } catch {
+    // Timeout or other transport error — LyX is unreachable.
+    // Caller should degrade gracefully (mutation was already committed).
+    return false;
   }
 }
 

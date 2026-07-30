@@ -88,11 +88,13 @@ Arguments:
   <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
 
 Options:
-  --depth <n>  Limit output to n levels deep (0 = root node only).
-               Omit for full depth.
-  --toc        Output a hierarchical heading tree (table of contents)
-               instead of the document tree. 
-               Can be used with --depth, and mutually exclusive with <selector>.`,
+  --depth <n>   Limit output to n levels deep (0 = root node only).
+                Omit for full depth.
+  --show-changes Annotate text nodes with changeStatus ("deleted", "inserted")
+                when inside tracked change blocks. Helps debug undo/review workflows.
+  --toc         Output a hierarchical heading tree (table of contents)
+                instead of the document tree. 
+                Can be used with --depth, and mutually exclusive with <selector>.`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
 
@@ -120,10 +122,13 @@ Arguments:
 
 lq set preserves non-text children (insets, properties) and replaces only text nodes.
 Options to change the default behaviour:
-  --find <substring>   Replace all occurrences of <substring> within the matched
-                       nodes' text, instead of replacing the entire text content.
-  --replace-all        Replace ALL children of the target block, not just text nodes.
-                       Mutually exclusive with --find.`,
+  --find <substring>        Replace all occurrences of <substring> within the matched
+                            nodes' text, instead of replacing the entire text content.
+                            By default, text inside \\change_deleted blocks is skipped.
+  --find-include-deleted    When used with --find, also search inside \\change_deleted
+                            blocks (the default skips deleted text).
+  --replace-all             Replace ALL children of the target block, not just text nodes.
+                            Mutually exclusive with --find.`,
 
   delete: `lq delete - Delete targeted nodes or mark them deleted when tracking is enabled.
 
@@ -493,6 +498,53 @@ function ensureTrackingChangesInHeader(ast: DocumentNode): void {
   }
 }
 
+/** Annotate text nodes with their tracked-change status for debugging.
+ *  Walks the CST with a change-depth tracker. Text nodes inside
+ *  change_deleted get changeStatus="deleted", inside change_inserted get
+ *  changeStatus="inserted". Returns a new object — the original is not mutated.
+ *  Only used by `dump --show-changes`. */
+function annotateChanges(root: Node | DocumentNode): unknown {
+  function walk(node: Node | DocumentNode, dd: number, id: number): unknown {
+    if (node.type === "text") {
+      const result: Record<string, unknown> = { type: "text", text: node.text };
+      if (dd > 0) result.changeStatus = "deleted";
+      else if (id > 0) result.changeStatus = "inserted";
+      return result;
+    }
+    if (node.type === "property") {
+      return { type: "property", key: node.key, value: node.value };
+    }
+    if (node.type === "block") {
+      const children: unknown[] = [];
+      for (const child of node.children) {
+        if (child.type === "property" && child.key === "change_deleted") {
+          children.push({ type: "property", key: child.key, value: child.value });
+          dd++;
+        } else if (child.type === "property" && child.key === "change_inserted") {
+          children.push({ type: "property", key: child.key, value: child.value });
+          id++;
+        } else if (child.type === "property" && child.key === "change_unchanged") {
+          children.push({ type: "property", key: child.key, value: child.value });
+          if (id > 0) id--; else if (dd > 0) dd--;
+        } else {
+          children.push(walk(child, dd, id));
+        }
+      }
+      return { type: "block", tag: node.tag, args: node.args, isBeginVariant: node.isBeginVariant, children };
+    }
+    // DocumentNode: recurse into children
+    if (node.type === "document") {
+      const children: unknown[] = [];
+      for (const child of node.children) {
+        children.push(walk(child, dd, id));
+      }
+      return { type: "document", children };
+    }
+    return { type: (node as Node).type };
+  }
+  return walk(root, 0, 0);
+}
+
 /** Recursively extract text from a node's descendants.
  *  Insets emit their selector as a placeholder marker — we do NOT recurse
  *  into them.  This keeps body-text scans clean and prevents concatenation
@@ -773,7 +825,14 @@ async function refreshPostStep(filePath: string, mode: "none" | "reload" | "save
   }
   commands.push("buffer-reload");
 
-  await sendLyxCommands(commands);
+  const ok = await sendLyxCommands(commands);
+  if (!ok) {
+    pushWarning(
+      "LyX server unreachable — buffer was not reloaded. " +
+      "The file was written successfully. " +
+      "Run 'buffer-reload' in LyX or reopen the file to see the changes."
+    );
+  }
 }
 
 export async function runCli(args: string[]) {
@@ -1004,7 +1063,7 @@ export async function runCli(args: string[]) {
       ast = parse(text);
       // Populate cache on miss (non-fatal)
       try {
-        await setCachedAst(await hashText(text), ast);
+        await setCachedAst(await hashText(text), ast, filePath);
       } catch { /* cache failures are non-fatal */ }
     }
   } catch (e: Error | unknown) {
@@ -1015,9 +1074,10 @@ export async function runCli(args: string[]) {
     // Dump may have --depth before the selector destructuring consumes it.
     // Parse from selector + restArgs to catch both "--depth N" patterns.
     const dumpArgs = selector ? [selector, ...restArgs] : restArgs;
-    const dumpFlags = parseArgs(dumpArgs, { boolean: ["toc"], string: ["depth"] });
+    const dumpFlags = parseArgs(dumpArgs, { boolean: ["toc", "show-changes"], string: ["depth"] });
     const depthStr = dumpFlags["depth"];
     const tocMode = dumpFlags["toc"] === true;
+    const showChanges = dumpFlags["show-changes"] === true;
     
     // If selector is present and not a flag, use it to target a subtree
     const dumpSelector = (selector && !selector.startsWith("--")) ? selector : undefined;
@@ -1078,6 +1138,9 @@ export async function runCli(args: string[]) {
       type: "document",
       children: [node],
     });
+
+    // Helper: apply change annotations when --show-changes is set
+    const toOutput = <T>(data: T): T | unknown => showChanges ? annotateChanges(data as unknown as Node | DocumentNode) : data;
     
     if (depthStr !== undefined) {
       const depth = parseInt(depthStr, 10);
@@ -1089,9 +1152,9 @@ export async function runCli(args: string[]) {
         const maxDepth = computeMaxDepth(ast, 0);
         if (depth > maxDepth) {
           pushWarning(`Depth ${depth} exceeds document depth (${maxDepth}). Showing full CST.`);
-          printJson({ data: ast });
+          printJson({ data: toOutput(ast) });
         } else {
-          printJson({ data: truncateAtDepth(ast, depth, 0) });
+          printJson({ data: toOutput(truncateAtDepth(ast, depth, 0)) });
         }
       } else {
         const results = roots.map(root => {
@@ -1104,15 +1167,15 @@ export async function runCli(args: string[]) {
           return truncateAtDepth(doc, depth, 0);
         });
         const data = roots.length === 1 ? results[0] : results;
-        printJson({ count: roots.length, data });
+        printJson({ count: roots.length, data: toOutput(data) });
       }
     } else {
       if (useFullAst) {
-        printJson({ data: ast });
+        printJson({ data: toOutput(ast) });
       } else {
         const docs = roots.map(wrapAsDoc);
         const data = roots.length === 1 ? docs[0] : docs;
-        printJson({ count: roots.length, data });
+        printJson({ count: roots.length, data: toOutput(data) });
       }
     }
     return;
@@ -1321,9 +1384,10 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "set") {
-    const flags = parseArgs(restArgs, { boolean: ["replace-all"], string: ["find"] });
+    const flags = parseArgs(restArgs, { boolean: ["replace-all", "find-include-deleted"], string: ["find"] });
     const replaceAll = flags["replace-all"] === true;
     const findStr: string | undefined = typeof flags["find"] === "string" ? flags["find"] : undefined;
+    const findIncludeDeleted = flags["find-include-deleted"] === true;
 
     if (nodes.length === 0) {
       printError("NO_MATCH", `Selector matched no nodes to set. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
@@ -1407,8 +1471,20 @@ export async function runCli(args: string[]) {
             // Tracked surgical replace: split text nodes at match boundaries
             const newChildren: Node[] = [];
             let nodeFindCount = 0;
+            let deletedDepth = 0;
             for (const child of node.children) {
-              if (child.type === "text") {
+              if (child.type === "property" && child.key === "change_deleted") {
+                deletedDepth++;
+                newChildren.push(child);
+              } else if (child.type === "property" && child.key === "change_unchanged") {
+                if (deletedDepth > 0) deletedDepth--;
+                newChildren.push(child);
+              } else if (child.type === "text") {
+                // Skip text inside change_deleted blocks unless --find-include-deleted
+                if (deletedDepth > 0 && !findIncludeDeleted) {
+                  newChildren.push(child);
+                  continue;
+                }
                 const count = countOccurrences(child.text, findStr);
                 if (count > 0) {
                   nodeFindCount += count;
@@ -1426,8 +1502,15 @@ export async function runCli(args: string[]) {
           } else {
             // Plain surgical replace: simple string replace in all text children
             let nodeFindCount = 0;
+            let deletedDepth = 0;
             for (const child of node.children) {
-              if (child.type === "text") {
+              if (child.type === "property" && child.key === "change_deleted") {
+                deletedDepth++;
+              } else if (child.type === "property" && child.key === "change_unchanged") {
+                if (deletedDepth > 0) deletedDepth--;
+              } else if (child.type === "text") {
+                // Skip text inside change_deleted blocks unless --find-include-deleted
+                if (deletedDepth > 0 && !findIncludeDeleted) continue;
                 const count = countOccurrences(child.text, findStr);
                 if (count > 0) {
                   child.text = child.text.replaceAll(findStr, newValue);
@@ -1506,7 +1589,7 @@ export async function runCli(args: string[]) {
     }
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
-    try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+    try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
     printJson({ modified_nodes: nodes.length, changes });
@@ -1569,7 +1652,7 @@ export async function runCli(args: string[]) {
       markAsDeleted(ast.children, true); // document body = paragraph context
       const newFileText = serialize(ast);
       await Deno.writeTextFile(filePath, newFileText);
-      try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+      try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
       await refreshPostStep(filePath, refreshMode);
       const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
       printJson({ tracked_deleted_nodes: nodes.length, changes });
@@ -1593,7 +1676,7 @@ export async function runCli(args: string[]) {
 
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
-    try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+    try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
     printJson({ deleted_nodes: nodes.length, changes });
@@ -2055,7 +2138,7 @@ export async function runCli(args: string[]) {
 
     const newFileText = serialize(ast);
     await Deno.writeTextFile(filePath, newFileText);
-    try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+    try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ position, label: nodeLabel(n), text: briefText(n) }));
     printJson({ matched_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });
@@ -2175,12 +2258,32 @@ export async function runCli(args: string[]) {
         `${skippedOtherAuthor} pre-existing tracked change${plural} from another author left unchanged.`
       );
     }
+    // When nothing was undone, check if there are any tracked changes at all in
+    // the matched nodes — if so, the author name likely doesn't match the author
+    // who made the changes. Surface an actionable diagnostic.
+    if (undoneCount === 0 && substring === undefined) {
+      let totalTrackedInNodes = 0;
+      for (const node of nodes) {
+        if (node.type === "block") {
+          if (hasTrackedChanges(node.children)) totalTrackedInNodes++;
+        }
+      }
+      if (totalTrackedInNodes > 0) {
+        const plural = totalTrackedInNodes === 1 ? "" : "s";
+        pushWarning(
+          `${totalTrackedInNodes} node${plural} contain${totalTrackedInNodes === 1 ? "s" : ""} tracked changes, ` +
+          `but none belong to author '${authorName}'. ` +
+          `Use '--author-name' to match the author who made these changes, ` +
+          `or run 'lq init --author-name <name>' to update the default.`
+        );
+      }
+    }
     // Only write file if something actually changed (avoid spurious header
     // mutations from resolveAuthorId when zero changes are undone).
     if (undoneCount > 0) {
       const newFileText = serialize(ast);
       await Deno.writeTextFile(filePath, newFileText);
-      try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
+      try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
       await refreshPostStep(filePath, refreshMode);
     }
     printJson({ undone_changes: undoneCount, changes });
