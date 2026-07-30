@@ -46,7 +46,14 @@ Deno.test("CLI - per-command help (read)", { timeout: 10000 }, async () => {
 
 Deno.test("CLI - per-command help (insert)", { timeout: 10000 }, async () => {
   const { stdout } = await runCliRaw(["insert", "--help"]);
-  assertStringIncludes(stdout, "split-after <text> [options]");
+  assertStringIncludes(stdout, "lq insert");
+  assertStringIncludes(stdout, "<file>");
+  assertStringIncludes(stdout, "<selector>");
+  assertStringIncludes(stdout, "<position>");
+  assertStringIncludes(stdout, "before");
+  assertStringIncludes(stdout, "split-after");
+  assertStringIncludes(stdout, "--layout");
+  assertStringIncludes(stdout, "--raw-file");
 });
 
 // ---------------------------------------------------------------------------

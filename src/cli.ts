@@ -1377,6 +1377,30 @@ export async function runCli(args: string[]) {
           node.value = newValue;
         }
       } else if (node.type === "block") {
+        // DL11: Insets are atomic. Tracking markers must not land inside
+        // inset metadata lines, and default set silently destroys inset
+        // structure. Guard both paths; allow explicit untracked --find
+        // and --replace-all as escape hatches.
+        const block = node as BlockNode;
+        if (block.tag === "inset") {
+          if (trackChanges) {
+            printError("TRACKING_ERROR",
+              `Cannot track changes inside inset parameters — LyX does not track them either.\n` +
+              `Alternatives:\n` +
+              `  - Delete the old inset + insert a new one (both operations are reviewable when tracking is on)\n` +
+              `  - Disable tracking ('lq init --track-changes off') for a silent parameter edit\n` +
+              `  - Use '--find' without tracking for surgical edits to inset metadata`);
+          }
+          if (!findStr && !replaceAll) {
+            printError("TRACKING_ERROR",
+              `Default 'set' on an inset would destroy its structure (e.g. wiping LatexCommand and name lines).\n` +
+              `Use one of:\n` +
+              `  --find <substring>   surgical replacement of a specific parameter value\n` +
+              `  --replace-all        deliberate full replacement of all inset content\n` +
+              `  --raw-file           for complete structural rewrites via insert`);
+          }
+        }
+
         if (findStr !== undefined) {
           // Surgical mode: replace substring within text children
           if (trackChanges) {
@@ -1501,23 +1525,48 @@ export async function runCli(args: string[]) {
       ensureTrackingChangesInHeader(ast);
       const nodesToMark = new Set(nodes);
 
-      const markAsDeleted = (children: Node[]) => {
+      // DL11: Insets are atomic for change tracking — markers must not land
+      // inside inset structural metadata. When a matched block is an inset,
+      // wrap the entire inset atomically at the parent level (if the parent is
+      // a layout or the document body). An inset nested inside another inset
+      // has no valid tracked-deletion representation in LyX.
+      const markAsDeleted = (children: Node[], inParagraphContext: boolean) => {
         for (let i = children.length - 1; i >= 0; i--) {
           const child = children[i];
           if (nodesToMark.has(child)) {
             if (child.type === "block") {
-              child.children = wrapWithTracking(child.children, "deleted", authorId, deleteTs);
+              const block = child as BlockNode;
+              if (block.tag === "inset") {
+                if (inParagraphContext) {
+                  // Wrap the whole inset atomically — same shape
+                  // wrapWithTracking already produces for insets inside
+                  // deleted layouts.
+                  const wrapped = wrapInChangeMarkers([block], "deleted", authorId, deleteTs);
+                  children.splice(i, 1, ...wrapped);
+                } else {
+                  printError("TRACKING_ERROR",
+                    `Cannot track-delete an inset nested inside another inset.\n` +
+                    `Use 'lq set' on the enclosing inset's text content to mark changes,\n` +
+                    `or delete the enclosing structure.\n` +
+                    `Run 'lq read ${filePath} "${selector}" --count' to verify the target.`);
+                }
+              } else {
+                // Layout or other non-inset block: wrap children (existing behavior)
+                block.children = wrapWithTracking(block.children, "deleted", authorId, deleteTs);
+              }
             } else if (child.type === "text" || child.type === "property") {
               const wrapped = wrapWithTracking([child], "deleted", authorId, deleteTs);
               children.splice(i, 1, ...wrapped);
             }
           } else if (child.type === "block") {
-            markAsDeleted(child.children);
+            const block = child as BlockNode;
+            // Layout children are paragraph-level; inset children are structural.
+            markAsDeleted(block.children, block.tag === "layout");
           }
         }
       };
 
-      markAsDeleted(ast.children);
+      markAsDeleted(ast.children, true); // document body = paragraph context
       const newFileText = serialize(ast);
       await Deno.writeTextFile(filePath, newFileText);
       try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
