@@ -87,12 +87,12 @@ The query engine supports traversing the CST using CSS-like selector:
   - Each citation includes `key`, `author`, `title`, and `year`.
   - `--search <text>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
 - `lq dump <file> [<selector>] [--depth <n>] [--toc]`
-  - Outputs the CST as a JSON document.
+  - Outputs the CST as a JSON document. Text nodes inside tracked change blocks are annotated with `changeStatus`.
   - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
   - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
   - `--toc` (Mutually exclusive with selector): Output a hierarchical heading tree (table of contents) instead of raw CST. Heading levels are read from the document class's `.layout` file with LaTeX's standard hierarchy as the fallback. Combined with `--depth` to limit TOC nesting depth (1 = top-level sections only).
 - `lq read <file> <selector> [--count] [--text-only]`
-  - Read matched nodes.
+  - Read matched nodes. Default mode returns CST nodes with `changeStatus` annotations on text inside tracked change blocks.
   - `--count`: Return match counts by type (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`).
   - `--text-only`: Output the text content of matched nodes with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Tracked changes appear as `\change_deleted{...}` and `\change_inserted{...}` inline markers. Double newline between nodes.
 
@@ -101,7 +101,7 @@ The query engine supports traversing the CST using CSS-like selector:
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
   - Default behaviour: replaces text content within the targeted nodes while preserves non-text children (insets, properties).
   - `--replace-all`: Wipe all children and rebuild from scratch.
-  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced.
+  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced. Text inside `\change_deleted` blocks is always skipped. To edit deleted text, undo the tracked change first (`lq undo`), then apply your edit on the restored text.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq undo <file> <selector> [<substring>]`

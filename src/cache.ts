@@ -54,17 +54,16 @@ export async function getCachedAst(filePath: string): Promise<DocumentNode | nul
     const entry = JSON.parse(json) as CacheEntry;
     // Validate the entry has the expected shape (backward compat with old plain-AST cache files)
     if (!entry || typeof entry !== "object" || !entry.ast) return null;
-    // Compare mtime: if the file's mtime has changed since caching, the cache
-    // may be stale even though the content hash matches (e.g. external tool
-    // touched the file without changing content). Log a warning and still
-    // serve the cached AST — same content hash = same AST.
+    // Compare mtime: since the cache key is the file-content hash, a real
+    // external modification always produces a cache miss (different hash).
+    // Same-hash-different-mtime means the file was touched but content is
+    // identical — the cached AST is still valid. Update the stored mtime
+    // so the next read doesn't re-stat the file unnecessarily.
     try {
       const currentStat = await Deno.stat(filePath);
       const currentMtime = currentStat.mtime?.getTime() ?? 0;
       if (entry.mtime && currentMtime !== entry.mtime) {
-        // Mtime differs but hash matches — update the stored mtime silently.
-        // The AST is still valid since the content hash is identical.
-        try { await setCachedAst(hash, entry.ast, filePath); } catch { /* non-fatal */ }
+        await setCachedAst(hash, entry.ast, filePath);
       }
     } catch {
       // Can't stat the file — still serve cached AST based on hash match

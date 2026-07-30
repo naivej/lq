@@ -90,8 +90,6 @@ Arguments:
 Options:
   --depth <n>   Limit output to n levels deep (0 = root node only).
                 Omit for full depth.
-  --show-changes Annotate text nodes with changeStatus ("deleted", "inserted")
-                when inside tracked change blocks. Helps debug undo/review workflows.
   --toc         Output a hierarchical heading tree (table of contents)
                 instead of the document tree. 
                 Can be used with --depth, and mutually exclusive with <selector>.`,
@@ -124,9 +122,8 @@ lq set preserves non-text children (insets, properties) and replaces only text n
 Options to change the default behaviour:
   --find <substring>        Replace all occurrences of <substring> within the matched
                             nodes' text, instead of replacing the entire text content.
-                            By default, text inside \\change_deleted blocks is skipped.
-  --find-include-deleted    When used with --find, also search inside \\change_deleted
-                            blocks (the default skips deleted text).
+                            Text inside \\change_deleted blocks is always skipped —
+                            undo the tracked change first if you need to edit that text.
   --replace-all             Replace ALL children of the target block, not just text nodes.
                             Mutually exclusive with --find.`,
 
@@ -502,13 +499,16 @@ function ensureTrackingChangesInHeader(ast: DocumentNode): void {
  *  Walks the CST with a change-depth tracker. Text nodes inside
  *  change_deleted get changeStatus="deleted", inside change_inserted get
  *  changeStatus="inserted". Returns a new object — the original is not mutated.
- *  Only used by `dump --show-changes`. */
-function annotateChanges(root: Node | DocumentNode): unknown {
-  function walk(node: Node | DocumentNode, dd: number, id: number): unknown {
+ *  Applied by default to `dump` and `read` (default mode) output. */
+function annotateChanges(root: Node | DocumentNode | Node[] | DocumentNode[]): unknown {
+  // Handle arrays (multi-match selector results)
+  if (Array.isArray(root)) return root.map(r => annotateChanges(r));
+  
+  function walk(node: Node | DocumentNode, deletedDepth: number, insertedDepth: number): unknown {
     if (node.type === "text") {
       const result: Record<string, unknown> = { type: "text", text: node.text };
-      if (dd > 0) result.changeStatus = "deleted";
-      else if (id > 0) result.changeStatus = "inserted";
+      if (deletedDepth > 0) result.changeStatus = "deleted";
+      else if (insertedDepth > 0) result.changeStatus = "inserted";
       return result;
     }
     if (node.type === "property") {
@@ -519,15 +519,15 @@ function annotateChanges(root: Node | DocumentNode): unknown {
       for (const child of node.children) {
         if (child.type === "property" && child.key === "change_deleted") {
           children.push({ type: "property", key: child.key, value: child.value });
-          dd++;
+          deletedDepth++;
         } else if (child.type === "property" && child.key === "change_inserted") {
           children.push({ type: "property", key: child.key, value: child.value });
-          id++;
+          insertedDepth++;
         } else if (child.type === "property" && child.key === "change_unchanged") {
           children.push({ type: "property", key: child.key, value: child.value });
-          if (id > 0) id--; else if (dd > 0) dd--;
+          if (insertedDepth > 0) insertedDepth--; else if (deletedDepth > 0) deletedDepth--;
         } else {
-          children.push(walk(child, dd, id));
+          children.push(walk(child, deletedDepth, insertedDepth));
         }
       }
       return { type: "block", tag: node.tag, args: node.args, isBeginVariant: node.isBeginVariant, children };
@@ -536,13 +536,45 @@ function annotateChanges(root: Node | DocumentNode): unknown {
     if (node.type === "document") {
       const children: unknown[] = [];
       for (const child of node.children) {
-        children.push(walk(child, dd, id));
+        children.push(walk(child, deletedDepth, insertedDepth));
       }
       return { type: "document", children };
     }
     return { type: (node as Node).type };
   }
   return walk(root, 0, 0);
+}
+
+/** Annotate text nodes with changeStatus in-place (mutates the tree).
+ *  Used by `read` default mode to add annotations without changing
+ *  the array/shape structure of the output. */
+function annotateChangesInPlace(node: Node, deletedDepth: number, insertedDepth: number): void {
+  if (node.type === "text") {
+    if (deletedDepth > 0) (node as unknown as Record<string, unknown>).changeStatus = "deleted";
+    else if (insertedDepth > 0) (node as unknown as Record<string, unknown>).changeStatus = "inserted";
+    return;
+  }
+  if (node.type === "property") {
+    if (node.key === "change_deleted") deletedDepth++;
+    else if (node.key === "change_inserted") insertedDepth++;
+    else if (node.key === "change_unchanged") {
+      if (insertedDepth > 0) insertedDepth--; else if (deletedDepth > 0) deletedDepth--;
+    }
+    return;
+  }
+  if (node.type === "block") {
+    for (const child of node.children) {
+      annotateChangesInPlace(child, deletedDepth, insertedDepth);
+      // Update depths from property children (they may change within this block)
+      if (child.type === "property") {
+        if (child.key === "change_deleted") deletedDepth++;
+        else if (child.key === "change_inserted") insertedDepth++;
+        else if (child.key === "change_unchanged") {
+          if (insertedDepth > 0) insertedDepth--; else if (deletedDepth > 0) deletedDepth--;
+        }
+      }
+    }
+  }
 }
 
 /** Recursively extract text from a node's descendants.
@@ -700,6 +732,21 @@ function hasTrackedChanges(children: Node[]): boolean {
   return false;
 }
 
+/** Count tracked change blocks (change_deleted/change_inserted) in children.
+ *  Used by undo to give accurate diagnostic counts. */
+function countTrackedChangesInChildren(children: Node[]): number {
+  let count = 0;
+  for (const c of children) {
+    if (c.type === "property" && (c.key === "change_deleted" || c.key === "change_inserted")) {
+      count++;
+    }
+    if (c.type === "block") {
+      count += countTrackedChangesInChildren((c as BlockNode).children);
+    }
+  }
+  return count;
+}
+
 function wrapInChangeMarkers(
   content: Node[], type: "inserted" | "deleted", authorId: number, ts: string
 ): Node[] {
@@ -814,7 +861,7 @@ export async function refreshPreStep(filePath: string, mode: "none" | "reload" |
 
 /**
  * Post-step: reloads the buffer in LyX after lq has written to disk.
- * Best-effort — failure is silent.
+ * Best-effort — warns on failure so the user knows to reload manually.
  */
 async function refreshPostStep(filePath: string, mode: "none" | "reload" | "save-reload"): Promise<void> {
   if (mode === "none") return;
@@ -828,8 +875,8 @@ async function refreshPostStep(filePath: string, mode: "none" | "reload" | "save
   const ok = await sendLyxCommands(commands);
   if (!ok) {
     pushWarning(
-      "LyX server unreachable — buffer was not reloaded. " +
-      "The file was written successfully. " +
+      "LyX buffer was not reloaded — LyX may be closed, busy, or the server " +
+      "connection timed out. The file was written successfully. " +
       "Run 'buffer-reload' in LyX or reopen the file to see the changes."
     );
   }
@@ -1074,10 +1121,9 @@ export async function runCli(args: string[]) {
     // Dump may have --depth before the selector destructuring consumes it.
     // Parse from selector + restArgs to catch both "--depth N" patterns.
     const dumpArgs = selector ? [selector, ...restArgs] : restArgs;
-    const dumpFlags = parseArgs(dumpArgs, { boolean: ["toc", "show-changes"], string: ["depth"] });
+    const dumpFlags = parseArgs(dumpArgs, { boolean: ["toc"], string: ["depth"] });
     const depthStr = dumpFlags["depth"];
     const tocMode = dumpFlags["toc"] === true;
-    const showChanges = dumpFlags["show-changes"] === true;
     
     // If selector is present and not a flag, use it to target a subtree
     const dumpSelector = (selector && !selector.startsWith("--")) ? selector : undefined;
@@ -1138,9 +1184,6 @@ export async function runCli(args: string[]) {
       type: "document",
       children: [node],
     });
-
-    // Helper: apply change annotations when --show-changes is set
-    const toOutput = <T>(data: T): T | unknown => showChanges ? annotateChanges(data as unknown as Node | DocumentNode) : data;
     
     if (depthStr !== undefined) {
       const depth = parseInt(depthStr, 10);
@@ -1152,9 +1195,9 @@ export async function runCli(args: string[]) {
         const maxDepth = computeMaxDepth(ast, 0);
         if (depth > maxDepth) {
           pushWarning(`Depth ${depth} exceeds document depth (${maxDepth}). Showing full CST.`);
-          printJson({ data: toOutput(ast) });
+          printJson({ data: annotateChanges(ast) });
         } else {
-          printJson({ data: toOutput(truncateAtDepth(ast, depth, 0)) });
+          printJson({ data: annotateChanges(truncateAtDepth(ast, depth, 0) as Node | DocumentNode) });
         }
       } else {
         const results = roots.map(root => {
@@ -1167,15 +1210,15 @@ export async function runCli(args: string[]) {
           return truncateAtDepth(doc, depth, 0);
         });
         const data = roots.length === 1 ? results[0] : results;
-        printJson({ count: roots.length, data: toOutput(data) });
+        printJson({ count: roots.length, data: annotateChanges(data as Node | DocumentNode | Node[]) });
       }
     } else {
       if (useFullAst) {
-        printJson({ data: toOutput(ast) });
+        printJson({ data: annotateChanges(ast) });
       } else {
         const docs = roots.map(wrapAsDoc);
         const data = roots.length === 1 ? docs[0] : docs;
-        printJson({ count: roots.length, data: toOutput(data) });
+        printJson({ count: roots.length, data: annotateChanges(data as Node | DocumentNode | Node[]) });
       }
     }
     return;
@@ -1359,6 +1402,8 @@ export async function runCli(args: string[]) {
     }
 
     if (!countOnly && !textOnly) {
+      // Annotate text nodes with changeStatus in-place
+      for (const node of nodes) annotateChangesInPlace(node, 0, 0);
       result.data = nodes;
       result.count = nodes.length;
     }
@@ -1384,10 +1429,9 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "set") {
-    const flags = parseArgs(restArgs, { boolean: ["replace-all", "find-include-deleted"], string: ["find"] });
+    const flags = parseArgs(restArgs, { boolean: ["replace-all"], string: ["find"] });
     const replaceAll = flags["replace-all"] === true;
     const findStr: string | undefined = typeof flags["find"] === "string" ? flags["find"] : undefined;
-    const findIncludeDeleted = flags["find-include-deleted"] === true;
 
     if (nodes.length === 0) {
       printError("NO_MATCH", `Selector matched no nodes to set. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
@@ -1480,8 +1524,9 @@ export async function runCli(args: string[]) {
                 if (deletedDepth > 0) deletedDepth--;
                 newChildren.push(child);
               } else if (child.type === "text") {
-                // Skip text inside change_deleted blocks unless --find-include-deleted
-                if (deletedDepth > 0 && !findIncludeDeleted) {
+                // Skip text inside change_deleted blocks — undo the tracked
+                // change first if you need to edit that text.
+                if (deletedDepth > 0) {
                   newChildren.push(child);
                   continue;
                 }
@@ -1509,8 +1554,9 @@ export async function runCli(args: string[]) {
               } else if (child.type === "property" && child.key === "change_unchanged") {
                 if (deletedDepth > 0) deletedDepth--;
               } else if (child.type === "text") {
-                // Skip text inside change_deleted blocks unless --find-include-deleted
-                if (deletedDepth > 0 && !findIncludeDeleted) continue;
+                // Skip text inside change_deleted blocks — undo the tracked
+                // change first if you need to edit that text.
+                if (deletedDepth > 0) continue;
                 const count = countOccurrences(child.text, findStr);
                 if (count > 0) {
                   child.text = child.text.replaceAll(findStr, newValue);
@@ -2258,21 +2304,22 @@ export async function runCli(args: string[]) {
         `${skippedOtherAuthor} pre-existing tracked change${plural} from another author left unchanged.`
       );
     }
-    // When nothing was undone, check if there are any tracked changes at all in
-    // the matched nodes — if so, the author name likely doesn't match the author
-    // who made the changes. Surface an actionable diagnostic.
-    if (undoneCount === 0 && substring === undefined) {
-      let totalTrackedInNodes = 0;
+    // When nothing was undone and no other-author changes were identified,
+    // check if there are any tracked changes in the matched nodes — if so,
+    // the author name likely doesn't match. Only fire when the simpler
+    // skippedOtherAuthor diagnostic didn't already explain the situation.
+    if (undoneCount === 0 && substring === undefined && skippedOtherAuthor === 0) {
+      let totalTracked = 0;
       for (const node of nodes) {
-        if (node.type === "block") {
-          if (hasTrackedChanges(node.children)) totalTrackedInNodes++;
+        if (node.type === "block" && hasTrackedChanges(node.children)) {
+          // Count individual tracked changes, not nodes
+          totalTracked += countTrackedChangesInChildren(node.children);
         }
       }
-      if (totalTrackedInNodes > 0) {
-        const plural = totalTrackedInNodes === 1 ? "" : "s";
+      if (totalTracked > 0) {
+        const plural = totalTracked === 1 ? "" : "s";
         pushWarning(
-          `${totalTrackedInNodes} node${plural} contain${totalTrackedInNodes === 1 ? "s" : ""} tracked changes, ` +
-          `but none belong to author '${authorName}'. ` +
+          `${totalTracked} tracked change${plural} found but none belong to author '${authorName}'. ` +
           `Use '--author-name' to match the author who made these changes, ` +
           `or run 'lq init --author-name <name>' to update the default.`
         );
