@@ -4,7 +4,7 @@ import { query } from "./query.ts";
 import { getSchemaForClass, INSET_LAYOUTS, INSETS, INLINE_PROPERTIES } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
-import { Node, BlockNode, DocumentNode, PropertyNode } from "./ast.ts";
+import { Node, BlockNode, DocumentNode, PropertyNode, TextNode } from "./ast.ts";
 import { validateInsetType, KNOWN_COMMAND_INSET_TYPES } from "./registry.ts";
 import { getCachedAst, setCachedAst, hashText, setMaxCacheEntries } from "./cache.ts";
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
@@ -831,6 +831,174 @@ function replaceWithTracking(
   return result;
 }
 
+// --- Cross-text-node substring matching utilities ---
+
+interface TextSegment {
+  /** Index of this text node in the original children array */
+  childIndex: number;
+  /** The text content of this node */
+  text: string;
+}
+
+/**
+ * Build a concatenated view of text children, skipping text inside
+ * \change_deleted blocks. Change tracking markers (change_deleted,
+ * change_inserted, change_unchanged) are transparent — they don't
+ * break concatenation. Only structural children (insets, nested
+ * layouts) act as implicit boundaries (detected via childIndex gaps).
+ */
+function concatenateTextNodes(children: Node[]): { segments: TextSegment[]; fullText: string } {
+  const segments: TextSegment[] = [];
+  let deletedDepth = 0;
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    if (child.type === "property") {
+      if (child.key === "change_deleted") {
+        deletedDepth++;
+      } else if (child.key === "change_unchanged") {
+        if (deletedDepth > 0) deletedDepth--;
+      }
+    } else if (child.type === "text") {
+      if (deletedDepth === 0) {
+        segments.push({ childIndex: i, text: child.text });
+      }
+    }
+  }
+
+  const fullText = segments.map(s => s.text).join("");
+  return { segments, fullText };
+}
+
+/** Check that consecutive matched segments are not separated by a block child (inset). */
+function segmentsInSameRun(children: Node[], segA: TextSegment, segB: TextSegment): boolean {
+  for (let i = segA.childIndex + 1; i < segB.childIndex; i++) {
+    if (children[i].type === "block") return false;
+  }
+  return true;
+}
+
+/** Map a position in the concatenated fullText to (segmentIndex, offsetInSegment). */
+function mapPosToSegment(segments: TextSegment[], pos: number): { segIdx: number; offset: number } {
+  let remaining = pos;
+  for (let i = 0; i < segments.length; i++) {
+    if (remaining < segments[i].text.length) return { segIdx: i, offset: remaining };
+    remaining -= segments[i].text.length;
+  }
+  const last = segments[segments.length - 1];
+  return { segIdx: segments.length - 1, offset: last.text.length };
+}
+
+/**
+ * Core cross-node substring replacement. Concatenates all non-deleted text
+ * children, finds all occurrences of findStr, and rebuilds the children array
+ * with matched portions split out and (if tracked) wrapped in change markers.
+ *
+ * Matches that cross a structural boundary (inset between text nodes) are
+ * silently skipped — they behave as if findStr didn't match there.
+ */
+function applyCrossNodeReplace(
+  children: Node[],
+  findStr: string,
+  newValue: string,
+  tracked: boolean,
+  authorId: number,
+  ts: string,
+): { newChildren: Node[]; matchCount: number } {
+  const { segments, fullText } = concatenateTextNodes(children);
+  if (segments.length === 0 || fullText.length === 0) {
+    return { newChildren: [...children], matchCount: 0 };
+  }
+
+  // Find all match positions in the concatenated text
+  const matchStarts: number[] = [];
+  let pos = 0;
+  while ((pos = fullText.indexOf(findStr, pos)) !== -1) {
+    matchStarts.push(pos);
+    pos += findStr.length;
+  }
+  if (matchStarts.length === 0) return { newChildren: [...children], matchCount: 0 };
+
+  // Build a boolean array: isMatched[i] = true if character i is inside a valid match
+  const isMatched = new Array(fullText.length).fill(false);
+  let validCount = 0;
+  for (const ms of matchStarts) {
+    const me = ms + findStr.length;
+    const s = mapPosToSegment(segments, ms);
+    const e = mapPosToSegment(segments, me);
+    // Skip matches that cross structural boundaries
+    if (!segmentsInSameRun(children, segments[s.segIdx], segments[e.segIdx])) continue;
+    for (let p = ms; p < me; p++) isMatched[p] = true;
+    validCount++;
+  }
+  if (validCount === 0) return { newChildren: [...children], matchCount: 0 };
+
+  // Rebuild children array: iterate original children, splitting text nodes
+  // at match boundaries and collecting matched portions into tracking blocks.
+  const result: Node[] = [];
+  let concatPos = 0; // cursor in the concatenated fullText
+  let segIdx = 0;    // current segment index
+  let matchedBuffer: Node[] = [];
+  let inMatch = false;
+
+  function flushMatched() {
+    if (matchedBuffer.length === 0) return;
+    if (tracked) {
+      result.push(...wrapInChangeMarkers(matchedBuffer, "deleted", authorId, ts));
+      result.push(...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", authorId, ts));
+    } else {
+      result.push({ type: "text", text: newValue });
+    }
+    matchedBuffer = [];
+    inMatch = false;
+  }
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+
+    // Is this child a text segment in the concatenation?
+    if (segIdx < segments.length && segments[segIdx].childIndex === i) {
+      const seg = segments[segIdx];
+      const segStart = concatPos;
+      const segText = seg.text;
+
+      let charIdx = 0;
+      while (charIdx < segText.length) {
+        const globalPos = segStart + charIdx;
+
+        if (isMatched[globalPos]) {
+          // Find end of this matched run within the segment
+          let runEnd = charIdx;
+          while (runEnd < segText.length && isMatched[segStart + runEnd]) runEnd++;
+          matchedBuffer.push({ type: "text", text: segText.substring(charIdx, runEnd) });
+          inMatch = true;
+          charIdx = runEnd;
+        } else {
+          if (inMatch) flushMatched();
+          // Find end of this unmatched run
+          let runEnd = charIdx;
+          while (runEnd < segText.length && !isMatched[segStart + runEnd]) runEnd++;
+          result.push({ type: "text", text: segText.substring(charIdx, runEnd) });
+          charIdx = runEnd;
+        }
+      }
+
+      concatPos += segText.length;
+      segIdx++;
+    } else {
+      // Non-segment child (property, block, or deleted text)
+      // Flush matched buffer before a block boundary
+      if (inMatch && child.type === "block") flushMatched();
+      result.push(child);
+    }
+  }
+
+  // Flush any trailing matched text
+  if (inMatch) flushMatched();
+
+  return { newChildren: result, matchCount: validCount };
+}
+
 // --- LyXServer refresh helpers ---
 
 /**
@@ -1504,63 +1672,14 @@ export async function runCli(args: string[]) {
         }
 
         if (findStr !== undefined) {
-          // Surgical mode: replace substring within text children
-          if (trackChanges) {
-            // Tracked surgical replace: split text nodes at match boundaries
-            const newChildren: Node[] = [];
-            let nodeFindCount = 0;
-            let deletedDepth = 0;
-            for (const child of node.children) {
-              if (child.type === "property" && child.key === "change_deleted") {
-                deletedDepth++;
-                newChildren.push(child);
-              } else if (child.type === "property" && child.key === "change_unchanged") {
-                if (deletedDepth > 0) deletedDepth--;
-                newChildren.push(child);
-              } else if (child.type === "text") {
-                // Skip text inside change_deleted blocks — undo the tracked
-                // change first if you need to edit that text.
-                if (deletedDepth > 0) {
-                  newChildren.push(child);
-                  continue;
-                }
-                const count = countOccurrences(child.text, findStr);
-                if (count > 0) {
-                  nodeFindCount += count;
-                  newChildren.push(...replaceWithTracking(child.text, findStr, newValue, tcAid, tcTs));
-                } else {
-                  newChildren.push(child);
-                }
-              } else {
-                newChildren.push(child);
-              }
-            }
-            node.children = newChildren;
-            totalFindMatches += nodeFindCount;
-            if (nodeFindCount > 0) addFindCount(node, nodeFindCount);
-          } else {
-            // Plain surgical replace: simple string replace in all text children
-            let nodeFindCount = 0;
-            let deletedDepth = 0;
-            for (const child of node.children) {
-              if (child.type === "property" && child.key === "change_deleted") {
-                deletedDepth++;
-              } else if (child.type === "property" && child.key === "change_unchanged") {
-                if (deletedDepth > 0) deletedDepth--;
-              } else if (child.type === "text") {
-                // Skip text inside change_deleted blocks — undo the tracked
-                // change first if you need to edit that text.
-                if (deletedDepth > 0) continue;
-                const count = countOccurrences(child.text, findStr);
-                if (count > 0) {
-                  child.text = child.text.replaceAll(findStr, newValue);
-                  nodeFindCount += count;
-                }
-              }
-            }
-            totalFindMatches += nodeFindCount;
-            if (nodeFindCount > 0) addFindCount(node, nodeFindCount);
-          }
+          // Cross-node surgical replace: concatenates text children
+          // and matches findStr across punctuation-induced text-node boundaries.
+          const { newChildren, matchCount: nodeFindCount } = applyCrossNodeReplace(
+            node.children, findStr, newValue, trackChanges, tcAid, tcTs,
+          );
+          node.children = newChildren;
+          totalFindMatches += nodeFindCount;
+          if (nodeFindCount > 0) addFindCount(node, nodeFindCount);
         } else if (trackChanges) {
           // Full-text replace with trackChanges (existing behavior)
           // Warn if the node already contains pending tracked changes — the new
@@ -1978,40 +2097,17 @@ export async function runCli(args: string[]) {
       let splitTextIdx = -1;
       let splitInsertOffset = 0;
       if (position === "split-after" && targetParentBlock) {
-        // Collect descendant text nodes, skipping text inside \change_deleted blocks.
-        const allTextNodes: { node: Node & { type: "text" }; parentList: Node[]; index: number }[] = [];
-        const collectTextNodes = (children: Node[], deletedDepth = 0) => {
-          let depth = deletedDepth;
-          for (let i = 0; i < children.length; i++) {
-            const c = children[i];
-            if (c.type === "property") {
-              if (c.key === "change_deleted") depth++;
-              else if ((c.key === "change_inserted" || c.key === "change_unchanged") && depth > 0) depth--;
-              continue;
-            }
-            if (c.type === "text") {
-              if (depth === 0) {
-                allTextNodes.push({ node: c, parentList: children, index: i });
-              }
-            } else if (c.type === "block") {
-              collectTextNodes((c as BlockNode).children, depth);
-            }
-          }
-        };
-        collectTextNodes(targetParentBlock.children);
+        // Build concatenated text of direct text children (skipping \change_deleted blocks)
+        const { segments, fullText } = concatenateTextNodes(targetParentBlock.children);
 
         let totalMatches = 0;
-        let matchedTextNode: (typeof allTextNodes)[0] | null = null;
-        let matchOffset = -1;
-        for (const tn of allTextNodes) {
-          let searchFrom = 0;
-          while ((searchFrom = tn.node.text.indexOf(splitMatch!, searchFrom)) !== -1) {
+        let matchStart = -1;
+        {
+          let pos = 0;
+          while ((pos = fullText.indexOf(splitMatch!, pos)) !== -1) {
             totalMatches++;
-            if (!matchedTextNode) {
-              matchedTextNode = tn;
-              matchOffset = searchFrom;
-            }
-            searchFrom += splitMatch!.length;
+            if (matchStart === -1) matchStart = pos;
+            pos += splitMatch!.length;
           }
         }
 
@@ -2022,19 +2118,24 @@ export async function runCli(args: string[]) {
           printError("SPLIT_AMBIGUOUS", `split-after: substring '${splitMatch}' appears ${totalMatches} times in matched block. Use a more specific selector or a longer match string.`);
         }
 
-        // Split the text node and replace it with [before, after].
-        // Payload nodes are inserted between them in the loop below.
-        const fullText = matchedTextNode!.node.text;
-        const splitEnd = matchOffset + splitMatch!.length;
-        const before = fullText.substring(0, splitEnd);
-        const splitAfterText = fullText.substring(splitEnd);
-        splitParentList = matchedTextNode!.parentList;
-        splitTextIdx = matchedTextNode!.index;
+        const splitPos = matchStart + splitMatch!.length;
+        const splitPoint = mapPosToSegment(segments, splitPos);
 
-        const initialNodes: Node[] = [{ type: "text", text: before }];
-        if (splitAfterText.length > 0) {
-          initialNodes.push({ type: "text", text: splitAfterText });
-        }
+        // The split falls within a single text node at splitPoint.offset.
+        // The "before" portion includes all text from the start of the children
+        // up to splitPos; the matched text itself may span multiple text nodes
+        // but the split point is always within one node.
+        const splitChildIdx = segments[splitPoint.segIdx].childIndex;
+        const splitText = (targetParentBlock.children[splitChildIdx] as TextNode).text;
+        const before = splitText.substring(0, splitPoint.offset);
+        const splitAfterText = splitText.substring(splitPoint.offset);
+
+        splitParentList = targetParentBlock.children;
+        splitTextIdx = splitChildIdx;
+
+        const initialNodes: Node[] = [];
+        if (before.length > 0) initialNodes.push({ type: "text", text: before });
+        if (splitAfterText.length > 0) initialNodes.push({ type: "text", text: splitAfterText });
         splitParentList.splice(splitTextIdx, 1, ...initialNodes);
       }
 
