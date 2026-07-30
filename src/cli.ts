@@ -554,18 +554,12 @@ function annotateChangesInPlace(node: Node, deletedDepth: number, insertedDepth:
     else if (insertedDepth > 0) (node as unknown as Record<string, unknown>).changeStatus = "inserted";
     return;
   }
-  if (node.type === "property") {
-    if (node.key === "change_deleted") deletedDepth++;
-    else if (node.key === "change_inserted") insertedDepth++;
-    else if (node.key === "change_unchanged") {
-      if (insertedDepth > 0) insertedDepth--; else if (deletedDepth > 0) deletedDepth--;
-    }
-    return;
-  }
   if (node.type === "block") {
     for (const child of node.children) {
       annotateChangesInPlace(child, deletedDepth, insertedDepth);
-      // Update depths from property children (they may change within this block)
+      // Depth tracking lives here — mutating primitives inside the
+      // recursive call has no effect (pass-by-value), so depths are
+      // updated in this loop scope after each child returns.
       if (child.type === "property") {
         if (child.key === "change_deleted") deletedDepth++;
         else if (child.key === "change_inserted") insertedDepth++;
