@@ -6,6 +6,7 @@ import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode, TextNode } from "./ast.ts";
 import { validateInsetType, KNOWN_COMMAND_INSET_TYPES } from "./registry.ts";
+import { concatenateTextNodes, mapPosToSegment, type TextSegment } from "./text_utils.ts";
 import { getCachedAst, setCachedAst, hashText, setMaxCacheEntries } from "./cache.ts";
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
@@ -833,60 +834,12 @@ function replaceWithTracking(
 
 // --- Cross-text-node substring matching utilities ---
 
-interface TextSegment {
-  /** Index of this text node in the original children array */
-  childIndex: number;
-  /** The text content of this node */
-  text: string;
-}
-
-/**
- * Build a concatenated view of text children, skipping text inside
- * \change_deleted blocks. Change tracking markers (change_deleted,
- * change_inserted, change_unchanged) are transparent — they don't
- * break concatenation. Only structural children (insets, nested
- * layouts) act as implicit boundaries (detected via childIndex gaps).
- */
-function concatenateTextNodes(children: Node[]): { segments: TextSegment[]; fullText: string } {
-  const segments: TextSegment[] = [];
-  let deletedDepth = 0;
-
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i];
-    if (child.type === "property") {
-      if (child.key === "change_deleted") {
-        deletedDepth++;
-      } else if (child.key === "change_unchanged") {
-        if (deletedDepth > 0) deletedDepth--;
-      }
-    } else if (child.type === "text") {
-      if (deletedDepth === 0) {
-        segments.push({ childIndex: i, text: child.text });
-      }
-    }
-  }
-
-  const fullText = segments.map(s => s.text).join("");
-  return { segments, fullText };
-}
-
 /** Check that consecutive matched segments are not separated by a block child (inset). */
 function segmentsInSameRun(children: Node[], segA: TextSegment, segB: TextSegment): boolean {
   for (let i = segA.childIndex + 1; i < segB.childIndex; i++) {
     if (children[i].type === "block") return false;
   }
   return true;
-}
-
-/** Map a position in the concatenated fullText to (segmentIndex, offsetInSegment). */
-function mapPosToSegment(segments: TextSegment[], pos: number): { segIdx: number; offset: number } {
-  let remaining = pos;
-  for (let i = 0; i < segments.length; i++) {
-    if (remaining < segments[i].text.length) return { segIdx: i, offset: remaining };
-    remaining -= segments[i].text.length;
-  }
-  const last = segments[segments.length - 1];
-  return { segIdx: segments.length - 1, offset: last.text.length };
 }
 
 /**
@@ -925,8 +878,10 @@ function applyCrossNodeReplace(
   for (const ms of matchStarts) {
     const me = ms + findStr.length;
     const s = mapPosToSegment(segments, ms);
-    const e = mapPosToSegment(segments, me);
-    // Skip matches that cross structural boundaries
+    // Use me-1 (last matched character) so a match ending at a segment
+    // boundary doesn't map to the next segment and falsely check for
+    // blocks beyond the actual match range.
+    const e = mapPosToSegment(segments, me > 0 ? me - 1 : 0);
     if (!segmentsInSameRun(children, segments[s.segIdx], segments[e.segIdx])) continue;
     for (let p = ms; p < me; p++) isMatched[p] = true;
     validCount++;

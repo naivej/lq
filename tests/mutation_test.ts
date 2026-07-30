@@ -434,3 +434,96 @@ Deno.test("Bib Engine - Extract Citations", async () => {
   assertEquals(firstCit.key, "Mena2000");
   assertEquals(firstCit.year, "2000");
 });
+
+// --- Cross-text-node matching tests ---
+
+const REPRO_FIXTURE = new URL("./fixtures/PerDevLog/test_report_33_repro.lyx", import.meta.url);
+
+async function createTempReproFixture(name: string): Promise<string> {
+  const tempDir = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";
+  const tempPath = `${tempDir}/${name}`;
+  await Deno.copyFile(REPRO_FIXTURE, tempPath);
+  return tempPath;
+}
+
+Deno.test("Cross-Node --find (untracked)", async () => {
+  const tempFile = await createTempReproFixture("temp_cross_find_untracked.lyx");
+  try {
+    // "Compared to the literature, we find" spans a comma-induced text-node boundary
+    const result = await runCliTest([
+      "set", tempFile, "layout[Standard]:first", "REPLACED",
+      "--find", "Compared to the literature, we find",
+    ]);
+    assertEquals(result.modified_nodes, 1);
+    assertEquals(
+      (result.changes as Array<{ text: string }>)[0].text.includes("REPLACED"),
+      true,
+    );
+    // Verify the file content
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "REPLACED");
+    assertStringIncludes(text, "significant effects");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("Cross-Node --find (tracked)", async () => {
+  const tempFile = await createTempReproFixture("temp_cross_find_tracked.lyx");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]:first", "REPLACED",
+       "--find", "Compared to the literature, we find"],
+      { trackChanges: true },
+    );
+    assertEquals(result.modified_nodes, 1);
+    assertStringIncludes(
+      (result.changes as Array<{ text: string }>)[0].text,
+      "\\change_deleted{Compared to the literature, we find}",
+    );
+    // Verify the file contains tracking markers
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_deleted");
+    assertStringIncludes(text, "\\change_inserted");
+    assertStringIncludes(text, "REPLACED");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("Cross-Node split-after", async () => {
+  const tempFile = await createTempReproFixture("temp_cross_split.lyx");
+  try {
+    // "literature, we find" spans the comma boundary
+    const result = await runCliTest([
+      "insert", tempFile, "layout[Standard]:first",
+      "split-after", "literature, we find", "--text", "INSERTED",
+    ]);
+    assertEquals(result.matched_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    // The .lyx file has a newline between "literature," and " we find",
+    // so we check for INSERTED appearing after the split text.
+    assertStringIncludes(text, "INSERTED");
+    // Verify INSERTED appears between the matched text and the remainder.
+    const posLiterature = text.indexOf("literature,");
+    const posInserted = text.indexOf("INSERTED");
+    const posSignificant = text.indexOf("significant effects");
+    assertEquals(posLiterature < posInserted, true, "INSERTED should be after literature,");
+    assertEquals(posInserted < posSignificant, true, "INSERTED should be before significant effects");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("Cross-Node :contains()", async () => {
+  const tempFile = await createTempReproFixture("temp_cross_contains.lyx");
+  try {
+    // :contains should match across the comma boundary
+    const result = await runCliTest([
+      "read", tempFile, "layout:contains('Compared to the literature, we find')", "--count",
+    ]);
+    assertEquals((result.count as Record<string, number>)["layout[Standard]"], 1);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});

@@ -1,4 +1,5 @@
 import { DocumentNode, Node, BlockNode } from "./ast.ts";
+import { concatenateTextNodes } from "./text_utils.ts";
 
 export interface PseudoClass {
   name: "first" | "last" | "contains" | "nth-child" | "not" | "adjacent" | "until";
@@ -209,28 +210,16 @@ function nodeContainsText(node: Node, searchStr: string): boolean {
   if (node.type === "text") {
     return node.text.includes(searchStr);
   } else if (node.type === "block") {
-    // Concatenate consecutive text children (skipping \change_deleted blocks)
-    // so that phrases spanning punctuation-induced text-node boundaries match.
-    let concat = "";
-    let deletedDepth = 0;
+    // Use shared concatenation utility so phrases spanning
+    // punctuation-induced text-node boundaries match.
+    const { fullText } = concatenateTextNodes(node.children);
+    if (fullText.includes(searchStr)) return true;
+    // Also recurse into sub-blocks (insets, nested layouts)
     for (const child of node.children) {
-      if (child.type === "property") {
-        if (child.key === "change_deleted") {
-          deletedDepth++;
-        } else if (child.key === "change_unchanged" && deletedDepth > 0) {
-          deletedDepth--;
-        }
-      } else if (child.type === "text") {
-        if (deletedDepth === 0) concat += child.text;
-      } else if (child.type === "block") {
-        // Structural child (inset, nested layout) — check accumulated text,
-        // recurse into the child, then reset the concatenation buffer.
-        if (concat.includes(searchStr)) return true;
-        if (nodeContainsText(child, searchStr)) return true;
-        concat = "";
+      if (child.type === "block" && nodeContainsText(child, searchStr)) {
+        return true;
       }
     }
-    if (concat.includes(searchStr)) return true;
   }
   return false;
 }
