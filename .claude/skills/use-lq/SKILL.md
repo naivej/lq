@@ -105,10 +105,8 @@ The query engine supports traversing the CST using CSS-like selector:
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq undo <file> <selector> [<substring>]`
-  - **Snapshot restore** (default, no substring): 1-level undo — reverts the last `set`/`delete`/`insert`/`undo` on the matched nodes. Works for both tracked and plain (untracked) edits. Uses a pre-mutation snapshot stored at `~/.lq/undo/`.
-  - **Replay undo**: Unlimited-level undo — Removes the entire tracked changes block (`change_deleted`/`change_inserted`), which contains <substring>, and made by the current author.
-  - Snapshot undo is the primary path; replay is the fallback when snapshots are unavailable or a substring is specified.
-  - All undo operations themselves save snapshots, enabling intuitive undo-of-undo.
+  - 1- level **Snapshot restore** (default, no substring): consume the snapshot stored at `~/.lq/undo/` to reverts the last (tracked or plain) mutation, even when the mutation deleted the matched nodes.
+  - Unlimited-level **Replay undo**: Removes the entire tracked changes block (`change_deleted`/`change_inserted`), which contains <substring> and made by the current author. Can be reverted by snapshot restore.
 - `lq insert <file> <selector> <position> [helper]`
   - Insert new blocks or properties relative to a selector.
   - Positions:
@@ -168,7 +166,6 @@ When modifying a document, follow this safe workflow:
 1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
 2. **Test Blast Radius**: Run `lq read <file> <selector> --count` first. The subtype breakdown (e.g. `{"layout[Section]": 8, "layout[Standard]": 120}`) tells you the composition — if you meant to target sections but see 120 Standard layouts, your selector is wrong. Narrow before mutating.
 3. **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`. **Keep `new_text` scoped to only the changed substring.** `--find` operates on individual text nodes; `new_text` is the literal replacement, not merged with surrounding nodes.
-4. **Clean pending changes first**: Undo unwanted tracked changes before applying new ones. Re-editing a node with pending tracked changes produces a warning (new edits nest inside existing markers).
 
 ## Cross-Referencing
 

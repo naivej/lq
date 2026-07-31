@@ -22,9 +22,11 @@ export interface CliResult {
   deleted_nodes?: number;
   undone_nodes?: number;
   undone_changes?: number;
+  method?: string;
   count?: number | Record<string, number>;
   text?: string;
   data?: unknown;
+  changes?: unknown;
   warnings?: string[];
   refresh?: string;
 }
@@ -151,7 +153,7 @@ export async function runCliWithEnv(args: string[], env: Record<string, string>)
  */
 export async function runCliWithConfig(
   args: string[],
-  overrides: Partial<{ refresh: string; trackChanges: boolean; layoutsDir: string }>,
+  overrides: Partial<{ refresh: string; trackChanges: boolean; layoutsDir: string; authorName: string }>,
 ): Promise<CliResult> {
   const tmp = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";
   const key = JSON.stringify(overrides);

@@ -2,11 +2,12 @@ import { Node } from "./ast.ts";
 import * as path from "@std/path";
 
 export interface SnapshotEntry {
-  /** The selector used to target the node */
-  selector: string;
-  /** Index of this node within the selector's match list */
-  index: number;
-  /** Pre-mutation children of the matched block node */
+  /** Index path from the document root to the node whose children were
+   *  snapshotted ([] = the document root itself). Captured pre-mutation.
+   *  For mutations that add/remove siblings (insert before/after, untracked
+   *  delete) the path addresses the PARENT container, not the matched node. */
+  path: number[];
+  /** Pre-mutation children of the node at `path` */
   children: Node[];
 }
 
@@ -76,7 +77,8 @@ export async function saveSnapshot(
 
 /**
  * Load a pre-mutation snapshot by post-mutation content hash.
- * Returns null if no snapshot exists or on any error.
+ * Returns null if no snapshot exists, on any error, or if the file predates
+ * the path-based entry format (such snapshots degrade to replay undo).
  */
 export async function loadSnapshot(fileHash: string): Promise<SnapshotFile | null> {
   try {
@@ -84,8 +86,11 @@ export async function loadSnapshot(fileHash: string): Promise<SnapshotFile | nul
     if (!snapshotPath) return null;
     const json = await Deno.readTextFile(snapshotPath);
     const snapshot = JSON.parse(json) as SnapshotFile;
-    if (!snapshot || !snapshot.entries || !Array.isArray(snapshot.entries)) return null;
-    return snapshot;
+    if (!snapshot || !Array.isArray(snapshot.entries)) return null;
+    const valid = snapshot.entries.every(e =>
+      e && Array.isArray(e.path) && Array.isArray(e.children)
+    );
+    return valid ? snapshot : null;
   } catch {
     return null;
   }

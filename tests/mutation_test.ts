@@ -12,7 +12,8 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
 import * as path from "@std/path";
 import { parse } from "../src/parser.ts";
-import { BlockNode, TextNode } from "../src/ast.ts";
+import { serialize } from "../src/serializer.ts";
+import { BlockNode, Node, PropertyNode, TextNode } from "../src/ast.ts";
 import { runCliTest, runCliWithConfig, createTempFixture } from "./helpers.ts";
 
 Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
@@ -406,22 +407,27 @@ Deno.test("Mutation Engine - Multi-Block Raw-File After (order preservation)", a
   }
 });
 
-// T2: undo with zero changes — verifies no spurious \author pollution
-// (dev log 60 fix 1.3: undo on clean file should not write anything)
-Deno.test("Mutation Engine - Undo with Zero Changes (no spurious author)", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_undo_clean.lyx");
+// T2: undo with zero changes — UNDO_STALE error, no file write, no \author
+// pollution (dev log 78 staleness guard; dev log 60 fix 1.3 still applies)
+Deno.test("Mutation Engine - Undo with Zero Changes (UNDO_STALE)", { timeout: 10000 }, async () => {
+  // Minimal clean fixture: no snapshot, no tracked changes (my_template.lyx
+  // contains tracked changes, which would fall through to replay instead).
+  const tempFile = await writeTempLyx(
+    "temp_undo_clean.lyx",
+    "\\begin_layout Standard\nClean text\n\\end_layout\n",
+  );
   try {
+    const before = await Deno.readTextFile(tempFile);
     const result = await runCliWithConfig(
       ["undo", tempFile, "layout"],
       { trackChanges: true },
     );
-    assertEquals(result.undone_changes, 0);
-    // Re-read the file and verify no NEW \author was added
-    // (the fixture may already have \author entries from its header)
+    assertEquals(result.code, "UNDO_STALE");
+    assertStringIncludes(result.message!, "Nothing to undo");
     const text = await Deno.readTextFile(tempFile);
+    assertEquals(text, before, "UNDO_STALE undo must not write the file");
     const authorCount = (text.match(/\\author/g) || []).length;
-    // A clean fixture should have 0 or 1 \author entries (from the template header)
-    assertEquals(authorCount <= 1, true, "Undo on clean file should not add spurious \\author entries");
+    assertEquals(authorCount, 0, "Undo on clean file should not add spurious \\author entries");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -523,6 +529,253 @@ Deno.test("Cross-Node :contains()", async () => {
       "read", tempFile, "layout:contains('Compared to the literature, we find')", "--count",
     ]);
     assertEquals((result.count as Record<string, number>)["layout[Standard]"], 1);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- Dev log 78: flatten tracked changes + snapshot undo ---
+
+/** Write a minimal .lyx file with the given body content. */
+async function writeTempLyx(name: string, body: string, header = ""): Promise<string> {
+  const tempDir = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";
+  const tempPath = `${tempDir}/${name}`;
+  await Deno.writeTextFile(tempPath,
+    "#LyX 2.5 created this file.\n" +
+    "\\begin_document\n\\begin_header\n" + header + "\\end_header\n" +
+    "\\begin_body\n" + body + "\\end_body\n\\end_document\n"
+  );
+  return tempPath;
+}
+
+/** Children of the first layout in the document body. */
+function firstLayoutChildren(text: string): Node[] {
+  const ast = parse(text);
+  const doc = ast.children.find(c => c.type === "block" && c.tag === "document") as BlockNode;
+  const body = doc.children.find(c => c.type === "block" && c.tag === "body") as BlockNode;
+  const layout = body.children.find(c => c.type === "block" && c.tag === "layout") as BlockNode;
+  return layout.children;
+}
+
+function changeMarkers(children: Node[]): PropertyNode[] {
+  return children.filter(c =>
+    c.type === "property" && (c as PropertyNode).key.startsWith("change_")
+  ) as PropertyNode[];
+}
+
+function allText(children: Node[]): string {
+  return children.filter(c => c.type === "text").map(c => (c as TextNode).text).join("");
+}
+
+// Fixture with a pending change_inserted by Alice (id 1) spanning two text
+// nodes — the shape that produces nested markers when re-edited.
+const TRACKED_BODY =
+  "\\begin_layout Standard\n" +
+  "The quick brown fox\n" +
+  "\\change_inserted 1 1700000000\n" +
+  "QUICK\n" +
+  "LY brown\n" +
+  "\\change_unchanged\n" +
+  " jumps over\n" +
+  "\\end_layout\n";
+
+Deno.test("DL78 Flatten - Same-Author Merge (timestamp updated)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl78_merge.lyx", TRACKED_BODY, "\\author 1 \"Alice\"\n");
+  try {
+    // Alice edits inside her own pending insertion: QUICK -> FAST
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "FAST", "--find", "QUICK"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1);
+
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    // Merged into a single flat block: one change_inserted + one change_unchanged
+    assertEquals(markers.map(m => m.key), ["change_inserted", "change_unchanged"]);
+    const [aid, ts] = (markers[0].value || "").split(" ");
+    assertEquals(aid, "1");
+    assertEquals(parseInt(ts, 10) > 1700000000, true, "timestamp must update to max(old, new)");
+    const text = allText(children);
+    assertEquals(text.includes("FASTLY brown"), true, "inner content merged into outer block");
+    assertEquals(text.includes("QUICK"), false, "same-author deletion of own insertion drops the text");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL78 Flatten - Different-Author Split (adjacent flat blocks)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl78_split.lyx", TRACKED_BODY, "\\author 1 \"Alice\"\n");
+  try {
+    // Bob edits inside Alice's pending insertion: QUICK -> FAST
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "FAST", "--find", "QUICK"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.modified_nodes, 1);
+
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    // Split into two adjacent flat blocks, one shared closer, no nesting
+    assertEquals(markers.map(m => m.key), ["change_inserted", "change_inserted", "change_unchanged"]);
+    assertEquals((markers[0].value || "").split(" ")[0], "2", "Bob's block first (id 2)");
+    assertEquals(markers[1].value, "1 1700000000", "Alice's remainder keeps author and timestamp");
+    const text = allText(children);
+    assertEquals(text.includes("FAST"), true);
+    assertEquals(text.includes("QUICK"), false, "deletion of pending-inserted text drops it");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL78 Flatten - Full-Replace on Tracked Node (properties preserved)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "The \n\\emph on\nquick\n\\emph default\n brown fox\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl78_fullreplace.lyx", body);
+  try {
+    // Create pending tracked changes, then full-replace over them
+    await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "BROWN", "--find", "brown"],
+      { trackChanges: true },
+    );
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "REPLACED"],
+      { trackChanges: true },
+    );
+    assertEquals(result.modified_nodes, 1);
+
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\emph on", "inline properties must survive the flatten (dev log 80 N4)");
+    const children = firstLayoutChildren(text);
+    const keys = changeMarkers(children).map(m => m.key);
+    // Flat: no change marker appears between an opener and its closer
+    let depth = 0;
+    for (const k of keys) {
+      if (k === "change_unchanged") depth--;
+      else {
+        depth++;
+        assertEquals(depth <= 1, true, "markers must not nest after full-replace flatten");
+      }
+    }
+    assertEquals(keys.includes("change_inserted"), true);
+    assertStringIncludes(text, "REPLACED");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL78 - Straddling --find Errors (not generic NO_MATCH)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nThe quick brown fox jumps over\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl78_straddle.lyx", body);
+  try {
+    await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "QUICK", "--find", "quick"],
+      { trackChanges: true },
+    );
+    // "QUICK brown" spans the inserted block and the original text after it
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "X", "--find", "QUICK brown"],
+      { trackChanges: true },
+    );
+    assertEquals(result.code, "NO_MATCH");
+    assertStringIncludes(result.message!, "spans across tracked-change boundaries");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL78 Snapshot Undo - After Untracked Set (restores original)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nOriginal text here\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl78_undo_set.lyx", body);
+  try {
+    const expected = serialize(parse(await Deno.readTextFile(tempFile)));
+    await runCliTest(["set", tempFile, "layout[Standard]", "CHANGED"]);
+    const undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    assertEquals(undone.method, "snapshot");
+    assertEquals(undone.undone_changes, 1);
+    const restored = await Deno.readTextFile(tempFile);
+    assertEquals(restored, expected, "undo after set must restore the original content (dev log 80 N2)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL78 Snapshot Undo - After Insert (after + prepend)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nBase layout\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl78_undo_insert.lyx", body);
+  try {
+    const expected = serialize(parse(await Deno.readTextFile(tempFile)));
+
+    await runCliTest(["insert", tempFile, "layout[Standard]", "after", "--layout", "Standard", "--text", "SIBLING"]);
+    let undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    assertEquals(undone.undone_changes, 1);
+    assertEquals(await Deno.readTextFile(tempFile), expected, "undo after 'insert after' must restore (dev log 80 N3)");
+
+    await runCliTest(["insert", tempFile, "layout[Standard]", "prepend", "--footnote", "FN"]);
+    undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    assertEquals(undone.undone_changes, 1);
+    assertEquals(await Deno.readTextFile(tempFile), expected, "undo after 'insert prepend' must restore (dev log 80 N3)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL78 Snapshot Undo - After Untracked Delete (node restored)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nKeep me\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl78_undo_delete.lyx", body);
+  try {
+    const expected = serialize(parse(await Deno.readTextFile(tempFile)));
+    await runCliTest(["delete", tempFile, "layout[Standard]"]);
+    const undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    assertEquals(undone.undone_changes, 1);
+    assertEquals(await Deno.readTextFile(tempFile), expected, "undo after delete must bring the node back (dev log 80 N3)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL78 Snapshot Undo - 1-Level Enforcement + Consume", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nOriginal\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl78_onelevel.lyx", body);
+  try {
+    await runCliTest(["set", tempFile, "layout[Standard]", "EDIT_A"]);
+    await runCliTest(["set", tempFile, "layout[Standard]", "EDIT_B"]);
+    // Undo reverts only the last mutation (EDIT_B); EDIT_A stays
+    const undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    assertEquals(undone.undone_changes, 1);
+    let text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "EDIT_A");
+    assertEquals(text.includes("EDIT_B"), false);
+    // Snapshot consumed: a second undo is UNDO_STALE, not a redo
+    const stale = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    assertEquals(stale.code, "UNDO_STALE");
+    text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "EDIT_A", "stale undo must not redo or modify the file");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL78 Replay Undo - Substring Still Works (regression)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nThe quick brown fox\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl78_replay.lyx", body);
+  try {
+    await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "QUICK", "--find", "quick"],
+      { trackChanges: true },
+    );
+    const undone = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]", "QUICK"],
+      { trackChanges: true },
+    );
+    assertEquals(undone.undone_changes, 1);
+    assertEquals(undone.method, "replay");
+    const text = await Deno.readTextFile(tempFile);
+    assertEquals(text.includes("QUICK"), false, "inserted block removed");
+    assertStringIncludes(text, "\\change_deleted", "unrelated change_deleted block preserved");
+    assertStringIncludes(text, "quick");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }

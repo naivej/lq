@@ -216,13 +216,15 @@ Options (provide exactly one generation helper):
 Two modes, distinguished by the presence of a substring argument:
 
   lq undo <file> <selector>              Snapshot restore (1-level, any mutation).
-                                         Reverts the last set/delete/insert/undo.
-                                         Works for both tracked and plain edits.
+                                         consume the snapshot stored at '~/.lq/undo/' 
+                                         to reverts the last (tracked or plain) mutation, 
+                                         even when the mutation deleted the matched nodes.
 
   lq undo <file> <selector> <substring>  Replay undo (unlimited levels).
                                          Removes the entire tracked changes block (change_deleted/
-                                         change_inserted), which contains <substring>,
+                                         change_inserted), which contains <substring>
                                          and made by the current author.
+                                         Can be reverted by snapshot restore.
 
 Arguments:
   <file>       The path to the .lyx file.
@@ -734,51 +736,63 @@ function hasTrackedChanges(children: Node[]): boolean {
   return false;
 }
 
-/** Count tracked change blocks (change_deleted/change_inserted) in children.
- *  Used by undo to give accurate diagnostic counts. */
-function countTrackedChangesInChildren(children: Node[]): number {
-  let count = 0;
-  for (const c of children) {
-    if (c.type === "property" && (c.key === "change_deleted" || c.key === "change_inserted")) {
-      count++;
-    }
-    if (c.type === "block") {
-      count += countTrackedChangesInChildren((c as BlockNode).children);
+/** Compute the index path from the document root to a node, or null. */
+function findNodePath(root: Node[], target: Node): number[] | null {
+  for (let i = 0; i < root.length; i++) {
+    if (root[i] === target) return [i];
+    if (root[i].type === "block") {
+      const sub = findNodePath((root[i] as BlockNode).children, target);
+      if (sub) return [i, ...sub];
     }
   }
-  return count;
+  return null;
+}
+
+/** Resolve an index path to a node; [] resolves to the document root. */
+function nodeAtPath(ast: DocumentNode, path: number[]): DocumentNode | BlockNode | null {
+  let current: DocumentNode | BlockNode = ast;
+  for (const i of path) {
+    const next: Node | undefined = current.children[i];
+    if (!next || next.type !== "block") return null;
+    current = next;
+  }
+  return current;
 }
 
 /**
- * Strip all tracked-change markers (change_deleted, change_inserted,
- * change_unchanged) from children, returning only the content nodes.
- * Used for full-replace flattening: nuke old markers, apply new ones.
+ * Snapshot the pre-mutation children of each matched node (mode "self") or
+ * of its parent container (mode "parent" — for mutations that add/remove
+ * siblings, like insert before/after or untracked delete). Non-block nodes
+ * (text, property) always fall back to the parent container: their own
+ * text/value is part of the parent's child list.
  */
-function stripTrackedChangeMarkers(children: Node[]): Node[] {
-  const result: Node[] = [];
-  let skipDepth = 0;
-  for (const child of children) {
-    if (child.type === "property") {
-      if (child.key === "change_deleted" || child.key === "change_inserted") {
-        skipDepth++;
-        continue;
-      }
-      if (child.key === "change_unchanged") {
-        if (skipDepth > 0) { skipDepth--; continue; }
-        // Stray change_unchanged outside any tracked block — keep it
-        result.push(child);
-        continue;
-      }
-    }
-    if (skipDepth === 0 && child.type !== "property") {
-      // Only keep non-marker content nodes when not inside a tracked block
-      result.push(child);
-    } else if (skipDepth > 0 && child.type === "text") {
-      // Text inside a tracked block: keep it (it becomes plain text after flattening)
-      result.push(child);
-    }
+function collectSnapshots(ast: DocumentNode, nodes: Node[], mode: "self" | "parent"): SnapshotEntry[] {
+  const entries: SnapshotEntry[] = [];
+  const seen = new Set<string>();
+  for (const node of nodes) {
+    const nodePath = findNodePath(ast.children, node);
+    if (!nodePath) continue;
+    const path = (mode === "parent" || node.type !== "block") ? nodePath.slice(0, -1) : nodePath;
+    const key = path.join(",");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const target = nodeAtPath(ast, path);
+    if (!target) continue;
+    entries.push({ path, children: structuredClone(target.children) });
   }
-  return result;
+  return entries;
+}
+
+/**
+ * Persist a mutation: serialize, save the pre-mutation snapshot keyed by the
+ * post-mutation content hash, write the file, update the parse cache.
+ */
+async function commitMutation(filePath: string, ast: DocumentNode, preSnapshots: SnapshotEntry[]): Promise<void> {
+  const newFileText = serialize(ast);
+  const postHash = await hashText(newFileText);
+  await saveSnapshot(path.resolve(filePath), preSnapshots, postHash);
+  await Deno.writeTextFile(filePath, newFileText);
+  try { await setCachedAst(postHash, ast, filePath); } catch { /* non-fatal */ }
 }
 
 function wrapInChangeMarkers(
@@ -798,94 +812,115 @@ function wrapInChangeMarkers(
  * \change_deleted inside \change_inserted is malformed. This function
  * post-processes children after a mutation to ensure flat, unnested markers.
  *
- * Rules (matching LyX's per-position Change model):
- * - \change_deleted inside \change_inserted: flatten — discard the inner
- *   deleted marker, keep the text as part of the outer inserted block.
- *   (A position already marked INSERTED cannot also be DELETED.)
- * - \change_inserted inside \change_inserted, same author: merge — replace
- *   text in place, update timestamp to max(old, new).
+ * Rules (matching LyX's per-position Change model, dev log 78 Fix 1):
+ * - \change_deleted inside \change_inserted: dropped entirely — deleting
+ *   pending-inserted text removes it (it was never in the accepted document).
+ * - \change_inserted inside \change_inserted, same author: merge — absorb
+ *   the inner content into the outer block, timestamp becomes max(old, new).
  * - \change_inserted inside \change_inserted, different author: split into
- *   adjacent flat blocks.
- * - \change_unchanged inside \change_inserted: close the outer block
- *   (this marks the original text boundary, kept as-is).
+ *   adjacent flat blocks (no \change_unchanged between them — LyX emits a
+ *   marker only when the Change state differs — one closer at region end).
+ * - Top-level \change_deleted regions pass through verbatim: their text is
+ *   invisible to mutations, so they never acquire new nesting.
  */
-function flattenNestedChanges(children: Node[], currentAuthorId: number, currentTs: string): Node[] {
+function flattenNestedChanges(children: Node[]): Node[] {
   const result: Node[] = [];
-  let outer: { type: "inserted" | "deleted"; authorId: number; timestamp: string } | null = null;
-  let outerBuffer: Node[] = [];
 
-  function flushOuter() {
-    if (outer && outerBuffer.length > 0) {
-      result.push(
-        { type: "property", key: `change_${outer.type}`, value: `${outer.authorId} ${outer.timestamp}` },
-        ...outerBuffer,
-        { type: "property", key: "change_unchanged" },
-      );
-    } else if (!outer && outerBuffer.length > 0) {
-      result.push(...outerBuffer);
+  const parseMarker = (value: string | undefined): { authorId: number; ts: string } => {
+    const parts = value?.split(" ") ?? [];
+    return { authorId: parseInt(parts[0], 10) || 0, ts: parts[1] || "0" };
+  };
+
+  // Collect the content of the change region opened by the marker at
+  // `start - 1`: everything up to (excluding) the matching \change_unchanged.
+  // Returns the content and the index of that closer.
+  const collectRegion = (start: number): { content: Node[]; closer: number } => {
+    const content: Node[] = [];
+    let depth = 1;
+    let j = start;
+    while (j < children.length && depth > 0) {
+      const n = children[j];
+      if (n.type === "property" && (n.key === "change_inserted" || n.key === "change_deleted")) depth++;
+      else if (n.type === "property" && n.key === "change_unchanged") depth--;
+      if (depth > 0) content.push(n);
+      j++;
     }
-    outerBuffer = [];
-  }
+    return { content, closer: j - 1 };
+  };
 
-  for (let i = 0; i < children.length; i++) {
+  let i = 0;
+  while (i < children.length) {
     const child = children[i];
 
-    if (child.type === "property" && (child.key === "change_inserted" || child.key === "change_deleted")) {
-      const markerType = child.key === "change_inserted" ? "inserted" : "deleted";
-      const parts = child.value?.split(" ") ?? [];
-      const innerAuthorId = parseInt(parts[0], 10) || 0;
-      const innerTs = parts[1] || currentTs;
+    if (child.type === "property" && child.key === "change_deleted") {
+      const { closer } = collectRegion(i + 1);
+      for (let k = i; k <= closer && k < children.length; k++) result.push(children[k]);
+      i = closer + 1;
+      continue;
+    }
 
-      if (outer && outer.authorId === innerAuthorId) {
-        // Same author: merge. For same-type, skip the duplicate marker and
-        // absorb its content. For different-type (e.g. change_deleted inside
-        // change_inserted), absorb content for change_inserted, drop for
-        // change_deleted (author is removing their own inserted text).
-        let depth = 1;
-        while (i + 1 < children.length && depth > 0) {
-          i++;
-          const next = children[i];
-          if (next.type === "property" && (next.key === "change_inserted" || next.key === "change_deleted")) depth++;
-          else if (next.type === "property" && next.key === "change_unchanged") depth--;
-          else if (depth > 0 && next.type === "text" && markerType === "inserted") {
-            outerBuffer.push(next);
-          }
+    if (child.type === "property" && child.key === "change_inserted") {
+      const outer = parseMarker(child.value);
+      const { content, closer } = collectRegion(i + 1);
+
+      // Split region content into flat segments: outer-author runs, and
+      // different-author inner blocks. Same-author inners are absorbed.
+      const segments: { authorId: number; ts: string; nodes: Node[] }[] = [];
+      let outerRun: Node[] = [];
+      let outerTs = outer.ts;
+      const flushOuterRun = () => {
+        if (outerRun.length > 0) {
+          segments.push({ authorId: outer.authorId, ts: outerTs, nodes: outerRun });
+          outerRun = [];
         }
-        continue;
+      };
+
+      let k = 0;
+      while (k < content.length) {
+        const n = content[k];
+        if (n.type === "property" && (n.key === "change_inserted" || n.key === "change_deleted")) {
+          const inner = parseMarker(n.value);
+          // Find the inner region's extent within the outer content
+          const innerContent: Node[] = [];
+          let depth = 1;
+          let m = k + 1;
+          while (m < content.length && depth > 0) {
+            const x = content[m];
+            if (x.type === "property" && (x.key === "change_inserted" || x.key === "change_deleted")) depth++;
+            else if (x.type === "property" && x.key === "change_unchanged") depth--;
+            if (depth > 0) innerContent.push(x);
+            m++;
+          }
+          if (n.key === "change_inserted") {
+            if (inner.authorId === outer.authorId) {
+              if (parseInt(inner.ts, 10) > parseInt(outerTs, 10)) outerTs = inner.ts;
+              outerRun.push(...innerContent);
+            } else {
+              flushOuterRun();
+              segments.push({ authorId: inner.authorId, ts: inner.ts, nodes: innerContent });
+            }
+          }
+          // change_deleted inside change_inserted: drop entirely
+          k = m;
+        } else {
+          outerRun.push(n);
+          k++;
+        }
       }
+      flushOuterRun();
 
-      // Different author or no outer context: close outer, emit inner flat
-      flushOuter();
-      result.push(child);
-      let depth = 1;
-      while (i + 1 < children.length && depth > 0) {
-        i++;
-        const next = children[i];
-        if (next.type === "property" && (next.key === "change_inserted" || next.key === "change_deleted")) depth++;
-        else if (next.type === "property" && next.key === "change_unchanged") depth--;
-        result.push(next);
+      for (const seg of segments) {
+        result.push({ type: "property", key: "change_inserted", value: `${seg.authorId} ${seg.ts}` }, ...seg.nodes);
       }
-      // Keep outer context active for remaining text
+      if (segments.length > 0) result.push({ type: "property", key: "change_unchanged" });
+      i = closer + 1;
       continue;
     }
 
-    if (child.type === "property" && child.key === "change_unchanged") {
-      if (outer) { flushOuter(); outer = null; }
-      else { flushOuter(); result.push(child); }
-      continue;
-    }
-
-    if (child.type === "text") {
-      outerBuffer.push(child);
-      continue;
-    }
-
-    flushOuter();
-    outer = null;
     result.push(child);
+    i++;
   }
 
-  flushOuter();
   return result;
 }
 
@@ -928,47 +963,6 @@ function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted", authorId:
   return result;
 }
 
-/**
- * Replace all occurrences of findStr with replacement in a text string,
- * wrapping only the changed portions in change tracking markers.
- * Surrounding text that does not match is left untracked (no markers).
- *
- * This mirrors how LyX tracks character-level edits: only the actual
- * changed characters get \change_deleted / \change_inserted markers.
- */
-function replaceWithTracking(
-  text: string,
-  findStr: string,
-  replacement: string,
-  authorId: number,
-  ts: string,
-): Node[] {
-  const result: Node[] = [];
-  let remaining = text;
-
-  while (remaining.length > 0) {
-    const idx = remaining.indexOf(findStr);
-    if (idx === -1) {
-      // No more matches — remaining text is unchanged (untracked)
-      result.push({ type: "text", text: remaining });
-      break;
-    }
-
-    // Text before the match (unchanged, untracked)
-    if (idx > 0) {
-      result.push({ type: "text", text: remaining.substring(0, idx) });
-    }
-
-    // The matched substring (tracked as deleted) + replacement (tracked as inserted)
-    result.push(...wrapInChangeMarkers([{ type: "text", text: findStr }], "deleted", authorId, ts));
-    result.push(...wrapInChangeMarkers([{ type: "text", text: replacement }], "inserted", authorId, ts));
-
-    remaining = remaining.substring(idx + findStr.length);
-  }
-
-  return result;
-}
-
 // --- Cross-text-node substring matching utilities ---
 
 /** Check that consecutive matched segments are not separated by a block child (inset). */
@@ -980,42 +974,30 @@ function segmentsInSameRun(children: Node[], segA: TextSegment, segB: TextSegmen
 }
 
 /**
- * Check that two matched segments are in the same tracked-change region.
- * A match straddling a \change_unchanged boundary between a
- * \change_inserted block and original text is invalid — LyX's flat
- * model can't represent a single edit spanning both.
+ * Straddle detection: do two matched segments lie on opposite sides of a
+ * tracked-change boundary (one inside \change_inserted, the other in
+ * original text)? Such a match is invalid — LyX's flat model can't
+ * represent a single edit spanning both regions (dev log 78 Fix 1).
+ * Segments never reference \change_deleted text (concatenateTextNodes
+ * skips it), so only the inserted state needs tracking.
  */
-function segmentsInSameChangeRegion(children: Node[], segA: TextSegment, segB: TextSegment): boolean {
-  // Track whether we're inside a change_inserted or change_deleted block
+function straddlesChangeBoundary(children: Node[], segA: TextSegment, segB: TextSegment): boolean {
   let insideInserted = false;
-  let insideDeleted = false;
   let aInsideInserted: boolean | null = null;
 
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
     if (child.type === "property") {
-      if (child.key === "change_inserted") { insideInserted = true; continue; }
-      if (child.key === "change_deleted") { insideDeleted = true; continue; }
-      if (child.key === "change_unchanged") {
-        insideInserted = false;
-        insideDeleted = false;
-        continue;
-      }
+      if (child.key === "change_inserted") insideInserted = true;
+      else if (child.key === "change_unchanged") insideInserted = false;
+      continue;
     }
     if (child.type !== "text") continue;
 
-    // Record region type for segment A
-    if (i === segA.childIndex) {
-      aInsideInserted = insideInserted;
-    }
-    // When we reach segment B, compare
-    if (i === segB.childIndex) {
-      const bInsideInserted = insideInserted;
-      // Both must be in the same region type
-      return aInsideInserted === bInsideInserted;
-    }
+    if (i === segA.childIndex) aInsideInserted = insideInserted;
+    if (i === segB.childIndex) return aInsideInserted !== insideInserted;
   }
-  return true; // safety: if we can't determine, allow the match
+  return false; // safety: if we can't determine, allow the match
 }
 
 /**
@@ -1024,7 +1006,9 @@ function segmentsInSameChangeRegion(children: Node[], segA: TextSegment, segB: T
  * with matched portions split out and (if tracked) wrapped in change markers.
  *
  * Matches that cross a structural boundary (inset between text nodes) are
- * silently skipped — they behave as if findStr didn't match there.
+ * silently skipped. Matches that straddle a tracked-change boundary are
+ * skipped too, but reported via straddleCount so the caller can emit the
+ * dedicated error (dev log 78) instead of the generic NO_MATCH.
  */
 function applyCrossNodeReplace(
   children: Node[],
@@ -1033,10 +1017,10 @@ function applyCrossNodeReplace(
   tracked: boolean,
   authorId: number,
   ts: string,
-): { newChildren: Node[]; matchCount: number } {
+): { newChildren: Node[]; matchCount: number; straddleCount: number } {
   const { segments, fullText } = concatenateTextNodes(children);
   if (segments.length === 0 || fullText.length === 0) {
-    return { newChildren: [...children], matchCount: 0 };
+    return { newChildren: [...children], matchCount: 0, straddleCount: 0 };
   }
 
   // Find all match positions in the concatenated text
@@ -1046,11 +1030,12 @@ function applyCrossNodeReplace(
     matchStarts.push(pos);
     pos += findStr.length;
   }
-  if (matchStarts.length === 0) return { newChildren: [...children], matchCount: 0 };
+  if (matchStarts.length === 0) return { newChildren: [...children], matchCount: 0, straddleCount: 0 };
 
   // Build a boolean array: isMatched[i] = true if character i is inside a valid match
   const isMatched = new Array(fullText.length).fill(false);
   let validCount = 0;
+  let straddleCount = 0;
   for (const ms of matchStarts) {
     const me = ms + findStr.length;
     const s = mapPosToSegment(segments, ms);
@@ -1061,11 +1046,14 @@ function applyCrossNodeReplace(
     if (!segmentsInSameRun(children, segments[s.segIdx], segments[e.segIdx])) continue;
     // Straddle check: match must not cross a \change_unchanged boundary
     // between tracked and original text (dev log 78 Fix 1).
-    if (!segmentsInSameChangeRegion(children, segments[s.segIdx], segments[e.segIdx])) continue;
+    if (straddlesChangeBoundary(children, segments[s.segIdx], segments[e.segIdx])) {
+      straddleCount++;
+      continue;
+    }
     for (let p = ms; p < me; p++) isMatched[p] = true;
     validCount++;
   }
-  if (validCount === 0) return { newChildren: [...children], matchCount: 0 };
+  if (validCount === 0) return { newChildren: [...children], matchCount: 0, straddleCount };
 
   // Rebuild children array: iterate original children, splitting text nodes
   // at match boundaries and collecting matched portions into tracking blocks.
@@ -1130,7 +1118,7 @@ function applyCrossNodeReplace(
   // Flush any trailing matched text
   if (inMatch) flushMatched();
 
-  return { newChildren: result, matchCount: validCount };
+  return { newChildren: result, matchCount: validCount, straddleCount };
 }
 
 // --- LyXServer refresh helpers ---
@@ -1751,6 +1739,9 @@ export async function runCli(args: string[]) {
 
     // Track total substring matches for stderr notification
     let totalFindMatches = 0;
+    // Matches skipped because they straddle a tracked-change boundary —
+    // reported with a dedicated error when nothing valid matched (dev log 78).
+    let totalStraddles = 0;
     // Per-node type counts captured during mutation (before trackChanges wraps text
     // in change_inserted markers, which could cause double-counting if re-scanned)
     const findPerNode: Record<string, number> = {};
@@ -1758,6 +1749,9 @@ export async function runCli(args: string[]) {
     // Pre-compute trackChanges timestamp once for all nodes
     const tcTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
     const tcAid = trackChanges ? resolveAuthorId(ast, authorName) : 0;
+
+    // Snapshot pre-mutation state for undo — must run BEFORE the mutation loop.
+    const preSnapshots = collectSnapshots(ast, nodes, "self");
 
     // Helper to accumulate per-node find counts during mutation
     const addFindCount = (node: Node, count: number) => {
@@ -1808,23 +1802,26 @@ export async function runCli(args: string[]) {
         if (findStr !== undefined) {
           // Cross-node surgical replace: concatenates text children
           // and matches findStr across punctuation-induced text-node boundaries.
-          const { newChildren, matchCount: nodeFindCount } = applyCrossNodeReplace(
+          const { newChildren, matchCount: nodeFindCount, straddleCount: nodeStraddles } = applyCrossNodeReplace(
             node.children, findStr, newValue, trackChanges, tcAid, tcTs,
           );
           // Flatten any nested markers produced by editing inside existing
           // tracked changes (dev log 78 Fix 1).
           node.children = trackChanges
-            ? flattenNestedChanges(newChildren, tcAid, tcTs)
+            ? flattenNestedChanges(newChildren)
             : newChildren;
           totalFindMatches += nodeFindCount;
+          totalStraddles += nodeStraddles;
           if (nodeFindCount > 0) addFindCount(node, nodeFindCount);
         } else if (trackChanges) {
           // Full-text replace with trackChanges: flatten old markers to plain
-          // text before applying new markers, matching LyX's per-position
-          // overwrite model (dev log 78 Fix 1).
+          // content before applying new markers, matching LyX's per-position
+          // overwrite model (dev log 78 Fix 1). All non-marker nodes (text,
+          // inline properties, insets) survive the flatten.
           if (hasTrackedChanges(node.children)) {
-            // Strip all tracked-change markers, collect plain text children
-            const stripped = stripTrackedChangeMarkers(node.children);
+            const stripped = node.children.filter(c =>
+              c.type !== "property" ||
+              (c.key !== "change_deleted" && c.key !== "change_inserted" && c.key !== "change_unchanged"));
             node.children = [
               ...wrapInChangeMarkers(stripped.filter(c => c.type === "text"), "deleted", tcAid, tcTs),
               ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
@@ -1870,6 +1867,9 @@ export async function runCli(args: string[]) {
     // After loop: check if --find had any matches
     if (findStr !== undefined) {
       if (totalFindMatches === 0) {
+        if (totalStraddles > 0) {
+          printError("NO_MATCH", `--find '${findStr}' spans across tracked-change boundaries. Run 'lq undo ${filePath} "${selector}"' first, then retry.`);
+        }
         printError("NO_MATCH", `--find '${findStr}' matched no occurrences within the targeted nodes. Run 'lq read ${filePath} "${selector}" --text-only' to inspect their text.`);
       }
       const plural = totalFindMatches === 1 ? "" : "s";
@@ -1884,22 +1884,7 @@ export async function runCli(args: string[]) {
     if (trackChanges) {
       ensureTrackingChangesInHeader(ast);
     }
-    // Snapshot pre-mutation children for undo
-    const preSnapshots: SnapshotEntry[] = [];
-    {
-      let nodeIdx = 0;
-      for (const node of nodes) {
-        if (node.type === "block") {
-          preSnapshots.push({ selector, index: nodeIdx, children: structuredClone(node.children) });
-        }
-        nodeIdx++;
-      }
-    }
-    const newFileText = serialize(ast);
-    const postHash = await hashText(newFileText);
-    await saveSnapshot(path.resolve(filePath), preSnapshots, postHash);
-    await Deno.writeTextFile(filePath, newFileText);
-    try { await setCachedAst(postHash, ast, filePath); } catch { /* non-fatal */ }
+    await commitMutation(filePath, ast, preSnapshots);
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
     printJson({ modified_nodes: nodes.length, changes });
@@ -1911,17 +1896,10 @@ export async function runCli(args: string[]) {
       printError("NO_MATCH", `Selector matched no nodes to delete. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
     }
 
-    // Snapshot pre-mutation children for undo (before any mutation)
-    const deletePreSnapshots: SnapshotEntry[] = [];
-    {
-      let nodeIdx = 0;
-      for (const node of nodes) {
-        if (node.type === "block") {
-          deletePreSnapshots.push({ selector, index: nodeIdx, children: structuredClone(node.children) });
-        }
-        nodeIdx++;
-      }
-    }
+    // Snapshot pre-mutation state for undo (before any mutation). Parent
+    // mode: deletion removes nodes from (or splices markers into) the
+    // parent's child list, so the parent's children are what must restore.
+    const deletePreSnapshots = collectSnapshots(ast, nodes, "parent");
 
     if (trackChanges) {
       // Track-changes mode: wrap matched nodes in change_deleted markers instead of removing them
@@ -1972,11 +1950,7 @@ export async function runCli(args: string[]) {
       };
 
       markAsDeleted(ast.children, true); // document body = paragraph context
-      const newFileText = serialize(ast);
-      const deletePostHash = await hashText(newFileText);
-      await saveSnapshot(path.resolve(filePath), deletePreSnapshots, deletePostHash);
-      await Deno.writeTextFile(filePath, newFileText);
-      try { await setCachedAst(deletePostHash, ast, filePath); } catch { /* non-fatal */ }
+      await commitMutation(filePath, ast, deletePreSnapshots);
       await refreshPostStep(filePath, refreshMode);
       const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
       printJson({ tracked_deleted_nodes: nodes.length, changes });
@@ -1998,11 +1972,7 @@ export async function runCli(args: string[]) {
 
     filterNodes(ast.children);
 
-    const newFileText = serialize(ast);
-    const deletePostHash2 = await hashText(newFileText);
-    await saveSnapshot(path.resolve(filePath), deletePreSnapshots, deletePostHash2);
-    await Deno.writeTextFile(filePath, newFileText);
-    try { await setCachedAst(deletePostHash2, ast, filePath); } catch { /* non-fatal */ }
+    await commitMutation(filePath, ast, deletePreSnapshots);
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
     printJson({ deleted_nodes: nodes.length, changes });
@@ -2234,28 +2204,14 @@ export async function runCli(args: string[]) {
     const insertTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
     if (trackChanges) ensureTrackingChangesInHeader(ast);
 
-    // Snapshot pre-mutation state for undo. Insert modifies parent nodes,
-    // so we snapshot the parents' children (not the matched nodes themselves).
-    const insertPreSnapshots: SnapshotEntry[] = [];
-    {
-      // Collect unique parent paths — a single parent may contain multiple
-      // matched nodes, so we track by the parent's children array identity
-      // and use the first matched node's selector/index.
-      const seenParents = new Set<Node[]>();
-      let nodeIdx = 0;
-      for (const node of nodes) {
-        const ctx = findNodeContext(ast.children, node);
-        if (ctx && !seenParents.has(ctx.list)) {
-          seenParents.add(ctx.list);
-          insertPreSnapshots.push({
-            selector,
-            index: nodeIdx,
-            children: structuredClone(ctx.list),
-          });
-        }
-        nodeIdx++;
-      }
-    }
+    // Snapshot pre-mutation state for undo. prepend/append/split-after
+    // modify the target's own children; before/after splice into the
+    // parent container's child list.
+    const insertPreSnapshots = collectSnapshots(
+      ast,
+      nodes,
+      (position === "before" || position === "after") ? "parent" : "self",
+    );
 
     for (const targetNode of nodes) {
       let targetParentBlock: BlockNode | null = null;
@@ -2467,11 +2423,7 @@ export async function runCli(args: string[]) {
       insertedCount++;
     }
 
-    const newFileText = serialize(ast);
-    const insertPostHash = await hashText(newFileText);
-    await saveSnapshot(path.resolve(filePath), insertPreSnapshots, insertPostHash);
-    await Deno.writeTextFile(filePath, newFileText);
-    try { await setCachedAst(insertPostHash, ast, filePath); } catch { /* non-fatal */ }
+    await commitMutation(filePath, ast, insertPreSnapshots);
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ position, label: nodeLabel(n), text: briefText(n) }));
     printJson({ matched_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });
@@ -2479,45 +2431,37 @@ export async function runCli(args: string[]) {
   }
 
   if (command === "undo") {
-    if (nodes.length === 0) {
-      printError("NO_MATCH", `Selector matched no nodes to undo. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
-    }
     const substring: string | undefined = restArgs.length > 0 ? restArgs.join(" ") : undefined;
 
     // --- Snapshot-based undo (primary path, no substring) ---
     // Restore from a pre-mutation snapshot when no surgical substring
-    // is specified. With a substring, fall through to replay-based
-    // undo which scans individual tracked-change blocks.
+    // is specified. The snapshot is consumed on restore: undo-after-undo
+    // is UNDO_STALE, not a redo (dev log 78 — bounded, predictable undo).
     if (substring === undefined) {
       const currentHash = await hashFile(filePath);
       const snapshot = await loadSnapshot(currentHash);
       if (snapshot) {
         let restoredCount = 0;
-        for (const entry of snapshot.entries) {
-          const matchedNodes = query(ast, entry.selector);
-          if (entry.index < matchedNodes.length) {
-            const node = matchedNodes[entry.index];
-            if (node.type === "block") {
-              // Snapshot pre-mutation children for undo-of-undo
-              const undoPreSnapshots: SnapshotEntry[] = [{
-                selector: entry.selector,
-                index: entry.index,
-                children: structuredClone(node.children),
-              }];
-              node.children = entry.children;
-              restoredCount++;
-
-              // Write file and save snapshot for undo-of-undo
-              const newFileText = serialize(ast);
-              const postHash = await hashText(newFileText);
-              await saveSnapshot(path.resolve(filePath), undoPreSnapshots, postHash);
-              await Deno.writeTextFile(filePath, newFileText);
-              try { await setCachedAst(postHash, ast, filePath); } catch { /* non-fatal */ }
-              await clearSnapshot(currentHash);
-            }
-          }
+        // Ancestor paths first: a parent restore recreates the structure
+        // that descendant paths index into.
+        const sortedEntries = [...snapshot.entries].sort((a, b) => a.path.length - b.path.length);
+        for (const entry of sortedEntries) {
+          const target = nodeAtPath(ast, entry.path);
+          if (!target) continue;
+          target.children = entry.children;
+          restoredCount++;
         }
         if (restoredCount > 0) {
+          if (restoredCount < snapshot.entries.length) {
+            pushWarning(
+              `Restored ${restoredCount} of ${snapshot.entries.length} snapshot entries — ` +
+              `the document structure changed since the snapshot. Verify with 'lq read ${filePath} "${selector}"'.`
+            );
+          }
+          const newFileText = serialize(ast);
+          await Deno.writeTextFile(filePath, newFileText);
+          try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
+          await clearSnapshot(currentHash);
           await refreshPostStep(filePath, refreshMode);
           printJson({ undone_changes: restoredCount, method: "snapshot" });
           return;
@@ -2525,27 +2469,31 @@ export async function runCli(args: string[]) {
         // Snapshot existed but no nodes matched — fall through to replay
         pushWarning("Snapshot found but no matching nodes in current CST. Falling back to marker-based undo.");
       }
-    }
 
-    // --- Replay-based undo (fallback path) ---
-    // Resolve the current author's ID to only undo their own changes
-    const undoAuthorId = resolveAuthorId(ast, authorName);
-
-    // Snapshot pre-mutation children for undo-of-undo
-    const replayPreSnapshots: SnapshotEntry[] = [];
-    {
-      let nodeIdx = 0;
-      for (const node of nodes) {
-        if (node.type === "block") {
-          replayPreSnapshots.push({ selector, index: nodeIdx, children: structuredClone(node.children) });
-        }
-        nodeIdx++;
+      // No usable snapshot: if there is also nothing to replay, undo is
+      // stale. Checked before resolving the author ID so a clean file
+      // stays untouched (no spurious \author entry).
+      const hasAnyTracked = nodes.some(n => n.type === "block" && hasTrackedChanges(n.children));
+      if (!hasAnyTracked) {
+        printError("UNDO_STALE", "Nothing to undo. No snapshot found and no tracked changes to revert.");
       }
     }
 
+    // --- Replay-based undo (fallback path) ---
+    // Replay scans the matched nodes' children, so it needs live matches —
+    // unlike snapshot restore, which addresses nodes by path and therefore
+    // works even when the mutation removed the matched nodes entirely.
+    if (nodes.length === 0) {
+      printError("NO_MATCH", `Selector matched no nodes to undo. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
+    }
+
+    // Resolve the current author's ID to only undo their own changes
+    const undoAuthorId = resolveAuthorId(ast, authorName);
+
+    // Snapshot pre-mutation children so the replay itself can be undone
+    const replayPreSnapshots = collectSnapshots(ast, nodes, "self");
+
     let undoneCount = 0;
-    let skippedOtherAuthor = 0;
-    let matchedOtherAuthor = 0;
     const undoneLabels: string[] = [];
 
     for (const node of nodes) {
@@ -2584,11 +2532,6 @@ export async function runCli(args: string[]) {
           const authorIdMatch = child.value?.match(/^(\d+)/);
           const changeAuthorId = authorIdMatch ? parseInt(authorIdMatch[1], 10) : null;
           if (changeAuthorId !== undoAuthorId) {
-            skippedOtherAuthor++;
-            const enclosedText = textParts.join("");
-            if (substring !== undefined && enclosedText.includes(substring)) {
-              matchedOtherAuthor++;
-            }
             for (let k = i; k <= j; k++) newChildren.push(node.children[k]);
             i = j + 1;
             continue;
@@ -2623,60 +2566,20 @@ export async function runCli(args: string[]) {
     }
 
     const changes = undoneLabels.map(l => ({ label: l }));
-    if (substring !== undefined) {
-      if (undoneCount === 0 && matchedOtherAuthor > 0) {
-        const plural = matchedOtherAuthor === 1 ? "" : "s";
-        pushWarning(
-          `Substring '${substring}' matched ${matchedOtherAuthor} change${plural} by other author${plural}. ` +
-          `Only changes by you can be undone.`
-        );
-      } else if (undoneCount > 0 && matchedOtherAuthor > 0) {
-        const plural = matchedOtherAuthor === 1 ? "" : "s";
-        pushWarning(
-          `Undid ${undoneCount} of your changes. ` +
-          `${matchedOtherAuthor} matched change${plural} by other author${plural} preserved.`
-        );
-      } else if (undoneCount === 0) {
-        // Guide user to snapshot-based undo if the change was already undone
-        if (substring === undefined) {
-          pushWarning(`No tracked changes to undo. The last mutation may have been a plain (untracked) edit — use snapshot undo: 'lq undo ${filePath} "${selector}"' without a substring.`);
-        } else {
-          pushWarning(`No tracked change matching '${substring}' found. It may have already been undone. To undo the last undo, run 'lq undo ${filePath} "${selector}"' without a substring.`);
-        }
-      }
+    if (substring !== undefined && undoneCount === 0) {
+      pushWarning(`No tracked change matching '${substring}' found. It may have already been undone. To undo the last undo, run 'lq undo ${filePath} "${selector}"' without a substring.`);
     }
-    if (substring === undefined && skippedOtherAuthor > 0) {
-      const plural = skippedOtherAuthor === 1 ? "" : "s";
+    if (substring === undefined && undoneCount === 0) {
+      // Reaching replay without a substring means tracked changes exist
+      // (otherwise UNDO_STALE fired above) — so none belong to this author.
       pushWarning(
-        `${skippedOtherAuthor} pre-existing tracked change${plural} from another author left unchanged.`
+        `Tracked changes exist in the matched nodes but none belong to author '${authorName}'. ` +
+        `Change the default via 'lq init --author-name <name>'.`
       );
     }
-    // When nothing was undone and no other-author changes were identified,
-    // check if there are any tracked changes in the matched nodes — if so,
-    // the author name likely doesn't match.
-    if (undoneCount === 0 && substring === undefined && skippedOtherAuthor === 0) {
-      let totalTracked = 0;
-      for (const node of nodes) {
-        if (node.type === "block" && hasTrackedChanges(node.children)) {
-          totalTracked += countTrackedChangesInChildren(node.children);
-        }
-      }
-      if (totalTracked > 0) {
-        const plural = totalTracked === 1 ? "" : "s";
-        pushWarning(
-          `${totalTracked} tracked change${plural} found but none belong to author '${authorName}'. ` +
-          `Use '--author-name' to match the author who made these changes, ` +
-          `or run 'lq init --author-name <name>' to update the default.`
-        );
-      }
-    }
-    // Write file and save snapshot for undo-of-undo
+    // Write file and save snapshot so the replay itself can be undone
     if (undoneCount > 0) {
-      const newFileText = serialize(ast);
-      const postHash = await hashText(newFileText);
-      await saveSnapshot(path.resolve(filePath), replayPreSnapshots, postHash);
-      await Deno.writeTextFile(filePath, newFileText);
-      try { await setCachedAst(postHash, ast, filePath); } catch { /* non-fatal */ }
+      await commitMutation(filePath, ast, replayPreSnapshots);
       await refreshPostStep(filePath, refreshMode);
     }
     printJson({ undone_changes: undoneCount, changes, method: "replay" });
