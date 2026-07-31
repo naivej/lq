@@ -1,4 +1,6 @@
-import { Node } from "./ast.ts";
+import { Node, BlockNode, DocumentNode } from "./ast.ts";
+import { serialize } from "./serializer.ts";
+import { hashText, setCachedAst } from "./cache.ts";
 import * as path from "@std/path";
 
 export interface SnapshotEntry {
@@ -108,4 +110,63 @@ export async function clearSnapshot(fileHash: string): Promise<void> {
   } catch {
     // Already gone or permissions — non-fatal
   }
+}
+
+/** Compute the index path from the document root to a node, or null. */
+export function findNodePath(root: Node[], target: Node): number[] | null {
+  for (let i = 0; i < root.length; i++) {
+    if (root[i] === target) return [i];
+    if (root[i].type === "block") {
+      const sub = findNodePath((root[i] as BlockNode).children, target);
+      if (sub) return [i, ...sub];
+    }
+  }
+  return null;
+}
+
+/** Resolve an index path to a node; [] resolves to the document root. */
+export function nodeAtPath(ast: DocumentNode, path: number[]): DocumentNode | BlockNode | null {
+  let current: DocumentNode | BlockNode = ast;
+  for (const i of path) {
+    const next: Node | undefined = current.children[i];
+    if (!next || next.type !== "block") return null;
+    current = next;
+  }
+  return current;
+}
+
+/**
+ * Snapshot the pre-mutation children of each matched node (mode "self") or
+ * of its parent container (mode "parent" — for mutations that add/remove
+ * siblings, like insert before/after or untracked delete). Non-block nodes
+ * (text, property) always fall back to the parent container: their own
+ * text/value is part of the parent's child list.
+ */
+export function collectSnapshots(ast: DocumentNode, nodes: Node[], mode: "self" | "parent"): SnapshotEntry[] {
+  const entries: SnapshotEntry[] = [];
+  const seen = new Set<string>();
+  for (const node of nodes) {
+    const nodePath = findNodePath(ast.children, node);
+    if (!nodePath) continue;
+    const path = (mode === "parent" || node.type !== "block") ? nodePath.slice(0, -1) : nodePath;
+    const key = path.join(",");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const target = nodeAtPath(ast, path);
+    if (!target) continue;
+    entries.push({ path, children: structuredClone(target.children) });
+  }
+  return entries;
+}
+
+/**
+ * Persist a mutation: serialize, save the pre-mutation snapshot keyed by the
+ * post-mutation content hash, write the file, update the parse cache.
+ */
+export async function commitMutation(filePath: string, ast: DocumentNode, preSnapshots: SnapshotEntry[]): Promise<void> {
+  const newFileText = serialize(ast);
+  const postHash = await hashText(newFileText);
+  await saveSnapshot(path.resolve(filePath), preSnapshots, postHash);
+  await Deno.writeTextFile(filePath, newFileText);
+  try { await setCachedAst(postHash, ast); } catch { /* non-fatal */ }
 }

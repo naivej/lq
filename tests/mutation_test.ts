@@ -647,7 +647,7 @@ Deno.test("DL78 Flatten - Full-Replace on Tracked Node (properties preserved)", 
     assertEquals(result.modified_nodes, 1);
 
     const text = await Deno.readTextFile(tempFile);
-    assertStringIncludes(text, "\\emph on", "inline properties must survive the flatten (dev log 80 N4)");
+    assertStringIncludes(text, "\\emph on", "inline properties must survive the flatten (dev log 79 N4)");
     const children = firstLayoutChildren(text);
     const keys = changeMarkers(children).map(m => m.key);
     // Flat: no change marker appears between an opener and its closer
@@ -696,7 +696,7 @@ Deno.test("DL78 Snapshot Undo - After Untracked Set (restores original)", { time
     assertEquals(undone.method, "snapshot");
     assertEquals(undone.undone_changes, 1);
     const restored = await Deno.readTextFile(tempFile);
-    assertEquals(restored, expected, "undo after set must restore the original content (dev log 80 N2)");
+    assertEquals(restored, expected, "undo after set must restore the original content (dev log 79 N2)");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -711,12 +711,12 @@ Deno.test("DL78 Snapshot Undo - After Insert (after + prepend)", { timeout: 1500
     await runCliTest(["insert", tempFile, "layout[Standard]", "after", "--layout", "Standard", "--text", "SIBLING"]);
     let undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
     assertEquals(undone.undone_changes, 1);
-    assertEquals(await Deno.readTextFile(tempFile), expected, "undo after 'insert after' must restore (dev log 80 N3)");
+    assertEquals(await Deno.readTextFile(tempFile), expected, "undo after 'insert after' must restore (dev log 79 N3)");
 
     await runCliTest(["insert", tempFile, "layout[Standard]", "prepend", "--footnote", "FN"]);
     undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
     assertEquals(undone.undone_changes, 1);
-    assertEquals(await Deno.readTextFile(tempFile), expected, "undo after 'insert prepend' must restore (dev log 80 N3)");
+    assertEquals(await Deno.readTextFile(tempFile), expected, "undo after 'insert prepend' must restore (dev log 79 N3)");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -730,7 +730,7 @@ Deno.test("DL78 Snapshot Undo - After Untracked Delete (node restored)", { timeo
     await runCliTest(["delete", tempFile, "layout[Standard]"]);
     const undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
     assertEquals(undone.undone_changes, 1);
-    assertEquals(await Deno.readTextFile(tempFile), expected, "undo after delete must bring the node back (dev log 80 N3)");
+    assertEquals(await Deno.readTextFile(tempFile), expected, "undo after delete must bring the node back (dev log 79 N3)");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -753,6 +753,58 @@ Deno.test("DL78 Snapshot Undo - 1-Level Enforcement + Consume", { timeout: 15000
     assertEquals(stale.code, "UNDO_STALE");
     text = await Deno.readTextFile(tempFile);
     assertStringIncludes(text, "EDIT_A", "stale undo must not redo or modify the file");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL78 - --find Inside change_deleted Is Invisible (NO_MATCH)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "The quick brown fox\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "lazy dog\n" +
+    "\\change_unchanged\n" +
+    " jumps over\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl78_deleted_nomatch.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    // Deleted text is invisible to mutations: --find on it is a genuine
+    // NO_MATCH (generic message, NOT the straddle error)
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "X", "--find", "lazy dog"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.code, "NO_MATCH");
+    assertStringIncludes(result.message!, "matched no occurrences");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL78 Replay Undo - Snapshot Symmetry (replay can be undone)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nThe quick brown fox\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl78_replay_sym.lyx", body);
+  try {
+    await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "QUICK", "--find", "quick"],
+      { trackChanges: true },
+    );
+    // Replay undo removes the inserted block and saves a snapshot
+    await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]", "QUICK"],
+      { trackChanges: true },
+    );
+    // Snapshot undo restores the pre-replay state — markers come back
+    const restored = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true },
+    );
+    assertEquals(restored.method, "snapshot");
+    assertEquals(restored.undone_changes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_inserted");
+    assertStringIncludes(text, "QUICK");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
