@@ -7,7 +7,8 @@ import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode, TextNode } from "./ast.ts";
 import { validateInsetType, KNOWN_COMMAND_INSET_TYPES } from "./registry.ts";
 import { concatenateTextNodes, mapPosToSegment, type TextSegment } from "./text_utils.ts";
-import { getCachedAst, setCachedAst, hashText, setMaxCacheEntries } from "./cache.ts";
+import { getCachedAst, setCachedAst, hashText, hashFile, setMaxCacheEntries } from "./cache.ts";
+import { saveSnapshot, loadSnapshot, clearSnapshot, type SnapshotEntry } from "./undo.ts";
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
 
@@ -742,6 +743,38 @@ function countTrackedChangesInChildren(children: Node[]): number {
   return count;
 }
 
+/**
+ * Strip all tracked-change markers (change_deleted, change_inserted,
+ * change_unchanged) from children, returning only the content nodes.
+ * Used for full-replace flattening: nuke old markers, apply new ones.
+ */
+function stripTrackedChangeMarkers(children: Node[]): Node[] {
+  const result: Node[] = [];
+  let skipDepth = 0;
+  for (const child of children) {
+    if (child.type === "property") {
+      if (child.key === "change_deleted" || child.key === "change_inserted") {
+        skipDepth++;
+        continue;
+      }
+      if (child.key === "change_unchanged") {
+        if (skipDepth > 0) { skipDepth--; continue; }
+        // Stray change_unchanged outside any tracked block — keep it
+        result.push(child);
+        continue;
+      }
+    }
+    if (skipDepth === 0 && child.type !== "property") {
+      // Only keep non-marker content nodes when not inside a tracked block
+      result.push(child);
+    } else if (skipDepth > 0 && child.type === "text") {
+      // Text inside a tracked block: keep it (it becomes plain text after flattening)
+      result.push(child);
+    }
+  }
+  return result;
+}
+
 function wrapInChangeMarkers(
   content: Node[], type: "inserted" | "deleted", authorId: number, ts: string
 ): Node[] {
@@ -750,6 +783,132 @@ function wrapInChangeMarkers(
     ...content,
     { type: "property", key: "change_unchanged" },
   ];
+}
+
+/**
+ * Flatten nested tracked-change markers in children into LyX's flat model.
+ *
+ * LyX uses one Change per position — nested \change_inserted or
+ * \change_deleted inside \change_inserted is malformed. This function
+ * post-processes children after a mutation to ensure flat, unnested markers.
+ *
+ * Rules (matching LyX's per-position Change model):
+ * - \change_deleted inside \change_inserted: flatten — discard the inner
+ *   deleted marker, keep the text as part of the outer inserted block.
+ *   (A position already marked INSERTED cannot also be DELETED.)
+ * - \change_inserted inside \change_inserted, same author: merge — replace
+ *   text in place, update timestamp to max(old, new).
+ * - \change_inserted inside \change_inserted, different author: split into
+ *   adjacent flat blocks.
+ * - \change_unchanged inside \change_inserted: close the outer block
+ *   (this marks the original text boundary, kept as-is).
+ */
+function flattenNestedChanges(children: Node[], currentAuthorId: number, currentTs: string): Node[] {
+  const result: Node[] = [];
+  // Stack of enclosing inserted-block context
+  const stack: { authorId: number; timestamp: string; buffer: Node[] }[] = [];
+  // Buffer for text outside any inserted block
+  let plainBuffer: Node[] = [];
+
+  function flushPlain() {
+    if (plainBuffer.length > 0) {
+      result.push(...plainBuffer);
+      plainBuffer = [];
+    }
+  }
+
+  function flushStack(upTo: number) {
+    while (stack.length > upTo) {
+      const ctx = stack.pop()!;
+      // Close the inserted block
+      result.push(
+        { type: "property", key: "change_inserted", value: `${ctx.authorId} ${ctx.timestamp}` },
+        ...ctx.buffer,
+        { type: "property", key: "change_unchanged" },
+      );
+    }
+  }
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+
+    if (child.type === "property" && child.key === "change_inserted") {
+      flushPlain();
+      // Parse author/timestamp from value
+      const parts = child.value?.split(" ") ?? [];
+      const blockAuthorId = parseInt(parts[0], 10) || 0;
+      const blockTs = parts[1] || currentTs;
+      stack.push({ authorId: blockAuthorId, timestamp: blockTs, buffer: [] });
+      continue;
+    }
+
+    if (child.type === "property" && child.key === "change_unchanged") {
+      if (stack.length > 0) {
+        // Close the innermost inserted block
+        flushStack(stack.length - 1);
+      } else {
+        // Stray change_unchanged — keep as-is
+        flushPlain();
+        result.push(child);
+      }
+      continue;
+    }
+
+    if (child.type === "property" && child.key === "change_deleted") {
+      if (stack.length > 0) {
+        // change_deleted inside change_inserted: flatten.
+        // LyX's per-position model: a position can't be both INSERTED and DELETED.
+        // Discard the inner deleted marker, keep text as part of outer inserted block.
+        // Skip past this marker and its children until the matching change_unchanged.
+        let depth = 1;
+        while (i + 1 < children.length && depth > 0) {
+          i++;
+          const next = children[i];
+          if (next.type === "property" && next.key === "change_deleted") depth++;
+          else if (next.type === "property" && next.key === "change_unchanged") depth--;
+          else if (depth === 1 && next.type === "text") {
+            // Text inside the deleted block: add to outer inserted buffer
+            stack[stack.length - 1].buffer.push(next);
+          }
+        }
+        continue;
+      } else {
+        // change_deleted in plain context — preserve
+        flushPlain();
+        // Collect the entire change_deleted block
+        result.push(child);
+        let depth = 1;
+        while (i + 1 < children.length && depth > 0) {
+          i++;
+          const next = children[i];
+          if (next.type === "property" && next.key === "change_deleted") depth++;
+          else if (next.type === "property" && next.key === "change_unchanged") depth--;
+          result.push(next);
+        }
+        continue;
+      }
+    }
+
+    if (child.type === "text") {
+      if (stack.length > 0) {
+        stack[stack.length - 1].buffer.push(child);
+      } else {
+        plainBuffer.push(child);
+      }
+      continue;
+    }
+
+    // Any other child (block, other properties): flush everything first
+    flushPlain();
+    flushStack(0);
+    result.push(child);
+  }
+
+  // Flush remaining content
+  flushPlain();
+  flushStack(0);
+
+  return result;
 }
 
 function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted", authorId: number, ts?: string): Node[] {
@@ -1632,22 +1791,26 @@ export async function runCli(args: string[]) {
           const { newChildren, matchCount: nodeFindCount } = applyCrossNodeReplace(
             node.children, findStr, newValue, trackChanges, tcAid, tcTs,
           );
-          node.children = newChildren;
+          // Flatten any nested markers produced by editing inside existing
+          // tracked changes (dev log 78 Fix 1).
+          node.children = trackChanges
+            ? flattenNestedChanges(newChildren, tcAid, tcTs)
+            : newChildren;
           totalFindMatches += nodeFindCount;
           if (nodeFindCount > 0) addFindCount(node, nodeFindCount);
         } else if (trackChanges) {
-          // Full-text replace with trackChanges (existing behavior)
-          // Warn if the node already contains pending tracked changes — the new
-          // edit will nest inside existing markers (double-wrap). The user should
-          // run `lq undo` first to revert pending changes before re-editing.
+          // Full-text replace with trackChanges: flatten old markers to plain
+          // text before applying new markers, matching LyX's per-position
+          // overwrite model (dev log 78 Fix 1).
           if (hasTrackedChanges(node.children)) {
-            pushWarning(
-              `This node already contains pending tracked changes. ` +
-              `Run 'lq undo ${filePath} "${selector}"' first to revert them, ` +
-              `or this edit will nest inside existing markers.`
-            );
-          }
-          if (replaceAll) {
+            // Strip all tracked-change markers, collect plain text children
+            const stripped = stripTrackedChangeMarkers(node.children);
+            node.children = [
+              ...wrapInChangeMarkers(stripped.filter(c => c.type === "text"), "deleted", tcAid, tcTs),
+              ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
+              ...stripped.filter(c => c.type !== "text"),
+            ];
+          } else if (replaceAll) {
             node.children = [
               ...wrapInChangeMarkers(node.children, "deleted", tcAid, tcTs),
               ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
@@ -1701,9 +1864,22 @@ export async function runCli(args: string[]) {
     if (trackChanges) {
       ensureTrackingChangesInHeader(ast);
     }
+    // Snapshot pre-mutation children for undo
+    const preSnapshots: SnapshotEntry[] = [];
+    {
+      let nodeIdx = 0;
+      for (const node of nodes) {
+        if (node.type === "block") {
+          preSnapshots.push({ selector, index: nodeIdx, children: structuredClone(node.children) });
+        }
+        nodeIdx++;
+      }
+    }
     const newFileText = serialize(ast);
+    const postHash = await hashText(newFileText);
+    await saveSnapshot(path.resolve(filePath), preSnapshots, postHash);
     await Deno.writeTextFile(filePath, newFileText);
-    try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
+    try { await setCachedAst(postHash, ast, filePath); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
     printJson({ modified_nodes: nodes.length, changes });
@@ -1713,6 +1889,18 @@ export async function runCli(args: string[]) {
   if (command === "delete") {
     if (nodes.length === 0) {
       printError("NO_MATCH", `Selector matched no nodes to delete. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
+    }
+
+    // Snapshot pre-mutation children for undo (before any mutation)
+    const deletePreSnapshots: SnapshotEntry[] = [];
+    {
+      let nodeIdx = 0;
+      for (const node of nodes) {
+        if (node.type === "block") {
+          deletePreSnapshots.push({ selector, index: nodeIdx, children: structuredClone(node.children) });
+        }
+        nodeIdx++;
+      }
     }
 
     if (trackChanges) {
@@ -1765,8 +1953,10 @@ export async function runCli(args: string[]) {
 
       markAsDeleted(ast.children, true); // document body = paragraph context
       const newFileText = serialize(ast);
+      const deletePostHash = await hashText(newFileText);
+      await saveSnapshot(path.resolve(filePath), deletePreSnapshots, deletePostHash);
       await Deno.writeTextFile(filePath, newFileText);
-      try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
+      try { await setCachedAst(deletePostHash, ast, filePath); } catch { /* non-fatal */ }
       await refreshPostStep(filePath, refreshMode);
       const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
       printJson({ tracked_deleted_nodes: nodes.length, changes });
@@ -1789,8 +1979,10 @@ export async function runCli(args: string[]) {
     filterNodes(ast.children);
 
     const newFileText = serialize(ast);
+    const deletePostHash2 = await hashText(newFileText);
+    await saveSnapshot(path.resolve(filePath), deletePreSnapshots, deletePostHash2);
     await Deno.writeTextFile(filePath, newFileText);
-    try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
+    try { await setCachedAst(deletePostHash2, ast, filePath); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
     printJson({ deleted_nodes: nodes.length, changes });
@@ -2247,8 +2439,64 @@ export async function runCli(args: string[]) {
     }
     const substring: string | undefined = restArgs.length > 0 ? restArgs.join(" ") : undefined;
 
+    // --- Snapshot-based undo (primary path, no substring) ---
+    // Restore from a pre-mutation snapshot when no surgical substring
+    // is specified. With a substring, fall through to replay-based
+    // undo which scans individual tracked-change blocks.
+    if (substring === undefined) {
+      const currentHash = await hashFile(filePath);
+      const snapshot = await loadSnapshot(currentHash);
+      if (snapshot) {
+        let restoredCount = 0;
+        for (const entry of snapshot.entries) {
+          const matchedNodes = query(ast, entry.selector);
+          if (entry.index < matchedNodes.length) {
+            const node = matchedNodes[entry.index];
+            if (node.type === "block") {
+              // Snapshot pre-mutation children for undo-of-undo
+              const undoPreSnapshots: SnapshotEntry[] = [{
+                selector: entry.selector,
+                index: entry.index,
+                children: structuredClone(node.children),
+              }];
+              node.children = entry.children;
+              restoredCount++;
+
+              // Write file and save snapshot for undo-of-undo
+              const newFileText = serialize(ast);
+              const postHash = await hashText(newFileText);
+              await saveSnapshot(path.resolve(filePath), undoPreSnapshots, postHash);
+              await Deno.writeTextFile(filePath, newFileText);
+              try { await setCachedAst(postHash, ast, filePath); } catch { /* non-fatal */ }
+              await clearSnapshot(currentHash);
+            }
+          }
+        }
+        if (restoredCount > 0) {
+          await refreshPostStep(filePath, refreshMode);
+          printJson({ undone_changes: restoredCount, method: "snapshot" });
+          return;
+        }
+        // Snapshot existed but no nodes matched — fall through to replay
+        pushWarning("Snapshot found but no matching nodes in current CST. Falling back to marker-based undo.");
+      }
+    }
+
+    // --- Replay-based undo (fallback path) ---
     // Resolve the current author's ID to only undo their own changes
     const undoAuthorId = resolveAuthorId(ast, authorName);
+
+    // Snapshot pre-mutation children for undo-of-undo
+    const replayPreSnapshots: SnapshotEntry[] = [];
+    {
+      let nodeIdx = 0;
+      for (const node of nodes) {
+        if (node.type === "block") {
+          replayPreSnapshots.push({ selector, index: nodeIdx, children: structuredClone(node.children) });
+        }
+        nodeIdx++;
+      }
+    }
 
     let undoneCount = 0;
     let skippedOtherAuthor = 0;
@@ -2312,7 +2560,6 @@ export async function runCli(args: string[]) {
               for (let k = i + 1; k < j; k++) newChildren.push(node.children[k]);
             }
             // change_inserted: drop everything (marker, text, change_unchanged)
-            // Both: skip past the closing change_unchanged
             i = j + 1;
             undoneCount++;
             undoneLabels.push(markerType + "{" + (enclosedText.length > 60 ? enclosedText.substring(0, 60) + "..." : enclosedText) + "}");
@@ -2345,7 +2592,12 @@ export async function runCli(args: string[]) {
           `${matchedOtherAuthor} matched change${plural} by other author${plural} preserved.`
         );
       } else if (undoneCount === 0) {
-        pushWarning(`--undo did not match '${substring}' in any tracked change within the selector.`);
+        // Guide user to snapshot-based undo if the change was already undone
+        if (substring === undefined) {
+          pushWarning(`No tracked changes to undo. The last mutation may have been a plain (untracked) edit — use snapshot undo: 'lq undo ${filePath} "${selector}"' without a substring.`);
+        } else {
+          pushWarning(`No tracked change matching '${substring}' found. It may have already been undone. To undo the last undo, run 'lq undo ${filePath} "${selector}"' without a substring.`);
+        }
       }
     }
     if (substring === undefined && skippedOtherAuthor > 0) {
@@ -2356,13 +2608,11 @@ export async function runCli(args: string[]) {
     }
     // When nothing was undone and no other-author changes were identified,
     // check if there are any tracked changes in the matched nodes — if so,
-    // the author name likely doesn't match. Only fire when the simpler
-    // skippedOtherAuthor diagnostic didn't already explain the situation.
+    // the author name likely doesn't match.
     if (undoneCount === 0 && substring === undefined && skippedOtherAuthor === 0) {
       let totalTracked = 0;
       for (const node of nodes) {
         if (node.type === "block" && hasTrackedChanges(node.children)) {
-          // Count individual tracked changes, not nodes
           totalTracked += countTrackedChangesInChildren(node.children);
         }
       }
@@ -2375,15 +2625,16 @@ export async function runCli(args: string[]) {
         );
       }
     }
-    // Only write file if something actually changed (avoid spurious header
-    // mutations from resolveAuthorId when zero changes are undone).
+    // Write file and save snapshot for undo-of-undo
     if (undoneCount > 0) {
       const newFileText = serialize(ast);
+      const postHash = await hashText(newFileText);
+      await saveSnapshot(path.resolve(filePath), replayPreSnapshots, postHash);
       await Deno.writeTextFile(filePath, newFileText);
-      try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
+      try { await setCachedAst(postHash, ast, filePath); } catch { /* non-fatal */ }
       await refreshPostStep(filePath, refreshMode);
     }
-    printJson({ undone_changes: undoneCount, changes });
+    printJson({ undone_changes: undoneCount, changes, method: "replay" });
     return;
   }
 
