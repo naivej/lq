@@ -40,7 +40,7 @@ Commands:
   delete    Delete targeted nodes or mark them deleted when tracking is enabled.
   insert    Insert new blocks or properties relative to matched nodes.
   undo      Revert edits: snapshot restore (1-level, any mutation) or
-              replay (unlimited, tracked changes by same author).
+            replay (unlimited, tracked changes by same author).
 
 Commands return JSON. Help text is plain text.
 Run 'lq <command> --help' for more information on a specific command.`,
@@ -125,12 +125,6 @@ lq set preserves non-text children (insets, properties) and replaces only text n
 Options to change the default behaviour:
   --find <substring>        Replace all occurrences of <substring> within the matched
                             nodes' text, instead of replacing the entire text content.
-                            Text inside \\change_deleted blocks is always skipped.
-                            Text inside \\change_inserted is matched and flattened:
-                            edits by the same author merge into the existing markers;
-                            edits by a different author split into adjacent flat blocks.
-                            Matches spanning across tracked-change boundaries are
-                            skipped — undo tracked changes first, then retry.
   --replace-all             Replace ALL children of the target block, not just text nodes.
                             Mutually exclusive with --find.`,
 
@@ -226,9 +220,9 @@ Two modes, distinguished by the presence of a substring argument:
                                          Works for both tracked and plain edits.
 
   lq undo <file> <selector> <substring>  Replay undo (unlimited levels).
-                                         Removes tracked changes (change_deleted/
-                                         change_inserted) matching <substring>
-                                         made by the current author only.
+                                         Removes the entire tracked changes block (change_deleted/
+                                         change_inserted), which contains <substring>,
+                                         and made by the current author.
 
 Arguments:
   <file>       The path to the .lyx file.
