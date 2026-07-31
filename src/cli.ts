@@ -39,7 +39,8 @@ Commands:
   set       Overwrite the targeted nodes with new text content.
   delete    Delete targeted nodes or mark them deleted when tracking is enabled.
   insert    Insert new blocks or properties relative to matched nodes.
-  undo      Revert tracked changes (change_deleted/change_inserted) in matched nodes.
+  undo      Revert edits: snapshot restore (1-level, any mutation) or
+              replay (unlimited, tracked changes by same author).
 
 Commands return JSON. Help text is plain text.
 Run 'lq <command> --help' for more information on a specific command.`,
@@ -124,8 +125,12 @@ lq set preserves non-text children (insets, properties) and replaces only text n
 Options to change the default behaviour:
   --find <substring>        Replace all occurrences of <substring> within the matched
                             nodes' text, instead of replacing the entire text content.
-                            Text inside \\change_deleted blocks is always skipped —
-                            undo the tracked change first if you need to edit that text.
+                            Text inside \\change_deleted blocks is always skipped.
+                            Text inside \\change_inserted is matched and flattened:
+                            edits by the same author merge into the existing markers;
+                            edits by a different author split into adjacent flat blocks.
+                            Matches spanning across tracked-change boundaries are
+                            skipped — undo tracked changes first, then retry.
   --replace-all             Replace ALL children of the target block, not just text nodes.
                             Mutually exclusive with --find.`,
 
@@ -212,16 +217,23 @@ Options (provide exactly one generation helper):
   --label <name>               Insert a CommandInset label with the given name.
   --footnote <text>            Insert a Foot inset containing a Plain Layout with <text>.`,
 
-  undo: `lq undo - Revert tracked changes in matched nodes.
+  undo: `lq undo - Revert edits in matched nodes.
 
-Usage:
-  lq undo <file> <selector> [<substring>]
+Two modes, distinguished by the presence of a substring argument:
+
+  lq undo <file> <selector>              Snapshot restore (1-level, any mutation).
+                                         Reverts the last set/delete/insert/undo.
+                                         Works for both tracked and plain edits.
+
+  lq undo <file> <selector> <substring>  Replay undo (unlimited levels).
+                                         Removes tracked changes (change_deleted/
+                                         change_inserted) matching <substring>
+                                         made by the current author only.
 
 Arguments:
   <file>       The path to the .lyx file.
   <selector>   A CSS-like selector. Run 'lq selector --help' for syntax.
-  <substring>  Text inside the change_deleted or change_inserted block to revert.
-               Omit to revert ALL tracked changes in matched nodes.`
+  <substring>  Text inside the change_deleted or change_inserted block to revert.`
 };
 
 // Helper to load user config
@@ -2228,6 +2240,29 @@ export async function runCli(args: string[]) {
     const insertTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
     if (trackChanges) ensureTrackingChangesInHeader(ast);
 
+    // Snapshot pre-mutation state for undo. Insert modifies parent nodes,
+    // so we snapshot the parents' children (not the matched nodes themselves).
+    const insertPreSnapshots: SnapshotEntry[] = [];
+    {
+      // Collect unique parent paths — a single parent may contain multiple
+      // matched nodes, so we track by the parent's children array identity
+      // and use the first matched node's selector/index.
+      const seenParents = new Set<Node[]>();
+      let nodeIdx = 0;
+      for (const node of nodes) {
+        const ctx = findNodeContext(ast.children, node);
+        if (ctx && !seenParents.has(ctx.list)) {
+          seenParents.add(ctx.list);
+          insertPreSnapshots.push({
+            selector,
+            index: nodeIdx,
+            children: structuredClone(ctx.list),
+          });
+        }
+        nodeIdx++;
+      }
+    }
+
     for (const targetNode of nodes) {
       let targetParentBlock: BlockNode | null = null;
       let ctx: { list: Node[]; index: number; parentBlock: BlockNode | null; ancestorChain: BlockNode[] } | null = null;
@@ -2439,8 +2474,10 @@ export async function runCli(args: string[]) {
     }
 
     const newFileText = serialize(ast);
+    const insertPostHash = await hashText(newFileText);
+    await saveSnapshot(path.resolve(filePath), insertPreSnapshots, insertPostHash);
     await Deno.writeTextFile(filePath, newFileText);
-    try { await setCachedAst(await hashText(newFileText), ast, filePath); } catch { /* non-fatal */ }
+    try { await setCachedAst(insertPostHash, ast, filePath); } catch { /* non-fatal */ }
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ position, label: nodeLabel(n), text: briefText(n) }));
     printJson({ matched_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });

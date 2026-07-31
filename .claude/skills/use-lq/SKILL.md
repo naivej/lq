@@ -101,14 +101,15 @@ The query engine supports traversing the CST using CSS-like selector:
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
   - Default behaviour: replaces text content within the targeted nodes while preserves non-text children (insets, properties).
   - `--replace-all`: Wipe all children and rebuild from scratch.
-  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced. Text inside `\change_deleted` blocks is always skipped. To edit deleted text, undo the tracked change first (`lq undo`), then apply your edit on the restored text.
+  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced. Text inside `\change_deleted` blocks is always skipped. Text inside `\change_inserted` blocks is matched and flattened: edits by the same author merge into the existing markers (timestamp updated); edits by a different author split the block into adjacent flat markers (no nesting). Matches spanning across tracked-change boundaries are skipped — undo tracked changes first (`lq undo`), then retry.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq undo <file> <selector> [<substring>]`
-  - Only tracked changes made by the same author can be undone.
-  - Reverts tracked changes in matched nodes: `change_deleted` blocks are restored (marker removed, text kept); `change_inserted` blocks are discarded (marker and text removed).
-  - Each marker is undone independently — to fully revert a `set`, run undo twice (once for the deleted text, once for the inserted text).
-  - `<substring>`: Text inside the `change_deleted` or `change_inserted` block to revert. Omit to revert ALL tracked changes in matched nodes.
+  - Two modes: snapshot restore and replay undo.
+  - **Snapshot restore** (`lq undo <f> <sel>`, no substring): 1-level undo — reverts the last `set`/`delete`/`insert`/`undo` on the matched nodes. Works for both tracked and plain (untracked) edits. Uses a pre-mutation snapshot stored at `~/.lq/undo/`.
+  - **Replay undo** (`lq undo <f> <sel> <substring>`): Unlimited-level undo — removes specific tracked changes (`change_deleted`/`change_inserted`) matching `<substring>`. Only changes made by the current author are undone. Each marker is undone independently.
+  - Snapshot undo is the primary path; replay is the fallback when snapshots are unavailable or a substring is specified.
+  - All undo operations themselves save snapshots, enabling intuitive undo-of-undo.
 - `lq insert <file> <selector> <position> [helper]`
   - Insert new blocks or properties relative to a selector.
   - Positions:
