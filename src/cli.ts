@@ -805,109 +805,81 @@ function wrapInChangeMarkers(
  */
 function flattenNestedChanges(children: Node[], currentAuthorId: number, currentTs: string): Node[] {
   const result: Node[] = [];
-  // Stack of enclosing inserted-block context
-  const stack: { authorId: number; timestamp: string; buffer: Node[] }[] = [];
-  // Buffer for text outside any inserted block
-  let plainBuffer: Node[] = [];
+  let outer: { type: "inserted" | "deleted"; authorId: number; timestamp: string } | null = null;
+  let outerBuffer: Node[] = [];
 
-  function flushPlain() {
-    if (plainBuffer.length > 0) {
-      result.push(...plainBuffer);
-      plainBuffer = [];
-    }
-  }
-
-  function flushStack(upTo: number) {
-    while (stack.length > upTo) {
-      const ctx = stack.pop()!;
-      // Close the inserted block
+  function flushOuter() {
+    if (outer && outerBuffer.length > 0) {
       result.push(
-        { type: "property", key: "change_inserted", value: `${ctx.authorId} ${ctx.timestamp}` },
-        ...ctx.buffer,
+        { type: "property", key: `change_${outer.type}`, value: `${outer.authorId} ${outer.timestamp}` },
+        ...outerBuffer,
         { type: "property", key: "change_unchanged" },
       );
+    } else if (!outer && outerBuffer.length > 0) {
+      result.push(...outerBuffer);
     }
+    outerBuffer = [];
   }
 
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
 
-    if (child.type === "property" && child.key === "change_inserted") {
-      flushPlain();
-      // Parse author/timestamp from value
+    if (child.type === "property" && (child.key === "change_inserted" || child.key === "change_deleted")) {
+      const markerType = child.key === "change_inserted" ? "inserted" : "deleted";
       const parts = child.value?.split(" ") ?? [];
-      const blockAuthorId = parseInt(parts[0], 10) || 0;
-      const blockTs = parts[1] || currentTs;
-      stack.push({ authorId: blockAuthorId, timestamp: blockTs, buffer: [] });
+      const innerAuthorId = parseInt(parts[0], 10) || 0;
+      const innerTs = parts[1] || currentTs;
+
+      if (outer && outer.authorId === innerAuthorId) {
+        // Same author: merge. For same-type, skip the duplicate marker and
+        // absorb its content. For different-type (e.g. change_deleted inside
+        // change_inserted), absorb content for change_inserted, drop for
+        // change_deleted (author is removing their own inserted text).
+        let depth = 1;
+        while (i + 1 < children.length && depth > 0) {
+          i++;
+          const next = children[i];
+          if (next.type === "property" && (next.key === "change_inserted" || next.key === "change_deleted")) depth++;
+          else if (next.type === "property" && next.key === "change_unchanged") depth--;
+          else if (depth > 0 && next.type === "text" && markerType === "inserted") {
+            outerBuffer.push(next);
+          }
+        }
+        continue;
+      }
+
+      // Different author or no outer context: close outer, emit inner flat
+      flushOuter();
+      result.push(child);
+      let depth = 1;
+      while (i + 1 < children.length && depth > 0) {
+        i++;
+        const next = children[i];
+        if (next.type === "property" && (next.key === "change_inserted" || next.key === "change_deleted")) depth++;
+        else if (next.type === "property" && next.key === "change_unchanged") depth--;
+        result.push(next);
+      }
+      // Keep outer context active for remaining text
       continue;
     }
 
     if (child.type === "property" && child.key === "change_unchanged") {
-      if (stack.length > 0) {
-        // Close the innermost inserted block
-        flushStack(stack.length - 1);
-      } else {
-        // Stray change_unchanged — keep as-is
-        flushPlain();
-        result.push(child);
-      }
+      if (outer) { flushOuter(); outer = null; }
+      else { flushOuter(); result.push(child); }
       continue;
-    }
-
-    if (child.type === "property" && child.key === "change_deleted") {
-      if (stack.length > 0) {
-        // change_deleted inside change_inserted: flatten.
-        // LyX's per-position model: a position can't be both INSERTED and DELETED.
-        // Discard the inner deleted marker, keep text as part of outer inserted block.
-        // Skip past this marker and its children until the matching change_unchanged.
-        let depth = 1;
-        while (i + 1 < children.length && depth > 0) {
-          i++;
-          const next = children[i];
-          if (next.type === "property" && next.key === "change_deleted") depth++;
-          else if (next.type === "property" && next.key === "change_unchanged") depth--;
-          else if (depth === 1 && next.type === "text") {
-            // Text inside the deleted block: add to outer inserted buffer
-            stack[stack.length - 1].buffer.push(next);
-          }
-        }
-        continue;
-      } else {
-        // change_deleted in plain context — preserve
-        flushPlain();
-        // Collect the entire change_deleted block
-        result.push(child);
-        let depth = 1;
-        while (i + 1 < children.length && depth > 0) {
-          i++;
-          const next = children[i];
-          if (next.type === "property" && next.key === "change_deleted") depth++;
-          else if (next.type === "property" && next.key === "change_unchanged") depth--;
-          result.push(next);
-        }
-        continue;
-      }
     }
 
     if (child.type === "text") {
-      if (stack.length > 0) {
-        stack[stack.length - 1].buffer.push(child);
-      } else {
-        plainBuffer.push(child);
-      }
+      outerBuffer.push(child);
       continue;
     }
 
-    // Any other child (block, other properties): flush everything first
-    flushPlain();
-    flushStack(0);
+    flushOuter();
+    outer = null;
     result.push(child);
   }
 
-  // Flush remaining content
-  flushPlain();
-  flushStack(0);
-
+  flushOuter();
   return result;
 }
 
@@ -1002,6 +974,45 @@ function segmentsInSameRun(children: Node[], segA: TextSegment, segB: TextSegmen
 }
 
 /**
+ * Check that two matched segments are in the same tracked-change region.
+ * A match straddling a \change_unchanged boundary between a
+ * \change_inserted block and original text is invalid — LyX's flat
+ * model can't represent a single edit spanning both.
+ */
+function segmentsInSameChangeRegion(children: Node[], segA: TextSegment, segB: TextSegment): boolean {
+  // Track whether we're inside a change_inserted or change_deleted block
+  let insideInserted = false;
+  let insideDeleted = false;
+  let aInsideInserted: boolean | null = null;
+
+  for (let i = 0; i < children.length; i++) {
+    const child = children[i];
+    if (child.type === "property") {
+      if (child.key === "change_inserted") { insideInserted = true; continue; }
+      if (child.key === "change_deleted") { insideDeleted = true; continue; }
+      if (child.key === "change_unchanged") {
+        insideInserted = false;
+        insideDeleted = false;
+        continue;
+      }
+    }
+    if (child.type !== "text") continue;
+
+    // Record region type for segment A
+    if (i === segA.childIndex) {
+      aInsideInserted = insideInserted;
+    }
+    // When we reach segment B, compare
+    if (i === segB.childIndex) {
+      const bInsideInserted = insideInserted;
+      // Both must be in the same region type
+      return aInsideInserted === bInsideInserted;
+    }
+  }
+  return true; // safety: if we can't determine, allow the match
+}
+
+/**
  * Core cross-node substring replacement. Concatenates all non-deleted text
  * children, finds all occurrences of findStr, and rebuilds the children array
  * with matched portions split out and (if tracked) wrapped in change markers.
@@ -1042,6 +1053,9 @@ function applyCrossNodeReplace(
     // blocks beyond the actual match range.
     const e = mapPosToSegment(segments, me > 0 ? me - 1 : 0);
     if (!segmentsInSameRun(children, segments[s.segIdx], segments[e.segIdx])) continue;
+    // Straddle check: match must not cross a \change_unchanged boundary
+    // between tracked and original text (dev log 78 Fix 1).
+    if (!segmentsInSameChangeRegion(children, segments[s.segIdx], segments[e.segIdx])) continue;
     for (let p = ms; p < me; p++) isMatched[p] = true;
     validCount++;
   }
