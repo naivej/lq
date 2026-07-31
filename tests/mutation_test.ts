@@ -9,7 +9,7 @@
  * Run from lq/ directory: deno test -A tests/mutation_test.ts
  */
 
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assertEquals, assert, assertStringIncludes } from "@std/assert";
 import * as path from "@std/path";
 import { parse } from "../src/parser.ts";
 import { serialize } from "../src/serializer.ts";
@@ -253,6 +253,86 @@ Deno.test("Mutation Engine - Insert Split-After with trackChanges", { timeout: 1
       }
     }
     assertEquals(maxDepth, 1, "Should never nest \\change_inserted markers (no double-wrapping)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// DL81 (test_report_34 Finding 1): tracked insert of a CommandInset must wrap
+// the inset atomically — markers outside the inset, never inside its metadata
+// (LatexCommand / key / name lines). Regression: the DL74 "insets are atomic"
+// invariant was violated on the insert path.
+Deno.test("Mutation Engine - Tracked CommandInset Insert (atomic wrap)", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_tracked_cite.lyx");
+  try {
+    await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]:first", "append", "--cite", "Mena2000"],
+      { trackChanges: true },
+    );
+
+    const text = await Deno.readTextFile(tempFile);
+    // The inset body (between begin_inset and end_inset) must contain NO change markers.
+    const insetMatch = text.match(/\\begin_inset CommandInset citation\n([\s\S]*?)\\end_inset/);
+    assert(insetMatch, "citation inset should be present");
+    assert(
+      !insetMatch[1].includes("\\change_"),
+      "change markers must not appear inside the CommandInset body: " + insetMatch[1],
+    );
+    // Markers wrap the whole inset: \change_inserted before it, \change_unchanged after.
+    const beforeIdx = text.indexOf("\\begin_inset CommandInset citation");
+    const afterIdx = text.indexOf("\\end_inset", beforeIdx);
+    const insertedIdx = text.lastIndexOf("\\change_inserted", beforeIdx);
+    const unchangedIdx = text.indexOf("\\change_unchanged", afterIdx);
+    assert(insertedIdx !== -1 && insertedIdx < beforeIdx, "change_inserted must precede the inset");
+    assert(unchangedIdx !== -1 && unchangedIdx > afterIdx, "change_unchanged must follow the inset");
+
+    // No double-wrapping: max \change_inserted nesting depth = 1.
+    const allMatches = [...text.matchAll(/\\change_inserted|\\change_unchanged/g)];
+    let insertDepth = 0;
+    let maxDepth = 0;
+    for (const m of allMatches) {
+      if (m[0] === "\\change_inserted") {
+        insertDepth++;
+        if (insertDepth > maxDepth) maxDepth = insertDepth;
+      } else {
+        insertDepth--;
+      }
+    }
+    assertEquals(maxDepth, 1, "Should never nest \\change_inserted markers");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// DL81 (test_report_34 Finding 2): untracked --find on inset metadata must not
+// split the one-line `name "..."` parameter into multiple lines — LyX rejects
+// that ("Missing quote"). The match lies entirely within one text node, so it
+// must be replaced in place.
+Deno.test("Mutation Engine - Untracked --find on Label Metadata (single line)", async () => {
+  const tempFile = await Deno.makeTempFile({ suffix: ".lyx" });
+  try {
+    await Deno.writeTextFile(tempFile,
+      "#LyX 2.5 created this file.\n" +
+      "\\begin_document\n\\begin_header\n\\textclass article\n\\end_header\n" +
+      "\\begin_body\n" +
+      "\\begin_layout Standard\n" +
+      "\\begin_inset CommandInset label\n" +
+      "LatexCommand label\n" +
+      "name \"sec:Section_label\"\n" +
+      "\\end_inset\n" +
+      "\\end_layout\n" +
+      "\\end_body\n\\end_document\n",
+    );
+    const result = await runCliWithConfig(
+      ["set", tempFile, "inset[CommandInset label]:first", "sec:Section_label_NEW", "--find", "sec:Section_label"],
+      { trackChanges: false },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    // The whole name parameter must appear on a single contiguous line.
+    assertStringIncludes(text, 'name "sec:Section_label_NEW"', "label rename must stay on one line");
+    // Old value must be gone.
+    assert(!text.includes('name "sec:Section_label"'), "old label value must be replaced");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }

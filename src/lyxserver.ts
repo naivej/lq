@@ -107,11 +107,17 @@ async function sendViaUnixSocket(socketPath: string, lfuns: string[]): Promise<b
   let conn: Deno.Conn | null = null;
   try {
     // Timeout: Deno.connect on a Unix socket hangs if the socket file exists
-    // but no process accepts. Race with a 5-second timeout.
+    // but no process accepts. Race with a 5-second timeout. The timer must be
+    // cleared once the race settles, or it keeps the process alive ~5s after
+    // the work completes (test_report_34 Finding 8).
+    let connectTimer: ReturnType<typeof setTimeout> | null = null;
     conn = await Promise.race([
       Deno.connect({ path: socketPath, transport: "unix" }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("connect timeout")), 5000)),
+      new Promise<never>((_, reject) => {
+        connectTimer = setTimeout(() => reject(new Error("connect timeout")), 5000);
+      }),
     ]);
+    if (connectTimer !== null) clearTimeout(connectTimer);
   } catch {
     return false;
   }
@@ -124,10 +130,15 @@ async function sendViaUnixSocket(socketPath: string, lfuns: string[]): Promise<b
     let data = "";
     while (true) {
       // 5-second timeout per read — protects against a hung server
+      // (same clear-the-timer requirement as above).
+      let readTimer: ReturnType<typeof setTimeout> | null = null;
       const n = await Promise.race([
         conn!.read(buf),
-        new Promise<null>((_, reject) => setTimeout(() => reject(new Error("timeout")), 5000)),
+        new Promise<null>((_, reject) => {
+          readTimer = setTimeout(() => reject(new Error("timeout")), 5000);
+        }),
       ]);
+      if (readTimer !== null) clearTimeout(readTimer);
       if (n === null) return data || null;
       data += decoder.decode(buf.subarray(0, n));
       const nl = data.indexOf("\n");
@@ -197,8 +208,9 @@ async function sendViaNamedPipe(pipeBase: string, lfuns: string[]): Promise<bool
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
   const readBuf = new Uint8Array(512);
-  // Unique client name per session avoids stale responses from previous
-  // connections. LyX buffers responses per client name indefinitely.
+  // Unique client name per session. The Windows server flushes ALL clients'
+  // responses into every .out instance (Server.cpp WRITING_STATE), so responses
+  // are correlated by this client name, not by position (test_report_34 Finding 9).
   const clientName = `lq${Date.now()}`;
 
   let inFile: Deno.FsFile | null = null;
@@ -206,11 +218,17 @@ async function sendViaNamedPipe(pipeBase: string, lfuns: string[]): Promise<bool
   try {
     // Timeout: Deno.open on a Windows named pipe blocks indefinitely if no
     // pipe server is listening (CreateFile behavior). Race with a 5-second
-    // timeout so the caller can degrade gracefully.
+    // timeout so the caller can degrade gracefully. The timer must be cleared
+    // once the race settles, or it keeps the process alive ~5s after the work
+    // completes (test_report_34 Finding 8).
+    let openTimer: ReturnType<typeof setTimeout> | null = null;
     inFile = await Promise.race([
       Deno.open(inPipe, { write: true }),
-      new Promise<never>((_, reject) => setTimeout(() => reject(new Error("pipe open timeout")), 5000)),
+      new Promise<never>((_, reject) => {
+        openTimer = setTimeout(() => reject(new Error("pipe open timeout")), 5000);
+      }),
     ]);
+    if (openTimer !== null) clearTimeout(openTimer);
   } catch {
     return false;
   }
@@ -226,7 +244,7 @@ async function sendViaNamedPipe(pipeBase: string, lfuns: string[]): Promise<bool
       let response: string | null = null;
       for (const delay of [50, 100, 200, 500, 1000]) {
         await new Promise(r => setTimeout(r, delay));
-        response = await tryReadResponse(outPipe, readBuf, decoder);
+        response = await tryReadResponse(outPipe, readBuf, decoder, clientName);
         if (response !== null) break;
       }
 
@@ -244,11 +262,33 @@ async function sendViaNamedPipe(pipeBase: string, lfuns: string[]): Promise<bool
   }
 }
 
-/** Open .out, read all available data, return the last line or null. */
+/**
+ * Filter a chunk of .out data down to the last response line addressed to
+ * `clientName`. LyX's server accumulates responses for ALL clients in one
+ * shared buffer and copies it to every .out instance (Server.cpp
+ * WRITING_STATE), so lines must be correlated by client name, not by position
+ * (test_report_34 Finding 9). Returns null when no matching line is present.
+ */
+export function filterResponses(data: string, clientName: string): string | null {
+  const lines = data.split("\n").filter(l => l);
+  const mine = lines.filter(l =>
+    l.startsWith(`INFO:${clientName}:`) || l.startsWith(`ERROR:${clientName}:`));
+  return mine.length > 0 ? mine[mine.length - 1] : null;
+}
+
+/**
+ * Open .out, drain all currently available data, and return the last response
+ * line addressed to THIS client name (or null if none arrived yet).
+ *
+ * Draining is essential: without it, stale responses from other clients would
+ * persist and be misattributed by a later connection (false REFRESH_PRE_ERROR
+ * / false success — test_report_34 Finding 9).
+ */
 async function tryReadResponse(
   outPipe: string,
   buf: Uint8Array,
   decoder: TextDecoder,
+  clientName: string,
 ): Promise<string | null> {
   let outFile: Deno.FsFile | null = null;
   try {
@@ -259,7 +299,9 @@ async function tryReadResponse(
 
   try {
     let data = "";
-    for (let attempt = 0; attempt < 20; attempt++) {
+    // Drain everything currently available so stale responses from other
+    // clients don't persist into the next connection.
+    for (let attempt = 0; attempt < 40; attempt++) {
       try {
         const n = await outFile.read(buf);
         if (n === null || n === 0) break;
@@ -271,13 +313,10 @@ async function tryReadResponse(
         }
         throw e;
       }
-      // If we got data ending with newline, we have at least one complete response
-      if (data.includes("\n")) break;
       await new Promise(r => setTimeout(r, 30));
     }
 
-    const lines = data.split("\n").filter(l => l);
-    return lines.length > 0 ? lines[lines.length - 1] : null;
+    return filterResponses(data, clientName);
   } finally {
     try { outFile.close(); } catch { /* ignore */ }
   }

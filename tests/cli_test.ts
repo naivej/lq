@@ -10,7 +10,7 @@
  * Run from lq/ directory: deno test -A tests/cli_test.ts
  */
 
-import { assertEquals, assertStringIncludes, assertGreater, assertMatch } from "@std/assert";
+import { assertEquals, assert, assertStringIncludes, assertGreater, assertMatch } from "@std/assert";
 import { runCliTest, runCliRaw, runCliWithEnv, runCliWithConfig, createTempFixture } from "./helpers.ts";
 
 const FIXTURE = "tests/fixtures/my_template.lyx";
@@ -490,6 +490,27 @@ Deno.test("CLI - dump --toc on Beamer textclass", { timeout: 10000 }, async () =
   // Beamer uses Frame instead of Section — verify frames appear in the ToC
   const layouts = data.map(d => d.layout).join(" ");
   assertStringIncludes(layouts, "Frame");
+});
+
+// ---------------------------------------------------------------------------
+// 25b. DL83: --toc heading text clean (no inset markers) + --depth 0 = top-level
+// ---------------------------------------------------------------------------
+Deno.test("CLI - dump --toc heading text clean + depth 0 = top-level", { timeout: 10000 }, async () => {
+  const fixture = "tests/fixtures/my_template.lyx";
+  const full = await runCliTest(["dump", fixture, "--toc"]);
+  const fullData = full.data as Array<{ layout: string; text: string; children: unknown[] }>;
+  assertEquals(fullData.length > 0, true, "TOC should have entries");
+  for (const n of fullData) {
+    assert(!n.text.includes("inset["), `heading text must not contain inset markers: "${n.text}"`);
+  }
+
+  // --depth 0 = top-level headings only (children collapsed to empty arrays)
+  const depth0 = await runCliTest(["dump", fixture, "--toc", "--depth", "0"]);
+  const depth0Data = depth0.data as Array<{ children: unknown[] }>;
+  assertEquals(depth0Data.length > 0, true, "depth 0 TOC should still show top-level headings");
+  for (const n of depth0Data) {
+    assertEquals((n.children as unknown[]).length, 0, "depth 0 must collapse all children");
+  }
 });
 
 // ---------------------------------------------------------------------------

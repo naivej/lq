@@ -498,24 +498,61 @@ export function applyCrossNodeReplace(
       const segStart = concatPos;
       const segText = seg.text;
 
-      let charIdx = 0;
-      while (charIdx < segText.length) {
-        const globalPos = segStart + charIdx;
+      // DL81 (test_report_34 Finding 2): for UNTRACKED matches entirely within
+      // a single text node, replace in place so the node — and thus its
+      // serialized line — stays intact. Splitting e.g. `name "sec:Section_label"`
+      // into three nodes serializes to three lines, which LyX rejects. A matched
+      // run of exactly findStr.length within one segment is a complete match
+      // (a cross-node match's per-segment part is always shorter).
+      let inPlaceText: string | null = null;
+      let needsStandardPath = false;
+      {
+        let k = 0;
+        while (k < segText.length) {
+          const gp = segStart + k;
+          if (isMatched[gp]) {
+            let re = k;
+            while (re < segText.length && isMatched[segStart + re]) re++;
+            if (tracked || (re - k) !== findStr.length) {
+              needsStandardPath = true;
+              break;
+            }
+            inPlaceText = (inPlaceText === null ? segText.substring(0, k) : inPlaceText) + newValue;
+            k = re;
+          } else {
+            let re = k;
+            while (re < segText.length && !isMatched[segStart + re]) re++;
+            if (inPlaceText !== null) inPlaceText += segText.substring(k, re);
+            k = re;
+          }
+        }
+      }
 
-        if (isMatched[globalPos]) {
-          // Find end of this matched run within the segment
-          let runEnd = charIdx;
-          while (runEnd < segText.length && isMatched[segStart + runEnd]) runEnd++;
-          matchedBuffer.push({ type: "text", text: segText.substring(charIdx, runEnd) });
-          inMatch = true;
-          charIdx = runEnd;
-        } else {
-          if (inMatch) flushMatched();
-          // Find end of this unmatched run
-          let runEnd = charIdx;
-          while (runEnd < segText.length && !isMatched[segStart + runEnd]) runEnd++;
-          result.push({ type: "text", text: segText.substring(charIdx, runEnd) });
-          charIdx = runEnd;
+      if (!needsStandardPath && inPlaceText !== null) {
+        // In-place: this segment had only complete single-segment matches.
+        result.push({ type: "text", text: inPlaceText });
+      } else {
+        // Existing standard (split) path: matches that cross nodes or are
+        // tracked still split at match boundaries.
+        let charIdx = 0;
+        while (charIdx < segText.length) {
+          const globalPos = segStart + charIdx;
+
+          if (isMatched[globalPos]) {
+            // Find end of this matched run within the segment
+            let runEnd = charIdx;
+            while (runEnd < segText.length && isMatched[segStart + runEnd]) runEnd++;
+            matchedBuffer.push({ type: "text", text: segText.substring(charIdx, runEnd) });
+            inMatch = true;
+            charIdx = runEnd;
+          } else {
+            if (inMatch) flushMatched();
+            // Find end of this unmatched run
+            let runEnd = charIdx;
+            while (runEnd < segText.length && !isMatched[segStart + runEnd]) runEnd++;
+            result.push({ type: "text", text: segText.substring(charIdx, runEnd) });
+            charIdx = runEnd;
+          }
         }
       }
 

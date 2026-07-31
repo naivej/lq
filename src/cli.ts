@@ -108,8 +108,10 @@ Options:
   --depth <n>   Limit output to n levels deep (0 = root node only).
                 Omit for full depth.
   --toc         Output a hierarchical heading tree (table of contents)
-                instead of the document tree. 
-                Can be used with --depth, and mutually exclusive with <selector>.`,
+                instead of the document tree.
+                Can be used with --depth, and mutually exclusive with <selector>.
+                With --toc: --depth 0 = top-level headings only; each larger
+                value includes one more child level.`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
 
@@ -522,7 +524,7 @@ function buildToc(ast: DocumentNode, headingHierarchy: { layout: string; tocLeve
 
     const entry: TocNode = {
       layout: layoutName,
-      text: extractAllText(node).trim(),
+      text: extractHeadingText(node).trim(),
       children: [],
     };
 
@@ -550,6 +552,23 @@ function truncateTocDepth(nodes: TocNode[], maxDepth: number, currentDepth: numb
     ...n,
     children: truncateTocDepth(n.children, maxDepth, currentDepth + 1),
   }));
+}
+
+/**
+ * Extract the plain text of a heading node for the TOC, skipping inline insets
+ * (e.g. `\begin_inset CommandInset label` inside a Section). Unlike
+ * `extractAllText`, this does not emit `inset[Type]` markers — a label inset is
+ * bookkeeping, not heading text (test_report_34 Finding 6).
+ */
+function extractHeadingText(node: Node): string {
+  if (node.type === "text") return node.text;
+  if (node.type === "block") {
+    if (node.tag === "inset") return ""; // insets are not heading text
+    let out = "";
+    for (const child of node.children) out += extractHeadingText(child);
+    return out;
+  }
+  return "";
 }
 
 function countOccurrences(text: string, findStr: string): number {
@@ -1228,15 +1247,15 @@ export async function runCli(args: string[]) {
               `Cannot track changes inside inset parameters — LyX does not track them either.\n` +
               `Alternatives:\n` +
               `  - Delete the old inset + insert a new one (both operations are reviewable when tracking is on)\n` +
-              `  - Disable tracking ('lq init --track-changes off') for a silent parameter edit\n` +
-              `  - Use '--find' without tracking for surgical edits to inset metadata`);
+              `  - Disable tracking first ('lq init --track-changes off'), then re-run this command\n` +
+              `    (untracked '--find' does surgical edits to inset metadata without corrupting it)`);
           }
           if (!findStr && !replaceAll) {
             printError("TRACKING_ERROR",
               `Default 'set' on an inset would destroy its structure (e.g. wiping LatexCommand and name lines).\n` +
               `Use one of:\n` +
-              `  --find <substring>   surgical replacement of a specific parameter value\n` +
-              `  --replace-all        deliberate full replacement of all inset content\n` +
+              `  --find <substring>   surgical replacement of a parameter value (stays on one line; requires tracking off)\n` +
+              `  --replace-all        deliberate full replacement — wipes ALL children, including LatexCommand\n` +
               `  --raw-file           for complete structural rewrites via insert`);
           }
         }
@@ -1731,16 +1750,41 @@ export async function runCli(args: string[]) {
       // Without this, wrapWithTracking on iteration 2 wraps already-wrapped children.
       const payload = newNodesToInsert.map(n => structuredClone(n));
 
+      // DL74/DL11: insets are atomic for change tracking. When tracking is on,
+      // an inset payload must be wrapped as a WHOLE — markers around the inset,
+      // never inside its metadata children (LatexCommand / key / name lines).
+      // Expand each inset to its marker sequence so the loop below treats the
+      // markers and the inset as flat siblings.
+      let loopPayload = payload;
+      if (trackChanges) {
+        const expanded: Node[] = [];
+        for (const p of payload) {
+          if (p.type === "block" && (p as BlockNode).tag === "inset") {
+            expanded.push(...wrapWithTracking([p], "inserted", insertAuthorId, insertTs));
+          } else {
+            expanded.push(p);
+          }
+        }
+        loopPayload = expanded;
+      }
+
       // Per-node validation for each block in the payload
-      for (const nodeToInsert of payload) {
+      for (const nodeToInsert of loopPayload) {
         if (trackChanges) {
           if (nodeToInsert.type === "block") {
-            nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted", insertAuthorId, insertTs);
+            const payloadBlock = nodeToInsert as BlockNode;
+            if (payloadBlock.tag === "inset") {
+              // Already atomically wrapped in the pre-pass above — never wrap
+              // an inset's metadata children.
+            } else {
+              nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted", insertAuthorId, insertTs);
+            }
           } else if (nodeToInsert.type === "text" && position === "split-after") {
             // Tracking markers are generated inline at the splice point below.
             // wrapWithTracking is the wrong tool for bare text nodes — it expects
             // an array of children to wrap inside blocks.
-          } else {
+          } else if (nodeToInsert.type !== "property") {
+            // change_* marker properties from the atomic wrap are already wrapped.
             printError("TRACKING_ERROR", "Cannot track bare text nodes. Wrap in a layout block.");
           }
         }

@@ -90,7 +90,7 @@ The query engine supports traversing the CST using CSS-like selector:
   - Outputs the CST as a JSON document. Text nodes inside tracked change blocks are annotated with `changeStatus`.
   - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
   - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
-  - `--toc` (Mutually exclusive with selector): Output a hierarchical heading tree (table of contents) instead of raw CST. Heading levels are read from the document class's `.layout` file with LaTeX's standard hierarchy as the fallback. Combined with `--depth` to limit TOC nesting depth (1 = top-level sections only).
+  - `--toc` (Mutually exclusive with selector): Output a hierarchical heading tree (table of contents) instead of raw CST. Heading levels are read from the document class's `.layout` file with LaTeX's standard hierarchy as the fallback. Combined with `--depth` to limit TOC nesting depth: `--depth 0` = top-level headings only; each larger value includes one more child level.
 - `lq read <file> <selector> [--count] [--text-only]`
   - Read matched nodes. Default mode returns CST nodes with `changeStatus` annotations on text inside tracked change blocks.
   - `--count`: Return match counts by type (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`).
