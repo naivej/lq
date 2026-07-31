@@ -102,16 +102,20 @@ Usage:
 
 Arguments:
   <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
-
+  <selector>  Scope the dump to nodes matching a CSS-like selector.
+              Omit to dump the whole document.
+              Run 'lq selector --help' for selector syntax.
 Options:
-  --depth <n>   Limit output to n levels deep (0 = root node only).
-                Omit for full depth.
-  --toc         Output a hierarchical heading tree (table of contents)
-                instead of the document tree.
-                Can be used with --depth, and mutually exclusive with <selector>.
-                With --toc: --depth 0 = top-level headings only; each larger
-                value includes one more child level.`,
+  --toc       Output a hierarchical heading tree (table of contents) instead
+              of the raw document tree. Heading levels come from the document
+              class's .layout file (LaTeX's standard hierarchy as fallback).
+              Mutually exclusive with <selector>.
+  --depth <n> Limit the output depth. Meaning depends on the mode:
+              - Raw document tree (default or <selector>): parse-tree nesting.
+                0 = root node only; 1 = direct children; N = descend N levels.
+                Omit --depth for full depth.
+              - With --toc: absolute LyX TocLevel up to any integer
+                Typically --depth 1 = Sections in the document`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
 
@@ -498,12 +502,21 @@ interface TocNode {
   children: TocNode[];
 }
 
-function buildToc(ast: DocumentNode, headingHierarchy: { layout: string; tocLevel: number }[]): TocNode[] {
+function buildToc(
+  ast: DocumentNode,
+  headingHierarchy: { layout: string; tocLevel: number }[],
+  maxLevel: number = Infinity,
+): TocNode[] {
   const rankMap = new Map(headingHierarchy.map((h, i) => [h.layout, i]));
+  const levelMap = new Map(headingHierarchy.map(h => [h.layout, h.tocLevel]));
 
   function rank(layout: string): number {
     const r = rankMap.get(layout);
     return r === undefined ? Infinity : r;
+  }
+  function tocLevel(layout: string): number {
+    const l = levelMap.get(layout);
+    return l === undefined ? Infinity : l;
   }
 
   const stack: TocNode[] = [];
@@ -521,6 +534,9 @@ function buildToc(ast: DocumentNode, headingHierarchy: { layout: string; tocLeve
     const layoutName = (node.args || "").trim().split(" ")[0];
     const r = rank(layoutName);
     if (r === Infinity) continue;
+    // Absolute TocLevel filter: skip headings deeper than maxLevel. Their
+    // subtrees drop too — children always have higher TocLevels (DL83).
+    if (tocLevel(layoutName) > maxLevel) continue;
 
     const entry: TocNode = {
       layout: layoutName,
@@ -541,17 +557,6 @@ function buildToc(ast: DocumentNode, headingHierarchy: { layout: string; tocLeve
   }
 
   return roots;
-}
-
-/** Limit TOC tree to a given depth (0 = only top-level headings). */
-function truncateTocDepth(nodes: TocNode[], maxDepth: number, currentDepth: number): TocNode[] {
-  if (currentDepth >= maxDepth) {
-    return nodes.map(n => ({ ...n, children: [] }));
-  }
-  return nodes.map(n => ({
-    ...n,
-    children: truncateTocDepth(n.children, maxDepth, currentDepth + 1),
-  }));
 }
 
 /**
@@ -862,10 +867,27 @@ export async function runCli(args: string[]) {
     printError("PARSE_ERROR", (e as Error).message);
   }
 
+/** Fold "--depth -N" into "--depth=-N" — parseArgs treats a bare "-1" as a flag. */
+function foldNegativeDepth(args: string[]): string[] {
+  const out: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const next = args[i + 1];
+    if (args[i] === "--depth" && next !== undefined && /^-\d+$/.test(next)) {
+      out.push(`--depth=${next}`);
+      i++;
+    } else {
+      out.push(args[i]);
+    }
+  }
+  return out;
+}
+
   if (command === "dump") {
     // Dump may have --depth before the selector destructuring consumes it.
     // Parse from selector + restArgs to catch both "--depth N" patterns.
-    const dumpArgs = selector ? [selector, ...restArgs] : restArgs;
+    // parseArgs treats a bare "-1" as a flag, not a value — fold "--depth -N"
+    // into "--depth=-N" so negative TocLevels (Part=-1) parse correctly.
+    const dumpArgs = foldNegativeDepth(selector ? [selector, ...restArgs] : restArgs);
     const dumpFlags = parseArgs(dumpArgs, { boolean: ["toc"], string: ["depth"] });
     const depthStr = dumpFlags["depth"];
     const tocMode = dumpFlags["toc"] === true;
@@ -895,17 +917,25 @@ export async function runCli(args: string[]) {
         headingHierarchy = DEFAULT_HEADING_HIERARCHY;
       }
       
-      let toc = buildToc(ast, headingHierarchy);
-      
-      // Apply --depth limit to toc tree
-      if (depthStr !== undefined) {
-        const depth = parseInt(depthStr, 10);
-        if (isNaN(depth) || depth < 0) {
-          printError("INVALID_FLAG", "--depth must be a non-negative integer.");
-        }
-        toc = truncateTocDepth(toc, depth, 0);
+      // --depth N = show the heading tree down to absolute LyX TocLevel N
+      // (cumulative: every heading with TocLevel <= N). Any integer is valid:
+      // Part = -1, Chapter = 0, Section = 1, Subsection = 2, ... (DL83).
+      if (depthStr !== undefined && !/^-?\d+$/.test(depthStr.trim())) {
+        printError("INVALID_FLAG", "--depth must be an integer (Part=-1, Chapter=0, Section=1, ...).");
       }
-      
+      const maxLevel = depthStr !== undefined ? parseInt(depthStr, 10) : Infinity;
+      const toc = buildToc(ast, headingHierarchy, maxLevel);
+
+      // Empty results are reported, not silent: the query is valid but the
+      // user should know there is nothing to show and what to try instead.
+      if (toc.length === 0) {
+        pushWarning(
+          depthStr !== undefined
+            ? `No headings at TocLevel ≤ ${maxLevel} in this document — this class's heading levels may start higher (e.g. Section = 1). Try '--depth 1' for top-level headings.`
+            : "No headings found in this document.",
+        );
+      }
+
       printJson({ data: toc });
       return;
     }

@@ -89,8 +89,10 @@ The query engine supports traversing the CST using CSS-like selector:
 - `lq dump <file> [<selector>] [--depth <n>] [--toc]`
   - Outputs the CST as a JSON document. Text nodes inside tracked change blocks are annotated with `changeStatus`.
   - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
-  - Depth: `--depth 0` shows only the root node; `--depth 1` shows direct children; `--depth N` descend N levels from root; omit `--depth` for the full CST.
-  - `--toc` (Mutually exclusive with selector): Output a hierarchical heading tree (table of contents) instead of raw CST. Heading levels are read from the document class's `.layout` file with LaTeX's standard hierarchy as the fallback. Combined with `--depth` to limit TOC nesting depth: `--depth 0` = top-level headings only; each larger value includes one more child level.
+  - `--toc`: Output a hierarchical heading tree (table of contents) instead of the raw CST. Heading levels come from the document class's `.layout` file (LaTeX's standard hierarchy as fallback). Mutually exclusive with `<selector>`.
+  - `--depth <n>`: Limit the output depth. Meaning depends on the mode:
+    - Raw CST (default or `<selector>`): parse-tree nesting — `--depth 0` = root node only, `--depth 1` = direct children, `--depth N` = descend N levels; omit `--depth` for full depth.
+    - With `--toc`: absolute LyX `TocLevel` up to any integer. Typically `--depth 1` = Sections in the document.
 - `lq read <file> <selector> [--count] [--text-only]`
   - Read matched nodes. Default mode returns CST nodes with `changeStatus` annotations on text inside tracked change blocks.
   - `--count`: Return match counts by type (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`).

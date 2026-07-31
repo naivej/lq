@@ -493,9 +493,9 @@ Deno.test("CLI - dump --toc on Beamer textclass", { timeout: 10000 }, async () =
 });
 
 // ---------------------------------------------------------------------------
-// 25b. DL83: --toc heading text clean (no inset markers) + --depth 0 = top-level
+// 25b. DL83: --toc heading text clean (no inset markers) + --depth = absolute TocLevel
 // ---------------------------------------------------------------------------
-Deno.test("CLI - dump --toc heading text clean + depth 0 = top-level", { timeout: 10000 }, async () => {
+Deno.test("CLI - dump --toc heading text clean + depth = absolute TocLevel", { timeout: 10000 }, async () => {
   const fixture = "tests/fixtures/my_template.lyx";
   const full = await runCliTest(["dump", fixture, "--toc"]);
   const fullData = full.data as Array<{ layout: string; text: string; children: unknown[] }>;
@@ -504,12 +504,43 @@ Deno.test("CLI - dump --toc heading text clean + depth 0 = top-level", { timeout
     assert(!n.text.includes("inset["), `heading text must not contain inset markers: "${n.text}"`);
   }
 
-  // --depth 0 = top-level headings only (children collapsed to empty arrays)
+  // --depth 1 = TocLevel 1 = Section: the level-1 anchor (top-level sections)
+  const depth1 = await runCliTest(["dump", fixture, "--toc", "--depth", "1"]);
+  const depth1Data = depth1.data as Array<{ layout: string; children: unknown[] }>;
+  assertEquals(depth1Data.length > 0, true, "depth 1 should show top-level headings");
+  for (const n of depth1Data) {
+    assertEquals(n.layout, "Section", `depth 1 = Section (level-1 anchor), got ${n.layout}`);
+    assertEquals((n.children as unknown[]).length, 0, "depth 1 must drop subsections");
+  }
+
+  // --depth 2 = TocLevel <= 2 = Section + Subsection (cumulative)
+  const depth2 = await runCliTest(["dump", fixture, "--toc", "--depth", "2"]);
+  const depth2Data = depth2.data as Array<{ children: Array<{ layout: string }> }>;
+  const hasSubsection = depth2Data.some(n => n.children.some(c => c.layout === "Subsection"));
+  assertEquals(hasSubsection, true, "depth 2 must include Subsection under Section");
+
+  // --depth 0 = TocLevel <= 0: article has no level-0 headings -> empty + warning
   const depth0 = await runCliTest(["dump", fixture, "--toc", "--depth", "0"]);
-  const depth0Data = depth0.data as Array<{ children: unknown[] }>;
-  assertEquals(depth0Data.length > 0, true, "depth 0 TOC should still show top-level headings");
-  for (const n of depth0Data) {
-    assertEquals((n.children as unknown[]).length, 0, "depth 0 must collapse all children");
+  assertEquals((depth0.data as unknown[]).length, 0, "depth 0 must be empty for an article");
+  assertEquals((depth0.warnings ?? []).length > 0, true, "empty depth must report a warning");
+
+  // --depth -1 = TocLevel <= -1: no Parts in this doc -> empty + warning; and
+  // any integer (space form) is accepted for --toc (not INVALID_FLAG)
+  const depthNeg = await runCliTest(["dump", fixture, "--toc", "--depth", "-1"]);
+  assertEquals((depthNeg.data as unknown[]).length, 0, "depth -1 must be empty (no Parts)");
+  assertEquals(depthNeg.code, undefined, "negative depth must be accepted for --toc");
+
+  // non-integers are still rejected
+  const bad = await runCliTest(["dump", fixture, "--toc", "--depth", "1.5"]);
+  assertEquals(bad.code, "INVALID_FLAG", "non-integer depth must be rejected");
+
+  // Book: --depth 0 = TocLevel 0 = Chapter (the book's top-level anchor)
+  const book = "tests/fixtures/Books/KOMA-Script_Book.lyx";
+  const book0 = await runCliTest(["dump", book, "--toc", "--depth", "0"]);
+  const book0Data = book0.data as Array<{ layout: string }>;
+  assertEquals(book0Data.length > 0, true, "book depth 0 should show Chapters");
+  for (const n of book0Data) {
+    assertEquals(n.layout, "Chapter", `book depth 0 = Chapter, got ${n.layout}`);
   }
 });
 
