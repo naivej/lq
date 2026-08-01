@@ -1005,8 +1005,20 @@ Deno.test("DL84 F5 - replay undo reports separate regions for the adjacent pair"
     assertEquals(undone.undone_changes, 1);
     const labels = (undone.changes as { label: string }[]).map(c => c.label);
     assertEquals(labels, ["change_inserted{edit}"], "the pair must be two regions, not change_deleted{writeedit}");
-    const text = await Deno.readTextFile(tempFile);
+    // Byte shape (code_review_85-74 Spec-1): the kept \change_deleted region
+    // has no closer of its own (terminated by the \change_inserted), so when
+    // that inserted region is undone a synthetic \change_unchanged must close
+    // the deleted region — otherwise LyX's flat reader absorbs the trailing
+    // text into it. Label/text-presence assertions alone let the corruption pass.
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_deleted", "change_unchanged"],
+      "deleted region must be closed by a synthetic closer (mirror of test_report_36 F4)",
+    );
+    const text = allText(children);
     assertStringIncludes(text, "write");
+    assertStringIncludes(text, " something with tracked changes.", "trailing text must survive outside the deleted region");
     assertEquals(text.includes("edit"), false);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
@@ -1117,6 +1129,29 @@ Deno.test("DL84 F2 - untracked set undo stays byte-exact and counts only the bod
     assertEquals(undone.method, "snapshot");
     assertEquals(undone.undone_changes, 1, "no-op header restore must not inflate the count");
     assertEquals(await Deno.readTextFile(tempFile), expected);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL84 F2 - tracked insert --cite then snapshot undo is byte-exact (header restored)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nold text here\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl84_f2_undo_cite.lyx", body);
+  try {
+    const expected = serialize(parse(await Deno.readTextFile(tempFile)));
+    const cfg = { trackChanges: true, authorName: "Alice" };
+    await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "append", "--cite", "Mena2000"],
+      cfg,
+    );
+    assertStringIncludes(await Deno.readTextFile(tempFile), "\\author");
+    const undone = await runCliWithConfig(["undo", tempFile, "layout[Standard]"], cfg);
+    assertEquals(undone.method, "snapshot");
+    assertEquals(
+      await Deno.readTextFile(tempFile),
+      expected,
+      "tracked insert --cite undo must restore the file byte-identically, header included (code_review_85-74 Spec-4)",
+    );
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -1376,6 +1411,61 @@ Deno.test("DL85 F4 - replay undo of deleted text on the adjacent shape preserves
     assertStringIncludes(text, "X", "inserted region preserved");
     assertStringIncludes(text, "Z", "deleted text restored");
     assertStringIncludes(text, " tail", "trailing text plain");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F4 - mirror control: undo of inserted text on the insert→delete shape drops the closer cleanly", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl85_f4_undo_x.lyx", ADJACENT_INSERT_DELETE_BODY, "\\author 1 \"Alice\"\n");
+  try {
+    const undone = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]", "X"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(undone.method, "replay");
+    assertEquals(undone.undone_changes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_deleted", "change_unchanged"],
+      "kept deleted region keeps its own closer; no orphan or spurious closer (DL85 F4 test 2)",
+    );
+    const text = allText(children);
+    assertEquals(text.includes("X"), false, "undone inserted text removed");
+    assertStringIncludes(text, "Z", "deleted text preserved");
+    assertStringIncludes(text, " tail", "trailing text plain");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F4 - undo of deleted text on the \\change_unchanged-separated shape drops the closer, no spurious emission", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\nX\n" +
+    "\\change_unchanged\n" +
+    "\\change_deleted 1 1700000001\nZ\n" +
+    "\\change_unchanged\n" +
+    " tail\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl85_f4_sep.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const undone = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]", "Z"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(undone.method, "replay");
+    assertEquals(undone.undone_changes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_inserted", "change_unchanged"],
+      "inserted region keeps its own closer; deleted region's closer dropped; no spurious closer (DL85 F4 test 3)",
+    );
+    const text = allText(children);
+    assertStringIncludes(text, "X");
+    assertStringIncludes(text, "Z", "deleted text restored");
+    assertStringIncludes(text, " tail");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }

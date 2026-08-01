@@ -21,6 +21,7 @@ import {
   isChangeCloser,
   isChangeOpener,
   resolveAuthorId,
+  scanRegionEnd,
   wrapInChangeMarkers,
   wrapWithTracking,
 } from "./tracked_changes.ts";
@@ -116,7 +117,7 @@ Options:
                 0 = root node only; 1 = direct children; N = descend N levels.
                 Omit --depth for full depth.
               - With --toc: absolute LyX TocLevel up to any integer
-                Typically --depth 1 = Sections in the document`,
+                Typically --depth 1 = Sections in the document.`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
 
@@ -237,9 +238,9 @@ Options (provide exactly one generation helper):
 Two modes, distinguished by the presence of a substring argument:
 
   lq undo <file> <selector>              Snapshot restore (1-level, any mutation).
-                                         consume the snapshot stored at '~/.lq/undo/' 
-                                         to reverts the last (tracked or plain) mutation, 
-                                         even when the mutation deleted the matched nodes.
+                                         Consume the snapshot stored at '~/.lq/undo/' to
+                                         revert the last (tracked or plain) mutation, even
+                                         when the mutation deleted the matched nodes.
 
   lq undo <file> <selector> <substring>  Replay undo (unlimited levels).
                                          Removes the entire tracked changes block (change_deleted/
@@ -506,7 +507,7 @@ interface TocNode {
 function buildToc(
   ast: DocumentNode,
   headingHierarchy: { layout: string; tocLevel: number }[],
-  maxLevel: number = Infinity,
+  maxLevel: number,
 ): TocNode[] {
   const rankMap = new Map(headingHierarchy.map((h, i) => [h.layout, i]));
   const levelMap = new Map(headingHierarchy.map(h => [h.layout, h.tocLevel]));
@@ -2073,34 +2074,33 @@ function foldNegativeDepth(args: string[]): string[] {
       // shared with the following region. Track it so undoing that following
       // region preserves the shared closer (test_report_36 F4).
       let openInsertedRegion = false;
+      // Mirror for the deleted side (code_review_85-74 Spec-1): a kept
+      // change_deleted region that ended at a different-type opener has no
+      // closer of its own; when the following change_inserted region is
+      // undone, emit a \change_unchanged so LyX's flat reader doesn't absorb
+      // trailing text into the open deleted region.
+      let openDeletedRegion = false;
 
       while (i < node.children.length) {
         const child = node.children[i];
         if (child.type === "property" && isChangeOpener(child.key)) {
           const markerType = child.key;
           const textParts: string[] = [];
-          let j = i + 1;
           // A region ends at the matching \change_unchanged OR at a
           // different-type opener — LyX's flat model emits adjacent
           // different-type regions (\change_deleted{write} immediately
           // followed by \change_inserted{edit}) with no closer between them
-          // (dev log 84 F1/F5). Each opener is processed independently.
-          let closerAt = -1;     // index of the \change_unchanged closer
-          let nextOpenerAt = -1; // index of a different-type opener
-          while (j < node.children.length) {
-            const next = node.children[j];
-            if (next.type === "property" && isChangeCloser(next.key)) {
-              closerAt = j;
-              break;
-            }
-            if (next.type === "property" && isChangeOpener(next.key) && next.key !== markerType) {
-              nextOpenerAt = j;
-              break;
-            }
-            if (next.type === "text") {
-              textParts.push(next.text);
-            }
-            j++;
+          // (dev log 84 F1/F5). Each opener is processed independently. The
+          // extent scan is shared via scanRegionEnd (flat-terminator mode).
+          const { closer: closerAt, nextOpener: nextOpenerAt } = scanRegionEnd(
+            node.children,
+            i + 1,
+            markerType,
+            true,
+          );
+          for (let k = i + 1; k < (closerAt !== -1 ? closerAt : nextOpenerAt); k++) {
+            const next = node.children[k];
+            if (next.type === "text") textParts.push(next.text);
           }
 
           if (closerAt === -1 && nextOpenerAt === -1) {
@@ -2136,6 +2136,16 @@ function foldNegativeDepth(args: string[]): string[] {
               // Restore: keep text nodes, drop the marker and terminator
               for (let k = i + 1; k < regionEnd; k++) newChildren.push(node.children[k]);
             }
+            if (markerType === "change_inserted") {
+              // A preceding kept deleted region was terminated by this
+              // inserted opener and has no closer of its own. Close it with a
+              // synthetic \change_unchanged before dropping this region
+              // (code_review_85-74 Spec-1 — the mirror of test_report_36 F4).
+              if (openDeletedRegion) {
+                newChildren.push({ type: "property", key: "change_unchanged" });
+                openDeletedRegion = false;
+              }
+            }
             // change_inserted: drop everything (marker, text, terminator)
             i = nextStart;
             undoneCount++;
@@ -2144,14 +2154,26 @@ function foldNegativeDepth(args: string[]): string[] {
             // Not our target (or another author's) — keep everything as-is
             for (let k = i; k < nextStart; k++) newChildren.push(node.children[k]);
             i = nextStart;
-            if (markerType === "change_inserted" && closerAt === -1) {
-              // Kept inserted region with no closer of its own — it stays open,
-              // so a following undone deleted region preserves the shared closer.
-              openInsertedRegion = true;
+            if (markerType === "change_inserted") {
+              // A kept inserted region terminates any open deleted region
+              // (flat model — one active Change per position), with or
+              // without a closer of its own.
+              openDeletedRegion = false;
+              if (closerAt === -1) {
+                // Kept inserted region with no closer of its own — it stays
+                // open, so a following undone deleted region preserves the
+                // shared closer (test_report_36 F4).
+                openInsertedRegion = true;
+              }
             } else if (markerType === "change_deleted") {
               // A kept deleted region keeps its closer, which closes any
-              // preceding open inserted region (flat model).
+              // preceding open inserted region (flat model). If it has no
+              // closer of its own (terminated by a different-type opener),
+              // the deleted region stays open — it needs a synthetic closer
+              // when the following inserted region is undone
+              // (code_review_85-74 Spec-1).
               openInsertedRegion = false;
+              openDeletedRegion = closerAt === -1;
             }
           }
         } else {

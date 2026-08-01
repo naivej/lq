@@ -8,6 +8,27 @@ export interface TextSegment {
 }
 
 /**
+ * Advance LyX's flat-model change depths when a change marker is encountered.
+ * LyX keeps one active Change per position (dev log 84 F1): a different-type
+ * opener terminates any open region of the other type (the opposite depth is
+ * zeroed), and a closer decrements whichever depth is open. Every marker
+ * walker routes its depth bookkeeping through this single implementation so
+ * the rule lives in one place (code_review_85-74 Standards-3).
+ */
+export function advanceChangeDepths(
+  key: string,
+  deletedDepth: number,
+  insertedDepth: number,
+): { deletedDepth: number; insertedDepth: number } {
+  if (key === "change_deleted") return { deletedDepth: deletedDepth + 1, insertedDepth: 0 };
+  if (key === "change_inserted") return { deletedDepth: 0, insertedDepth: insertedDepth + 1 };
+  // \change_unchanged: close whichever region is open
+  if (insertedDepth > 0) return { deletedDepth, insertedDepth: insertedDepth - 1 };
+  if (deletedDepth > 0) return { deletedDepth: deletedDepth - 1, insertedDepth };
+  return { deletedDepth, insertedDepth };
+}
+
+/**
  * Build a concatenated view of text children, skipping text inside
  * \change_deleted blocks. Change tracking markers (change_deleted,
  * change_inserted, change_unchanged) are transparent — they don't
@@ -21,14 +42,9 @@ export function concatenateTextNodes(children: Node[]): { segments: TextSegment[
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
     if (child.type === "property") {
-      if (child.key === "change_deleted") {
-        deletedDepth++;
-      } else if (child.key === "change_inserted") {
-        // LyX's flat model: a \change_inserted opener terminates any open
-        // deleted run (one active Change per position — dev log 84 F1).
-        deletedDepth = 0;
-      } else if (child.key === "change_unchanged") {
-        if (deletedDepth > 0) deletedDepth--;
+      const k = child.key;
+      if (k === "change_deleted" || k === "change_inserted" || k === "change_unchanged") {
+        deletedDepth = advanceChangeDepths(k, deletedDepth, 0).deletedDepth;
       }
     } else if (child.type === "text") {
       if (deletedDepth === 0) {

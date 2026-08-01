@@ -9,7 +9,7 @@
  * cross-node substring replacement. See dev logs 74–79 for the design.
  */
 import { Node, BlockNode, DocumentNode, PropertyNode } from "./ast.ts";
-import { concatenateTextNodes, mapPosToSegment, type TextSegment } from "./text_utils.ts";
+import { advanceChangeDepths, concatenateTextNodes, mapPosToSegment, type TextSegment } from "./text_utils.ts";
 
 /** Marker keys: \change_deleted / \change_inserted open a tracked region. */
 export function isChangeOpener(key: string): boolean {
@@ -19,6 +19,44 @@ export function isChangeOpener(key: string): boolean {
 /** \change_unchanged closes a tracked region. */
 export function isChangeCloser(key: string): boolean {
   return key === "change_unchanged";
+}
+
+/**
+ * Scan for the end of the change region opened by the marker at `start - 1`.
+ *
+ * `terminateAtDifferentType = false` (flatten / cross-node replace): the
+ * region ends at the matching \change_unchanged that brings the open-region
+ * depth back to 0; nested openers are counted.
+ *
+ * `terminateAtDifferentType = true` (replay undo): LyX's flat model ends a
+ * region at the first \change_unchanged OR at the first different-type opener
+ * (one active Change per position — dev log 84 F1), whichever comes first;
+ * no nesting is possible in flat input.
+ *
+ * Returns the closer index (or -1) and the different-type opener index (or -1).
+ */
+export function scanRegionEnd(
+  children: Node[],
+  start: number,
+  markerKey: string,
+  terminateAtDifferentType: boolean,
+): { closer: number; nextOpener: number } {
+  let depth = 1;
+  for (let j = start; j < children.length; j++) {
+    const n = children[j];
+    if (n.type !== "property") continue;
+    if (isChangeOpener(n.key)) {
+      if (terminateAtDifferentType && n.key !== markerKey) {
+        return { closer: -1, nextOpener: j };
+      }
+      depth++;
+    } else if (isChangeCloser(n.key)) {
+      if (terminateAtDifferentType) return { closer: j, nextOpener: -1 };
+      depth--;
+      if (depth === 0) return { closer: j, nextOpener: -1 };
+    }
+  }
+  return { closer: -1, nextOpener: -1 };
 }
 
 // Resolve the author ID for the given author name.
@@ -76,7 +114,8 @@ export function ensureTrackingChangesInHeader(ast: DocumentNode): void {
  *  Walks the CST with a change-depth tracker. Text nodes inside
  *  change_deleted get changeStatus="deleted", inside change_inserted get
  *  changeStatus="inserted". Returns a new object — the original is not mutated.
- *  Applied by default to `dump` and `read` (default mode) output. */
+ *  Applied by default to `dump` output; `read` uses `annotateChangesInPlace`
+ *  to keep the output's array/shape structure. */
 export function annotateChanges(root: Node | DocumentNode | Node[] | DocumentNode[]): unknown {
   // Handle arrays (multi-match selector results)
   if (Array.isArray(root)) return root.map(r => annotateChanges(r));
@@ -94,20 +133,13 @@ export function annotateChanges(root: Node | DocumentNode | Node[] | DocumentNod
     if (node.type === "block") {
       const children: unknown[] = [];
       for (const child of node.children) {
-        if (child.type === "property" && child.key === "change_deleted") {
+        if (child.type === "property" && (isChangeOpener(child.key) || isChangeCloser(child.key))) {
           children.push({ type: "property", key: child.key, value: child.value });
-          // LyX's flat model (one active Change per position): a
-          // different-type opener terminates any open region of the other
-          // type — dev log 84 F1.
-          insertedDepth = 0;
-          deletedDepth++;
-        } else if (child.type === "property" && child.key === "change_inserted") {
-          children.push({ type: "property", key: child.key, value: child.value });
-          deletedDepth = 0;
-          insertedDepth++;
-        } else if (child.type === "property" && isChangeCloser(child.key)) {
-          children.push({ type: "property", key: child.key, value: child.value });
-          if (insertedDepth > 0) insertedDepth--; else if (deletedDepth > 0) deletedDepth--;
+          // LyX's flat model (one active Change per position): a different-type
+          // opener terminates any open region of the other type — dev log 84 F1.
+          const depths = advanceChangeDepths(child.key, deletedDepth, insertedDepth);
+          deletedDepth = depths.deletedDepth;
+          insertedDepth = depths.insertedDepth;
         } else {
           children.push(walk(child, deletedDepth, insertedDepth));
         }
@@ -141,19 +173,13 @@ export function annotateChangesInPlace(node: Node, deletedDepth: number, inserte
       annotateChangesInPlace(child, deletedDepth, insertedDepth);
       // Depth tracking lives here — mutating primitives inside the
       // recursive call has no effect (pass-by-value), so depths are
-      // updated in this loop scope after each child returns.
-      if (child.type === "property") {
-        if (child.key === "change_deleted") {
-          // Flat model: a different-type opener terminates any open region
-          // of the other type (dev log 84 F1).
-          insertedDepth = 0;
-          deletedDepth++;
-        } else if (child.key === "change_inserted") {
-          deletedDepth = 0;
-          insertedDepth++;
-        } else if (isChangeCloser(child.key)) {
-          if (insertedDepth > 0) insertedDepth--; else if (deletedDepth > 0) deletedDepth--;
-        }
+      // updated in this loop scope after each child returns. The flat-model
+      // rule (a different-type opener terminates any open region of the other
+      // type — dev log 84 F1) is shared via advanceChangeDepths.
+      if (child.type === "property" && (isChangeOpener(child.key) || isChangeCloser(child.key))) {
+        const depths = advanceChangeDepths(child.key, deletedDepth, insertedDepth);
+        deletedDepth = depths.deletedDepth;
+        insertedDepth = depths.insertedDepth;
       }
     }
   }
@@ -256,19 +282,14 @@ export function flattenNestedChanges(children: Node[]): Node[] {
 
   // Collect the content of the change region opened by the marker at
   // `start - 1`: everything up to (excluding) the matching \change_unchanged.
-  // Returns the content and the index of that closer.
+  // Returns the content and the index of that closer. The extent scan is
+  // shared via scanRegionEnd (depth-counting, nested openers allowed).
   const collectRegion = (start: number): { content: Node[]; closer: number } => {
+    const { closer: found } = scanRegionEnd(children, start, "", false);
+    const closer = found === -1 ? children.length - 1 : found;
     const content: Node[] = [];
-    let depth = 1;
-    let j = start;
-    while (j < children.length && depth > 0) {
-      const n = children[j];
-      if (n.type === "property" && isChangeOpener(n.key)) depth++;
-      else if (n.type === "property" && isChangeCloser(n.key)) depth--;
-      if (depth > 0) content.push(n);
-      j++;
-    }
-    return { content, closer: j - 1 };
+    for (let j = start; j < closer; j++) content.push(children[j]);
+    return { content, closer };
   };
 
   let i = 0;
@@ -304,16 +325,10 @@ export function flattenNestedChanges(children: Node[]): Node[] {
         if (n.type === "property" && isChangeOpener(n.key)) {
           const inner = parseMarker(n.value);
           // Find the inner region's extent within the outer content
+          const { closer } = scanRegionEnd(content, k + 1, n.key, false);
           const innerContent: Node[] = [];
-          let depth = 1;
-          let m = k + 1;
-          while (m < content.length && depth > 0) {
-            const x = content[m];
-            if (x.type === "property" && isChangeOpener(x.key)) depth++;
-            else if (x.type === "property" && isChangeCloser(x.key)) depth--;
-            if (depth > 0) innerContent.push(x);
-            m++;
-          }
+          const end = closer === -1 ? content.length : closer;
+          for (let p = k + 1; p < end; p++) innerContent.push(content[p]);
           if (n.key === "change_inserted") {
             if (inner.authorId === outer.authorId) {
               if (parseInt(inner.ts, 10) > parseInt(outerTs, 10)) outerTs = inner.ts;
@@ -324,7 +339,7 @@ export function flattenNestedChanges(children: Node[]): Node[] {
             }
           }
           // change_deleted inside change_inserted: drop entirely
-          k = m;
+          k = closer === -1 ? content.length : closer + 1;
         } else {
           outerRun.push(n);
           k++;
@@ -407,20 +422,21 @@ function segmentsCrossInset(children: Node[], segA: TextSegment, segB: TextSegme
  * skips it), so only the inserted state needs tracking.
  */
 function straddlesChangeBoundary(children: Node[], segA: TextSegment, segB: TextSegment): boolean {
-  let insideInserted = false;
+  let insertedDepth = 0;
   let aInsideInserted: boolean | null = null;
 
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
     if (child.type === "property") {
-      if (child.key === "change_inserted") insideInserted = true;
-      else if (isChangeCloser(child.key)) insideInserted = false;
+      if (isChangeOpener(child.key) || isChangeCloser(child.key)) {
+        insertedDepth = advanceChangeDepths(child.key, 0, insertedDepth).insertedDepth;
+      }
       continue;
     }
     if (child.type !== "text") continue;
 
-    if (i === segA.childIndex) aInsideInserted = insideInserted;
-    if (i === segB.childIndex) return aInsideInserted !== insideInserted;
+    if (i === segA.childIndex) aInsideInserted = insertedDepth > 0;
+    if (i === segB.childIndex) return aInsideInserted !== (insertedDepth > 0);
   }
   return false; // safety: if we can't determine, allow the match
 }
