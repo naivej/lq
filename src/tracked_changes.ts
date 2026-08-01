@@ -27,7 +27,7 @@ export function isChangeCloser(key: string): boolean {
 // - Otherwise, auto-assign a new ID (max existing + 1, or 1 if none exist)
 //   and add a new \author entry to the header.
 
-function getHeader(ast: DocumentNode): BlockNode | undefined {
+export function getHeader(ast: DocumentNode): BlockNode | undefined {
   const doc = ast.children.find(c => c.type === "block" && c.tag === "document") as BlockNode | undefined;
   return doc?.children.find(c => c.type === "block" && c.tag === "header") as BlockNode | undefined;
 }
@@ -96,9 +96,14 @@ export function annotateChanges(root: Node | DocumentNode | Node[] | DocumentNod
       for (const child of node.children) {
         if (child.type === "property" && child.key === "change_deleted") {
           children.push({ type: "property", key: child.key, value: child.value });
+          // LyX's flat model (one active Change per position): a
+          // different-type opener terminates any open region of the other
+          // type — dev log 84 F1.
+          insertedDepth = 0;
           deletedDepth++;
         } else if (child.type === "property" && child.key === "change_inserted") {
           children.push({ type: "property", key: child.key, value: child.value });
+          deletedDepth = 0;
           insertedDepth++;
         } else if (child.type === "property" && isChangeCloser(child.key)) {
           children.push({ type: "property", key: child.key, value: child.value });
@@ -138,9 +143,15 @@ export function annotateChangesInPlace(node: Node, deletedDepth: number, inserte
       // recursive call has no effect (pass-by-value), so depths are
       // updated in this loop scope after each child returns.
       if (child.type === "property") {
-        if (child.key === "change_deleted") deletedDepth++;
-        else if (child.key === "change_inserted") insertedDepth++;
-        else if (isChangeCloser(child.key)) {
+        if (child.key === "change_deleted") {
+          // Flat model: a different-type opener terminates any open region
+          // of the other type (dev log 84 F1).
+          insertedDepth = 0;
+          deletedDepth++;
+        } else if (child.key === "change_inserted") {
+          deletedDepth = 0;
+          insertedDepth++;
+        } else if (isChangeCloser(child.key)) {
           if (insertedDepth > 0) insertedDepth--; else if (deletedDepth > 0) deletedDepth--;
         }
       }
@@ -477,11 +488,32 @@ export function applyCrossNodeReplace(
   let matchedBuffer: Node[] = [];
   let inMatch = false;
 
+  // F3 (dev log 84): track the enclosing \change_inserted region while
+  // walking, so a same-author match fully inside the region is merged in
+  // place instead of emitted as a delete+insert pair. `insertedRegionOpener`
+  // references the pushed opener node so its timestamp can be bumped.
+  let insertedRegionOpener: PropertyNode | null = null;
+  let insertedRegionAuthor: number | null = null;
+  let insertedRegionTs = 0;
+
   function flushMatched() {
     if (matchedBuffer.length === 0) return;
     if (tracked) {
-      result.push(...wrapInChangeMarkers(matchedBuffer, "deleted", authorId, ts));
-      result.push(...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", authorId, ts));
+      if (insertedRegionAuthor !== null && insertedRegionAuthor === authorId) {
+        // F3: same-author edit fully inside an inserted region — merge by
+        // absorbing the replacement text into the region (ts = max) instead
+        // of emitting a delete+insert pair. The matched old text is dropped:
+        // same-author deletion of pending-inserted text removes it.
+        result.push({ type: "text", text: newValue });
+        const newTs = parseInt(ts, 10) || 0;
+        if (newTs > insertedRegionTs) {
+          insertedRegionTs = newTs;
+          if (insertedRegionOpener) insertedRegionOpener.value = `${authorId} ${ts}`;
+        }
+      } else {
+        result.push(...wrapInChangeMarkers(matchedBuffer, "deleted", authorId, ts));
+        result.push(...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", authorId, ts));
+      }
     } else {
       result.push({ type: "text", text: newValue });
     }
@@ -562,6 +594,25 @@ export function applyCrossNodeReplace(
       // Non-segment child (property, block, or deleted text)
       // Flush matched buffer before a block boundary
       if (inMatch && child.type === "block") flushMatched();
+      // F3: track the enclosing inserted region while walking; flush a
+      // pending same-author match before a closer so a match consuming the
+      // region's last text node is absorbed into the region (merge) rather
+      // than flushed after it as a top-level delete+insert pair.
+      if (child.type === "property") {
+        if (child.key === "change_inserted") {
+          const parts = (child.value || "").split(" ");
+          insertedRegionOpener = child as PropertyNode;
+          insertedRegionAuthor = parseInt(parts[0], 10) || null;
+          insertedRegionTs = parseInt(parts[1], 10) || 0;
+        } else if (isChangeCloser(child.key)) {
+          if (inMatch && insertedRegionAuthor !== null && insertedRegionAuthor === authorId) {
+            flushMatched();
+          }
+          insertedRegionOpener = null;
+          insertedRegionAuthor = null;
+          insertedRegionTs = 0;
+        }
+      }
       result.push(child);
     }
   }

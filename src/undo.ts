@@ -1,6 +1,7 @@
 import { Node, BlockNode, DocumentNode } from "./ast.ts";
 import { serialize } from "./serializer.ts";
 import { hashText, setCachedAst } from "./cache.ts";
+import { getHeader } from "./tracked_changes.ts";
 import * as path from "@std/path";
 
 export interface SnapshotEntry {
@@ -155,6 +156,21 @@ export function collectSnapshots(ast: DocumentNode, nodes: Node[], mode: "self" 
     const target = nodeAtPath(ast, path);
     if (!target) continue;
     entries.push({ path, children: structuredClone(target.children) });
+  }
+  // Always include the document header in the snapshot (dev log 84 F2):
+  // tracked mutations write \author / \tracking_changes into the header, so
+  // undo must restore it to be byte-exact. Callers capture snapshots BEFORE
+  // those header mutations run, so this records the pre-mutation header. For
+  // untracked mutations the header is unchanged — the restore path counts
+  // only content-changing entries, so this stays an invisible no-op.
+  const header = getHeader(ast);
+  if (header) {
+    const headerPath = findNodePath(ast.children, header);
+    const headerKey = headerPath ? headerPath.join(",") : "";
+    if (headerPath && !seen.has(headerKey)) {
+      seen.add(headerKey);
+      entries.push({ path: headerPath, children: structuredClone(header.children) });
+    }
   }
   return entries;
 }

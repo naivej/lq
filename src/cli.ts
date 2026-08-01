@@ -1237,12 +1237,14 @@ function foldNegativeDepth(args: string[]): string[] {
     // in change_inserted markers, which could cause double-counting if re-scanned)
     const findPerNode: Record<string, number> = {};
 
+    // Snapshot pre-mutation state for undo — must run BEFORE the mutation loop
+    // AND before resolveAuthorId/ensureTrackingChangesInHeader below (dev log
+    // 84 F2: the header snapshot must capture the pre-mutation header).
+    const preSnapshots = collectSnapshots(ast, nodes, "self");
+
     // Pre-compute trackChanges timestamp once for all nodes
     const tcTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
     const tcAid = trackChanges ? resolveAuthorId(ast, authorName) : 0;
-
-    // Snapshot pre-mutation state for undo — must run BEFORE the mutation loop.
-    const preSnapshots = collectSnapshots(ast, nodes, "self");
 
     // Helper to accumulate per-node find counts during mutation
     const addFindCount = (node: Node, count: number) => {
@@ -1630,6 +1632,11 @@ function foldNegativeDepth(args: string[]): string[] {
         args: "Foot",
         isBeginVariant: true,
         children: [
+          // LyX writes `status` as the first line of every collapsible inset,
+          // followed by a blank line (dev log 84 F4). Without it LyX warns
+          // "Missing 'status'-tag in InsetCollapsible::read".
+          { type: "text", text: "status collapsed" },
+          { type: "text", text: "" },
           {
             type: "block",
             tag: "layout",
@@ -1689,20 +1696,22 @@ function foldNegativeDepth(args: string[]): string[] {
       }
     }
 
-    // Resolve author and ensure tracking header once for all target nodes
-    // and payload blocks (not per-targetNode — avoid re-scanning header N times).
-    const insertAuthorId = trackChanges ? resolveAuthorId(ast, authorName) : 0;
-    const insertTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
-    if (trackChanges) ensureTrackingChangesInHeader(ast);
-
-    // Snapshot pre-mutation state for undo. prepend/append/split-after
-    // modify the target's own children; before/after splice into the
-    // parent container's child list.
+    // Snapshot pre-mutation state for undo — captured BEFORE resolving the
+    // author / ensuring the tracking header, so the header entry records the
+    // pre-mutation header (dev log 84 F2). prepend/append/split-after modify
+    // the target's own children; before/after splice into the parent
+    // container's child list.
     const insertPreSnapshots = collectSnapshots(
       ast,
       nodes,
       (position === "before" || position === "after") ? "parent" : "self",
     );
+
+    // Resolve author and ensure tracking header once for all target nodes
+    // and payload blocks (not per-targetNode — avoid re-scanning header N times).
+    const insertAuthorId = trackChanges ? resolveAuthorId(ast, authorName) : 0;
+    const insertTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
+    if (trackChanges) ensureTrackingChangesInHeader(ast);
 
     for (const targetNode of nodes) {
       let targetParentBlock: BlockNode | null = null;
@@ -1958,17 +1967,25 @@ function foldNegativeDepth(args: string[]): string[] {
       const snapshot = await loadSnapshot(currentHash);
       if (snapshot) {
         let restoredCount = 0;
+        let missingCount = 0;
         // Ancestor paths first: a parent restore recreates the structure
         // that descendant paths index into.
         const sortedEntries = [...snapshot.entries].sort((a, b) => a.path.length - b.path.length);
         for (const entry of sortedEntries) {
           const target = nodeAtPath(ast, entry.path);
-          if (!target) continue;
+          if (!target) {
+            missingCount++;
+            continue;
+          }
+          const before = JSON.stringify(target.children);
           target.children = entry.children;
-          restoredCount++;
+          // Count only content-changing restores: the header entry is a no-op
+          // for untracked mutations (dev log 84 F2) and must not inflate the
+          // count or trip the structure-changed warning.
+          if (before !== JSON.stringify(entry.children)) restoredCount++;
         }
         if (restoredCount > 0) {
-          if (restoredCount < snapshot.entries.length) {
+          if (missingCount > 0) {
             pushWarning(
               `Restored ${restoredCount} of ${snapshot.entries.length} snapshot entries — ` +
               `the document structure changed since the snapshot. Verify with 'lq read ${filePath} "${selector}"'.`
@@ -2003,11 +2020,13 @@ function foldNegativeDepth(args: string[]): string[] {
       printError("NO_MATCH", `Selector matched no nodes to undo. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
     }
 
+    // Snapshot pre-replay children so the replay itself can be undone —
+    // captured before resolving the author so the header entry records the
+    // pre-replay header (dev log 84 F2).
+    const replayPreSnapshots = collectSnapshots(ast, nodes, "self");
+
     // Resolve the current author's ID to only undo their own changes
     const undoAuthorId = resolveAuthorId(ast, authorName);
-
-    // Snapshot pre-mutation children so the replay itself can be undone
-    const replayPreSnapshots = collectSnapshots(ast, nodes, "self");
 
     let undoneCount = 0;
     const undoneLabels: string[] = [];
@@ -2020,15 +2039,24 @@ function foldNegativeDepth(args: string[]): string[] {
       while (i < node.children.length) {
         const child = node.children[i];
         if (child.type === "property" && isChangeOpener(child.key)) {
-          // Collect text between this change marker and the next change_unchanged
           const markerType = child.key;
           const textParts: string[] = [];
           let j = i + 1;
-          let foundUnchanged = false;
+          // A region ends at the matching \change_unchanged OR at a
+          // different-type opener — LyX's flat model emits adjacent
+          // different-type regions (\change_deleted{write} immediately
+          // followed by \change_inserted{edit}) with no closer between them
+          // (dev log 84 F1/F5). Each opener is processed independently.
+          let closerAt = -1;     // index of the \change_unchanged closer
+          let nextOpenerAt = -1; // index of a different-type opener
           while (j < node.children.length) {
             const next = node.children[j];
             if (next.type === "property" && isChangeCloser(next.key)) {
-              foundUnchanged = true;
+              closerAt = j;
+              break;
+            }
+            if (next.type === "property" && isChangeOpener(next.key) && next.key !== markerType) {
+              nextOpenerAt = j;
               break;
             }
             if (next.type === "text") {
@@ -2037,19 +2065,24 @@ function foldNegativeDepth(args: string[]): string[] {
             j++;
           }
 
-          if (!foundUnchanged) {
-            // Malformed: no closing change_unchanged — keep as-is
+          if (closerAt === -1 && nextOpenerAt === -1) {
+            // Malformed: no closing change_unchanged and no next opener — keep as-is
             newChildren.push(child);
             i++;
             continue;
           }
 
+          // Region extent: closer is inclusive, a different-type opener is
+          // exclusive (it starts its own region on the next iteration).
+          const regionEnd = closerAt !== -1 ? closerAt : nextOpenerAt;
+          const nextStart = closerAt !== -1 ? closerAt + 1 : nextOpenerAt;
+
           // Skip changes made by other authors
           const authorIdMatch = child.value?.match(/^(\d+)/);
           const changeAuthorId = authorIdMatch ? parseInt(authorIdMatch[1], 10) : null;
           if (changeAuthorId !== undoAuthorId) {
-            for (let k = i; k <= j; k++) newChildren.push(node.children[k]);
-            i = j + 1;
+            for (let k = i; k < nextStart; k++) newChildren.push(node.children[k]);
+            i = nextStart;
             continue;
           }
 
@@ -2060,17 +2093,17 @@ function foldNegativeDepth(args: string[]): string[] {
 
           if (shouldUndo) {
             if (markerType === "change_deleted") {
-              // Restore: keep text nodes, drop the marker and closing change_unchanged
-              for (let k = i + 1; k < j; k++) newChildren.push(node.children[k]);
+              // Restore: keep text nodes, drop the marker and terminator
+              for (let k = i + 1; k < regionEnd; k++) newChildren.push(node.children[k]);
             }
-            // change_inserted: drop everything (marker, text, change_unchanged)
-            i = j + 1;
+            // change_inserted: drop everything (marker, text, terminator)
+            i = nextStart;
             undoneCount++;
             undoneLabels.push(markerType + "{" + (enclosedText.length > 60 ? enclosedText.substring(0, 60) + "..." : enclosedText) + "}");
           } else {
             // Not our target — keep everything as-is
-            for (let k = i; k <= j; k++) newChildren.push(node.children[k]);
-            i = j + 1;
+            for (let k = i; k < nextStart; k++) newChildren.push(node.children[k]);
+            i = nextStart;
           }
         } else {
           newChildren.push(child);

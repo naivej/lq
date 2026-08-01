@@ -23,6 +23,10 @@ export function concatenateTextNodes(children: Node[]): { segments: TextSegment[
     if (child.type === "property") {
       if (child.key === "change_deleted") {
         deletedDepth++;
+      } else if (child.key === "change_inserted") {
+        // LyX's flat model: a \change_inserted opener terminates any open
+        // deleted run (one active Change per position — dev log 84 F1).
+        deletedDepth = 0;
       } else if (child.key === "change_unchanged") {
         if (deletedDepth > 0) deletedDepth--;
       }

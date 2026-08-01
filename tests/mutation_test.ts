@@ -912,3 +912,254 @@ Deno.test("DL78 Replay Undo - Substring Still Works (regression)", { timeout: 15
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
+
+// --- Dev log 84/85: flat change-state model on the LyX-standard replacement shape ---
+// LyX emits \change_deleted{old}\change_inserted{new} with no \change_unchanged
+// between them (one active Change per position). lq must treat an inserted
+// opener as terminating any open deleted run (dev log 84 F1, implemented 85).
+
+const ADJACENT_PAIR_BODY =
+  "\\begin_layout Standard\n" +
+  "I \n" +
+  "\\change_deleted 1 1776668506\n" +
+  "write\n" +
+  "\\change_inserted 1 1776668507\n" +
+  "edit\n" +
+  "\\change_unchanged\n" +
+  " something with tracked changes.\n" +
+  "\\end_layout\n";
+
+Deno.test("DL85 F1 - --find matches current text after adjacent delete+insert pair", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl85_f1_find.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "EDIT", "--find", "edit"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, "--find on current (inserted) text must match");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F1 - --find on deleted text stays NO_MATCH", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl85_f1_deleted.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "X", "--find", "write"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.code, "NO_MATCH");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F1 - split-after works on inserted text", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl85_f1_split.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "edit", "--text", "X"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.matched_nodes, 1, "split-after on inserted text must not SPLIT_NO_MATCH");
+    assertStringIncludes(await Deno.readTextFile(tempFile), "X");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F1 - :contains finds the paragraph", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl85_f1_contains.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliTest(["read", tempFile, "layout:contains('edit')", "--count"]);
+    assertEquals(typeof result.count, "object");
+    assertEquals((result.count as Record<string, number>)["layout[Standard]"], 1);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F1 - read annotations: inserted text labeled inserted, trailing unchanged", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl85_f1_read.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliTest(["read", tempFile, "layout[Standard]"]);
+    const node = (result.data as { children: Array<{ text?: string; changeStatus?: string }> }[])[0];
+    const statusFor = (t: string) => node.children.find(c => c.text === t)?.changeStatus;
+    assertEquals(statusFor("write"), "deleted");
+    assertEquals(statusFor("edit"), "inserted");
+    assertEquals(statusFor(" something with tracked changes."), undefined, "trailing text must not be mislabeled deleted");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F5 - replay undo reports separate regions for the adjacent pair", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl85_f5_replay.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+  try {
+    const undone = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]", "edit"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(undone.method, "replay");
+    assertEquals(undone.undone_changes, 1);
+    const labels = (undone.changes as { label: string }[]).map(c => c.label);
+    assertEquals(labels, ["change_inserted{edit}"], "the pair must be two regions, not change_deleted{writeedit}");
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "write");
+    assertEquals(text.includes("edit"), false);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- Dev log 84/85 F3: same-author in-region edits unify to merge (Option A) ---
+
+Deno.test("DL85 F3 - same-author match consuming whole region merges (not a pair)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\n\\change_inserted 1 1700000000\nFIXED\n\\change_unchanged\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl85_f3_whole.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "FIXEDX", "--find", "FIXED"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(
+      markers.map(m => m.key),
+      ["change_inserted", "change_unchanged"],
+      "full-consumption same-author match must merge, not emit a delete+insert pair",
+    );
+    const [aid, ts] = (markers[0].value || "").split(" ");
+    assertEquals(aid, "1");
+    assertEquals(parseInt(ts, 10) > 1700000000, true, "timestamp must update to max(old, new)");
+    assertEquals(allText(children), "FIXEDX");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F3 - different-author full-consumption still emits a delete+insert pair", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\n\\change_inserted 1 1700000000\nFIXED\n\\change_unchanged\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl85_f3_whole_diff.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "FIXEDX", "--find", "FIXED"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(
+      markers.map(m => m.key),
+      ["change_deleted", "change_unchanged", "change_inserted", "change_unchanged"],
+      "different author keeps a reviewable delete+insert pair",
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- Dev log 84/85 F2: header snapshot makes tracked-mutation undo byte-exact ---
+
+Deno.test("DL85 F2 - tracked set --find then snapshot undo is byte-exact (header restored)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nold text here\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl85_f2_undo.lyx", body);
+  try {
+    const expected = serialize(parse(await Deno.readTextFile(tempFile)));
+    const cfg = { trackChanges: true, authorName: "Alice" };
+    await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "NEW", "--find", "old"],
+      cfg,
+    );
+    assertStringIncludes(await Deno.readTextFile(tempFile), "\\author");
+    // Undo must run under the SAME config (same temp HOME) so it finds the
+    // snapshot saved by the set command.
+    const undone = await runCliWithConfig(["undo", tempFile, "layout[Standard]"], cfg);
+    assertEquals(undone.method, "snapshot");
+    assertEquals(
+      await Deno.readTextFile(tempFile),
+      expected,
+      "tracked mutation undo must restore the file byte-identically, header included (dev log 84 F2)",
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F2 - tracked delete then snapshot undo is byte-exact (header restored)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nold text here\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl85_f2_undo_delete.lyx", body);
+  try {
+    const expected = serialize(parse(await Deno.readTextFile(tempFile)));
+    const cfg = { trackChanges: true, authorName: "Alice" };
+    await runCliWithConfig(["delete", tempFile, "layout[Standard]"], cfg);
+    assertStringIncludes(await Deno.readTextFile(tempFile), "\\author");
+    const undone = await runCliWithConfig(["undo", tempFile, "layout[Standard]"], cfg);
+    assertEquals(undone.method, "snapshot");
+    assertEquals(
+      await Deno.readTextFile(tempFile),
+      expected,
+      "tracked delete undo must restore the file byte-identically, header included",
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F2 - untracked set undo stays byte-exact and counts only the body node", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nold text here\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl85_f2_undo_untracked.lyx", body);
+  try {
+    const expected = serialize(parse(await Deno.readTextFile(tempFile)));
+    await runCliTest(["set", tempFile, "layout[Standard]", "NEW", "--find", "old"]);
+    const undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    assertEquals(undone.method, "snapshot");
+    assertEquals(undone.undone_changes, 1, "no-op header restore must not inflate the count");
+    assertEquals(await Deno.readTextFile(tempFile), expected);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- Dev log 84/85 F4: --footnote inserts LyX's status line ---
+
+Deno.test("DL85 F4 - --footnote insert emits status line (untracked)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nBase\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl85_f4_untracked.lyx", body);
+  try {
+    await runCliTest(["insert", tempFile, "layout[Standard]", "append", "--footnote", "A footnote"]);
+    const text = await Deno.readTextFile(tempFile);
+    const idx = text.indexOf("\\begin_inset Foot");
+    assert(idx !== -1, "Foot inset must exist");
+    const after = text.substring(idx + "\\begin_inset Foot".length).trimStart();
+    assert(
+      after.startsWith("status collapsed\n\n\\begin_layout Plain Layout"),
+      "status line must precede the layout (dev log 84 F4)",
+    );
+    assertStringIncludes(text, "A footnote");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL85 F4 - --footnote insert emits status line (tracked)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nBase\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl85_f4_tracked.lyx", body);
+  try {
+    await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "append", "--footnote", "A footnote"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    const text = await Deno.readTextFile(tempFile);
+    const idx = text.indexOf("\\begin_inset Foot");
+    assert(idx !== -1, "Foot inset must exist");
+    const after = text.substring(idx + "\\begin_inset Foot".length).trimStart();
+    assert(
+      after.startsWith("status collapsed\n\n\\begin_layout Plain Layout"),
+      "status line must precede the layout (dev log 84 F4)",
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
