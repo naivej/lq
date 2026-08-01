@@ -563,6 +563,14 @@ export function applyCrossNodeReplace(
       if (!needsStandardPath && inPlaceText !== null) {
         // In-place: this segment had only complete single-segment matches.
         result.push({ type: "text", text: inPlaceText });
+      } else if (segText.length === 0) {
+        // Empty text node (a blank line). The rebuild loop emits nothing for
+        // an empty segment, silently dropping blank lines inside ERT insets
+        // and paragraphs — preserve it (test_report_36 F3). Flush a pending
+        // match first so the blank line lands after the change pair,
+        // matching its original position.
+        if (inMatch) flushMatched();
+        result.push({ type: "text", text: "" });
       } else {
         // Existing standard (split) path: matches that cross nodes or are
         // tracked still split at match boundaries.
@@ -604,6 +612,21 @@ export function applyCrossNodeReplace(
           insertedRegionOpener = child as PropertyNode;
           insertedRegionAuthor = parseInt(parts[0], 10) || null;
           insertedRegionTs = parseInt(parts[1], 10) || 0;
+        } else if (child.key === "change_deleted") {
+          // F3 (test_report_36 F1): a different-type opener terminates any
+          // open inserted region (LyX's flat model — one active Change per
+          // position). Flush a pending match BEFORE the interposed region's
+          // markers, close the inserted region with a synthetic
+          // \change_unchanged, and reset the tracking. Otherwise the
+          // interposed deleted region is read as nested and destroyed by
+          // flattenNestedChanges.
+          if (insertedRegionAuthor !== null) {
+            if (inMatch) flushMatched();
+            result.push({ type: "property", key: "change_unchanged" });
+            insertedRegionOpener = null;
+            insertedRegionAuthor = null;
+            insertedRegionTs = 0;
+          }
         } else if (isChangeCloser(child.key)) {
           if (inMatch && insertedRegionAuthor !== null && insertedRegionAuthor === authorId) {
             flushMatched();

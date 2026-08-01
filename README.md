@@ -23,10 +23,11 @@
 - Collaborate with agents in an **auto-refreshed** LyX GUI through [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
 - Agents make **tracked changes**, allowing easy review.
 
-### Limitations
+### Limitations and known issues
 - `lq` focuses on writing assistance, not complex type-setting (e.g., intricate tables). Use the LyX GUI to fine-tune type-setting and preview the final PDF.
 - **Windows auto-refresh**: Before auto-refresh, we use LyX function `buffer-switch` to ensure that mutations are reloaded into the correct target file, rather than the one that users are working on in the GUI. This however does not work on Windows, because LyXServer uses a named pipe protocol that delimits messages with `:`, which conflicts with the drive letter in Windows absolute paths (e.g. `C:\...`). As a result, `buffer-switch` cannot be sent through the pipe, and auto-refresh operates on LyX's active buffer rather than switching to the target file first. **Windows users are advised to open only one `.lyx` file while using `lq`.**
 - Some LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization) are not enforced by `lq`. Those are purely cosmetic and LyX reads files fine without them. As a result, opening an `lq`-edited file in LyX can cause formatting-only diffs.
+  - **Line endings (CRLF vs LF)**: `lq` always serializes with LF line endings across platforms, while LyX's GUI save/auto-save on Windows writes CRLF. During a live auto-refresh round-trip, LyX's `buffer-write` rewrites the open buffer with CRLF, so the on-disk file can flip between the two conventions and show a full-file diff in git-based review.
 
 ## Design Philosophy & Architecture
 

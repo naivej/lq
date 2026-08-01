@@ -16,6 +16,7 @@ import {
   ensureTrackingChangesInHeader,
   extractAllText,
   flattenNestedChanges,
+  getHeader,
   hasTrackedChanges,
   isChangeCloser,
   isChangeOpener,
@@ -632,6 +633,20 @@ async function refreshPostStep(filePath: string, mode: "none" | "reload" | "save
   }
 }
 
+// Guard: tracked mutations write \author / \change_* entries that reference
+// the document header. A document with no header block cannot represent them
+// (LyX rejects \change_* markers without a matching \author entry), so refuse
+// rather than silently write a file LyX cannot open (test_report_36 F5).
+function assertTrackingHeader(ast: DocumentNode, trackChanges: boolean): void {
+  if (!trackChanges) return;
+  if (getHeader(ast)) return;
+  printError("TRACKING_HEADER_MISSING",
+    "This document has no '\\begin_header' block, so tracked changes cannot be " +
+    "written — LyX would reject the \\change_* markers (no matching \\author entry).\n" +
+    "Fix the file (restore its header) or disable tracking first " +
+    "('lq init --track-changes off') to mutate without tracking.");
+}
+
 export async function runCli(args: string[]) {
 
   const parsedHelp = parseArgs(args, { boolean: ["help", "h"] });
@@ -1242,6 +1257,10 @@ function foldNegativeDepth(args: string[]): string[] {
     // 84 F2: the header snapshot must capture the pre-mutation header).
     const preSnapshots = collectSnapshots(ast, nodes, "self");
 
+    // A tracked mutation on a document without a header would write \author-0
+    // markers LyX rejects — refuse up front (test_report_36 F5).
+    assertTrackingHeader(ast, trackChanges);
+
     // Pre-compute trackChanges timestamp once for all nodes
     const tcTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
     const tcAid = trackChanges ? resolveAuthorId(ast, authorName) : 0;
@@ -1393,6 +1412,10 @@ function foldNegativeDepth(args: string[]): string[] {
     // mode: deletion removes nodes from (or splices markers into) the
     // parent's child list, so the parent's children are what must restore.
     const deletePreSnapshots = collectSnapshots(ast, nodes, "parent");
+
+    // A tracked mutation on a document without a header would write \author-0
+    // markers LyX rejects — refuse up front (test_report_36 F5).
+    assertTrackingHeader(ast, trackChanges);
 
     if (trackChanges) {
       // Track-changes mode: wrap matched nodes in change_deleted markers instead of removing them
@@ -1707,6 +1730,10 @@ function foldNegativeDepth(args: string[]): string[] {
       (position === "before" || position === "after") ? "parent" : "self",
     );
 
+    // A tracked mutation on a document without a header would write \author-0
+    // markers LyX rejects — refuse up front (test_report_36 F5).
+    assertTrackingHeader(ast, trackChanges);
+
     // Resolve author and ensure tracking header once for all target nodes
     // and payload blocks (not per-targetNode — avoid re-scanning header N times).
     const insertAuthorId = trackChanges ? resolveAuthorId(ast, authorName) : 0;
@@ -1765,7 +1792,13 @@ function foldNegativeDepth(args: string[]): string[] {
         }
 
         const splitPos = matchStart + splitMatch!.length;
-        const splitPoint = mapPosToSegment(segments, splitPos);
+        // The split point is right AFTER the last matched character. Map to
+        // the segment containing that character, then split one char past it.
+        // Mapping bare splitPos lands at offset 0 of the NEXT node when the
+        // match ends exactly at a text-node boundary, inserting the payload
+        // after the wrong node (test_report_36 F2).
+        const lastCharPoint = mapPosToSegment(segments, splitPos > 0 ? splitPos - 1 : 0);
+        const splitPoint = { segIdx: lastCharPoint.segIdx, offset: lastCharPoint.offset + 1 };
 
         // The split falls within a single text node at splitPoint.offset.
         // The "before" portion includes all text from the start of the children
@@ -2035,6 +2068,11 @@ function foldNegativeDepth(args: string[]): string[] {
       if (node.type !== "block") continue;
       const newChildren: Node[] = [];
       let i = 0;
+      // A kept change_inserted region that ended at a different-type opener
+      // (closerAt === -1) has no closer of its own — its \change_unchanged is
+      // shared with the following region. Track it so undoing that following
+      // region preserves the shared closer (test_report_36 F4).
+      let openInsertedRegion = false;
 
       while (i < node.children.length) {
         const child = node.children[i];
@@ -2077,22 +2115,24 @@ function foldNegativeDepth(args: string[]): string[] {
           const regionEnd = closerAt !== -1 ? closerAt : nextOpenerAt;
           const nextStart = closerAt !== -1 ? closerAt + 1 : nextOpenerAt;
 
-          // Skip changes made by other authors
           const authorIdMatch = child.value?.match(/^(\d+)/);
           const changeAuthorId = authorIdMatch ? parseInt(authorIdMatch[1], 10) : null;
-          if (changeAuthorId !== undoAuthorId) {
-            for (let k = i; k < nextStart; k++) newChildren.push(node.children[k]);
-            i = nextStart;
-            continue;
-          }
-
           const enclosedText = textParts.join("");
 
-          // Check if this change matches our target
+          // Check if this change matches our target AND belongs to this author
           const shouldUndo = substring === undefined || enclosedText.includes(substring);
+          const willUndo = changeAuthorId === undoAuthorId && shouldUndo;
 
-          if (shouldUndo) {
+          if (willUndo) {
             if (markerType === "change_deleted") {
+              if (openInsertedRegion) {
+                // The \change_unchanged that would close this deleted region
+                // also closes the still-open preceding change_inserted region.
+                // Emit it FIRST, then restore the deleted text as plain text
+                // (test_report_36 F4).
+                newChildren.push({ type: "property", key: "change_unchanged" });
+                openInsertedRegion = false;
+              }
               // Restore: keep text nodes, drop the marker and terminator
               for (let k = i + 1; k < regionEnd; k++) newChildren.push(node.children[k]);
             }
@@ -2101,9 +2141,18 @@ function foldNegativeDepth(args: string[]): string[] {
             undoneCount++;
             undoneLabels.push(markerType + "{" + (enclosedText.length > 60 ? enclosedText.substring(0, 60) + "..." : enclosedText) + "}");
           } else {
-            // Not our target — keep everything as-is
+            // Not our target (or another author's) — keep everything as-is
             for (let k = i; k < nextStart; k++) newChildren.push(node.children[k]);
             i = nextStart;
+            if (markerType === "change_inserted" && closerAt === -1) {
+              // Kept inserted region with no closer of its own — it stays open,
+              // so a following undone deleted region preserves the shared closer.
+              openInsertedRegion = true;
+            } else if (markerType === "change_deleted") {
+              // A kept deleted region keeps its closer, which closes any
+              // preceding open inserted region (flat model).
+              openInsertedRegion = false;
+            }
           }
         } else {
           newChildren.push(child);
