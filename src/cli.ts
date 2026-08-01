@@ -862,13 +862,16 @@ export async function runCli(args: string[]) {
       }
     }
 
-    // If refresh is enabled, verify LyXServer is reachable
+    // If refresh is enabled, verify LyXServer is reachable. Dispatch-based
+    // probe (test_report_38 F10) — truthful for both "no socket found" and
+    // "LyX is up but not accepting commands".
     if (config.refresh !== "none") {
-      const available = checkLyxServerAvailable();
+      const available = await checkLyxServerAvailable();
       if (!available) {
         pushWarning(
-          `Refresh mode '${config.refresh}' requires a running LyX instance with LyXServer enabled. ` +
-          "Could not detect LyXServer socket. Enable LyXServer in LyX Preferences and restart LyX."
+          `Refresh mode '${config.refresh}' requires a running LyX instance with LyXServer enabled, ` +
+          "but the server could not be reached (no socket found, or LyX is not accepting commands). " +
+          "Enable LyXServer in LyX Preferences and restart LyX."
         );
       }
     }

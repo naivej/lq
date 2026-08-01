@@ -405,12 +405,61 @@ export async function sendLyxCommands(
 }
 
 /**
- * Check if a running LyX instance with LyXServer enabled is reachable.
- * Used at `lq init` time to verify configuration.
+ * Probe whether a running LyX instance with LyXServer enabled is reachable.
+ * Used at `lq init` time to verify configuration (test_report_38 F10).
+ *
+ * DISPATCH-based, not response-based. Under Option A (F1) the reliable signal
+ * on Windows is `sent` — a successful write to .in — and the F1 delivery race
+ * loses ~50% of *responses*, so a response-requiring probe would be a ~50%
+ * false-negative (the exact trap D4 warned about). Dispatchability is what
+ * refresh actually needs (save-reload aborts only on a genuine disconnect), so
+ * it is the truthful reachability signal and is immune to the race by design.
+ *
+ * Windows: open .in + dispatch one harmless LYXCMD (server-get-filename is
+ * ReadOnly, no side effects), no .out polling. LYXCMD never touches the
+ * clients_ registry (only LYXSRV:...:hello does), so no client slot is used.
+ * Unix: the HELLO handshake response is reliable (no F1 race on Unix).
  */
-export function checkLyxServerAvailable(): boolean {
+export async function checkLyxServerAvailable(): Promise<boolean> {
   if (Deno.build.os === "windows") {
-    return discoverWindowsPipePath() !== null;
+    const pipeBase = discoverWindowsPipePath();
+    if (!pipeBase) return false;
+    return await probeNamedPipe(pipeBase);
   }
-  return discoverUnixSocket() !== null;
+  const socketPath = discoverUnixSocket();
+  if (!socketPath) return false;
+  return await probeUnixSocket(socketPath);
+}
+
+/**
+ * Windows reachability probe: open .in and dispatch one harmless LFUN.
+ * Returns true iff the write succeeded — dispatch is the truthful reachability
+ * signal under Option A (F1), so a response is deliberately NOT waited for
+ * (no .out polling → fast, and immune to the delivery race).
+ */
+async function probeNamedPipe(pipeBase: string): Promise<boolean> {
+  const inPipe = winPipePath(pipeBase, ".in");
+  const clientName = `lqprobe${Date.now()}`;
+  let inFile: Deno.FsFile | null = null;
+  try {
+    // Bounded open: CreateFile blocks indefinitely if no pipe server is
+    // listening (or all client slots are exhausted) — dev log 75 hazard.
+    inFile = await withTimeout(Deno.open(inPipe, { write: true }), 3000);
+    await inFile.write(new TextEncoder().encode(`LYXCMD:${clientName}:server-get-filename\n`));
+    return true;
+  } catch {
+    return false;
+  } finally {
+    try { inFile?.close(); } catch { /* ignore */ }
+  }
+}
+
+/**
+ * Unix reachability probe: reuse the tested HELLO handshake transport. A
+ * returned greeting proves the server is alive — reliable on Unix because each
+ * connection is a dedicated socket (no shared reply buffer, so no F1 race).
+ */
+async function probeUnixSocket(socketPath: string): Promise<boolean> {
+  const { sent } = await sendViaUnixSocket(socketPath, ["server-get-filename"]);
+  return sent;
 }

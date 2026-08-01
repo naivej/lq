@@ -82,6 +82,7 @@ The query engine supports traversing the CST using CSS-like selector:
     - `none` (default): No refresh. LyX detects external changes via its own polling and prompts the user to reload.
     - `reload`: Reload the buffer after `lq` writes. Fast, but discards unsaved in-LyX edits. Best-effort — warns if LyX is unreachable or the reload can't be confirmed (the file is still written).
     - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Aborts only when LyX is genuinely unreachable or reports a save error. **On Windows, LyXServer responses are unreliable** (a LyX server quirk — commands always execute, but confirmations can be lost): an unconfirmed save proceeds with a warning instead of aborting, since the save was almost certainly applied. Restart LyX if this repeats.
+    - Setting a non-`none` mode makes `lq init` run a fast reachability probe and warn if LyXServer can't be reached (no socket found, or LyX is not accepting commands) — the warning doesn't abort init; enable LyXServer in LyX Preferences and restart LyX.
   - `--track-changes <on|off>`: Enable or disable tracked changes for all mutation commands (default on).
   - `--author-name <name>`: Set the author recorded on new tracked changes (default `"lq user"`).
   - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`.

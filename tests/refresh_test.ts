@@ -8,7 +8,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { refreshPreStep } from "../src/cli.ts";
-import { filterResponses } from "../src/lyxserver.ts";
+import { checkLyxServerAvailable, filterResponses } from "../src/lyxserver.ts";
 
 Deno.test("Refresh - save-reload pre-step returns a status", { timeout: 10000 }, async () => {
   // The pre-step returns one of "ok" | "disconnect" | "unconfirmed" | "error"
@@ -73,4 +73,80 @@ Deno.test("Refresh - client-name filter is exact (not prefix)", () => {
   const data = `INFO:lq123:buffer-write:\nINFO:lq1234:buffer-write:`;
   assertEquals(filterResponses(data, "lq123"), `INFO:lq123:buffer-write:`);
   assertEquals(filterResponses(data, "lq1234"), `INFO:lq1234:buffer-write:`);
+});
+
+Deno.test("Refresh - reachability probe settles fast to a boolean", { timeout: 10000 }, async () => {
+  // F10 dispatch-based probe (dev log 87 Step 4): must settle to a boolean and
+  // never hang or leave a lingering process (dev log 75 hazard). The true/false
+  // result is environment-dependent — the live truth check (LyX running vs
+  // closed) is manual — but boundedness + boolean shape is the automated
+  // contract.
+  const available = await checkLyxServerAvailable();
+  assertEquals(typeof available, "boolean");
+});
+
+Deno.test("Refresh - mock server: save-reload returns ok (Unix socket)", { ignore: Deno.build.os === "windows", timeout: 15000 }, async () => {
+  // Backlog 17 / dev log 87 F1: a controllable server behind the $LYXSOCKET
+  // override proves refreshPreStep(file, "save-reload") returns "ok" — not just
+  // "disconnect" (no LyX) — and that the expected LFUNs were received.
+  // Deterministic and GUI-free.
+  //
+  // Guarded to Unix: Deno.listen with the unix transport is unsupported on
+  // Windows (op_net_listen_unix), so the Windows named-pipe path cannot be
+  // mocked in-test — it is covered by live tests instead (dev log 87 F1/F10).
+  const tmp = Deno.makeTempDirSync();
+  const socketPath = `${tmp}/lyxsocket`;
+  const filePath = `${tmp}/doc.lyx`;
+  const originalLyxSocket = Deno.env.get("LYXSOCKET");
+  await Deno.writeTextFile(filePath,
+    "#LyX 2.5 created this file.\n" +
+    "\\begin_document\n\\begin_header\n\\end_header\n" +
+    "\\begin_body\n\\begin_layout Standard\nhi\n\\end_layout\n\\end_body\\end_document\n");
+  try {
+    Deno.env.set("LYXSOCKET", socketPath);
+    const listener = Deno.listen({ path: socketPath, transport: "unix" });
+    const decoder = new TextDecoder();
+    const encoder = new TextEncoder();
+    const buf = new Uint8Array(4096);
+    let sawBufferSwitch = false;
+    let sawBufferWrite = false;
+    const serverDone = (async () => {
+      const conn = await listener.accept();
+      let data = "";
+      try {
+        while (true) {
+          const n = await conn.read(buf);
+          if (n === null) break;
+          data += decoder.decode(buf.subarray(0, n));
+          let nl: number;
+          while ((nl = data.indexOf("\n")) !== -1) {
+            const line = data.slice(0, nl).trim();
+            data = data.slice(nl + 1);
+            if (line.startsWith("HELLO:")) {
+              await conn.write(encoder.encode("HELLO:\n"));
+            } else if (line.startsWith("LYXCMD:")) {
+              const lfun = line.slice("LYXCMD:".length);
+              if (lfun.includes("buffer-switch")) sawBufferSwitch = true;
+              if (lfun.includes("buffer-write")) sawBufferWrite = true;
+              await conn.write(encoder.encode(`INFO:${lfun}:\n`));
+            } else if (line.startsWith("BYE:")) {
+              break;
+            }
+          }
+        }
+      } finally {
+        try { conn.close(); } catch { /* ignore */ }
+        listener.close();
+      }
+    })();
+    const status = await refreshPreStep(filePath, "save-reload");
+    await serverDone;
+    assertEquals(status, "ok", "save-reload must report ok against a responding server");
+    assertEquals(sawBufferSwitch, true, "server must receive buffer-switch before the save");
+    assertEquals(sawBufferWrite, true, "server must receive buffer-write");
+  } finally {
+    if (originalLyxSocket === undefined) Deno.env.delete("LYXSOCKET");
+    else Deno.env.set("LYXSOCKET", originalLyxSocket);
+    try { Deno.removeSync(tmp, { recursive: true }); } catch { /* ignore */ }
+  }
 });
