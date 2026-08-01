@@ -442,6 +442,51 @@ function straddlesChangeBoundary(children: Node[], segA: TextSegment, segB: Text
 }
 
 /**
+ * test_report_38 F2 (mimic LyX — lyxfind.cpp `replaceAll`): is a non-marker
+ * property at child index `childIndex` STRICTLY inside a matched span?
+ *
+ * LyX erases the whole matched range, removing any font change points strictly
+ * inside it, and re-inserts the replacement at the match-start font. A property
+ * whose neighboring text characters are BOTH matched sits inside the erased
+ * range and must be dropped — keeping it was the DL77 bug (it got reordered to
+ * the front of the paragraph, wrapping nothing). Properties at the match EDGES
+ * are kept (they set the match-start / post-match font).
+ */
+function propertyStrictlyInsideMatch(
+  children: Node[],
+  segments: TextSegment[],
+  segStartOffsets: number[],
+  isMatched: boolean[],
+  childIndex: number,
+): boolean {
+  // Nearest text node (visible or deleted) on each side of the property —
+  // ensures the property is ADJACENT to text, not separated by deleted text.
+  let beforeIdx = -1;
+  for (let k = childIndex - 1; k >= 0; k--) {
+    if (children[k].type === "text") { beforeIdx = k; break; }
+  }
+  let afterIdx = -1;
+  for (let k = childIndex + 1; k < children.length; k++) {
+    if (children[k].type === "text") { afterIdx = k; break; }
+  }
+  if (beforeIdx === -1 || afterIdx === -1) return false;
+
+  // Both neighbors must be visible segments (deleted text is not in `segments`).
+  let segBefore = -1;
+  let segAfter = -1;
+  for (let j = 0; j < segments.length; j++) {
+    if (segments[j].childIndex === beforeIdx) segBefore = j;
+    if (segments[j].childIndex === afterIdx) segAfter = j;
+  }
+  if (segBefore === -1 || segAfter === -1 || segAfter !== segBefore + 1) return false;
+
+  // The boundary between the two segments sits at concat offset segAfter.
+  const boundary = segStartOffsets[segAfter];
+  if (boundary <= 0 || boundary >= isMatched.length) return false;
+  return isMatched[boundary - 1] && isMatched[boundary];
+}
+
+/**
  * Core cross-node substring replacement. Concatenates all non-deleted text
  * children, finds all occurrences of findStr, and rebuilds the children array
  * with matched portions split out and (if tracked) wrapped in change markers.
@@ -496,6 +541,17 @@ export function applyCrossNodeReplace(
   }
   if (validCount === 0) return { newChildren: [...children], matchCount: 0, straddleCount };
 
+  // Concat offset of each segment's start — used to decide whether a property
+  // between two segments sits strictly inside a matched span (test_report_38 F2).
+  const segStartOffsets: number[] = [];
+  {
+    let acc = 0;
+    for (const s of segments) {
+      segStartOffsets.push(acc);
+      acc += s.text.length;
+    }
+  }
+
   // Rebuild children array: iterate original children, splitting text nodes
   // at match boundaries and collecting matched portions into tracking blocks.
   const result: Node[] = [];
@@ -503,6 +559,11 @@ export function applyCrossNodeReplace(
   let segIdx = 0;    // current segment index
   let matchedBuffer: Node[] = [];
   let inMatch = false;
+  // Non-marker properties encountered after a match's last character are
+  // deferred here and emitted right after the flushed replacement — so the
+  // replacement inherits the match-start font (test_report_38 F2, e.g.
+  // \emph default closing a match that started inside an emphasized region).
+  let pendingProps: Node[] = [];
 
   // F3 (dev log 84): track the enclosing \change_inserted region while
   // walking, so a same-author match fully inside the region is merged in
@@ -513,7 +574,13 @@ export function applyCrossNodeReplace(
   let insertedRegionTs = 0;
 
   function flushMatched() {
-    if (matchedBuffer.length === 0) return;
+    if (matchedBuffer.length === 0) {
+      // No pending match, but deferred edge properties may still exist in a
+      // degenerate case — never drop them silently.
+      result.push(...pendingProps);
+      pendingProps = [];
+      return;
+    }
     if (tracked) {
       if (insertedRegionAuthor !== null && insertedRegionAuthor === authorId) {
         // F3: same-author edit fully inside an inserted region — merge by
@@ -533,6 +600,10 @@ export function applyCrossNodeReplace(
     } else {
       result.push({ type: "text", text: newValue });
     }
+    // Deferred edge properties belong right after the replacement (they close
+    // a formatting run that the match ended inside — test_report_38 F2).
+    result.push(...pendingProps);
+    pendingProps = [];
     matchedBuffer = [];
     inMatch = false;
   }
@@ -618,6 +689,25 @@ export function applyCrossNodeReplace(
       // Non-segment child (property, block, or deleted text)
       // Flush matched buffer before a block boundary
       if (inMatch && child.type === "block") flushMatched();
+
+      // test_report_38 F2 (mimic LyX — lyxfind.cpp replaceAll): a non-marker
+      // property strictly inside a matched span is dropped (LyX erases the span
+      // including its font change points and re-inserts at the match-start
+      // font). Keeping it reorders it to the front of the paragraph, wrapping
+      // nothing — the DL77 bug. Properties at the match EDGES are kept: one
+      // before the match applies to the replacement (match-start font), one
+      // after the match is deferred so it lands after the replacement.
+      if (child.type === "property" &&
+          !isChangeOpener(child.key) && !isChangeCloser(child.key)) {
+        if (propertyStrictlyInsideMatch(children, segments, segStartOffsets, isMatched, i)) {
+          continue; // drop — strictly inside the matched span
+        }
+        if (inMatch) {
+          pendingProps.push(child); // defer — emit after the flushed replacement
+          continue;
+        }
+      }
+
       // F3: track the enclosing inserted region while walking; flush a
       // pending same-author match before a closer so a match consuming the
       // region's last text node is absorbed into the region (merge) rather

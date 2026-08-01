@@ -614,6 +614,277 @@ Deno.test("Cross-Node :contains()", async () => {
   }
 });
 
+// --- test_report_38 F2 (code_review_86-74 Deviation 1): --find spanning a
+// --- formatting property must mimic LyX (lyxfind.cpp replaceAll) — drop the
+// --- property strictly inside the matched span instead of reordering it to the
+// --- front (silent formatting destruction + dead markup).
+
+Deno.test("F2 - --find spanning \\emph drops the inside-span property (mimic LyX)", async () => {
+  const tempFile = await writeTempLyx("temp_f2_emph_span.lyx",
+    "\\begin_layout Standard\n" +
+    "Alpha \n" +
+    "\\emph on\n" +
+    "Beta\n" +
+    "\\emph default\n" +
+    "Gamma\n" +
+    "\\end_layout\n");
+  try {
+    const result = await runCliTest(["set", tempFile, "layout[Standard]", "XYZ", "--find", "Alpha Beta"]);
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "XYZ");
+    // The inside-span \emph on must be dropped — no dead pair, no reorder.
+    assertEquals(text.includes("\\emph on"), false, "inside-span \\emph on must be dropped");
+    // The edge \emph default survives and sits AFTER the replacement (so the
+    // replacement is plain, matching LyX's match-start-font behavior).
+    assertStringIncludes(text, "\\emph default");
+    assertEquals(text.indexOf("XYZ") < text.indexOf("\\emph default"), true,
+      "\\emph default must come after the replacement");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("F2 - --find fully inside \\emph keeps the replacement emphasized", async () => {
+  const tempFile = await writeTempLyx("temp_f2_emph_inside.lyx",
+    "\\begin_layout Standard\n" +
+    "\\emph on\n" +
+    "Alpha Beta\n" +
+    "\\emph default\n" +
+    "\\end_layout\n");
+  try {
+    const result = await runCliTest(["set", tempFile, "layout[Standard]", "XYZ", "--find", "Alpha Beta"]);
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "XYZ");
+    // Both edge properties survive and bracket the replacement — the inserted
+    // text inherits the match-start (emphasized) font, as LyX does.
+    assertStringIncludes(text, "\\emph on");
+    assertStringIncludes(text, "\\emph default");
+    const posOn = text.indexOf("\\emph on");
+    const posXyz = text.indexOf("XYZ");
+    const posDefault = text.indexOf("\\emph default");
+    assertEquals(posOn < posXyz && posXyz < posDefault, true,
+      "replacement must sit between \\emph on and \\emph default (emphasized)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("F2 - :contains() still matches across a formatting property", async () => {
+  const tempFile = await writeTempLyx("temp_f2_contains_emph.lyx",
+    "\\begin_layout Standard\n" +
+    "Alpha \n" +
+    "\\emph on\n" +
+    "Beta\n" +
+    "\\emph default\n" +
+    "Gamma\n" +
+    "\\end_layout\n");
+  try {
+    // Searching for a phrase should not require knowing formatting boundaries —
+    // :contains() stays transparent across properties (only --find drops).
+    const result = await runCliTest(["read", tempFile, "layout:contains('Alpha Beta')", "--count"]);
+    assertEquals((result.count as Record<string, number>)["layout[Standard]"], 1);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// test_report_38 F9 (D7, query/mutation model): SELECTORS see all text —
+// :contains() matches a phrase even when it lives inside \change_deleted.
+// Mutations (--find) still see only current text.
+Deno.test("F9 - :contains() matches text inside \\change_deleted (selectors see all)", async () => {
+  const tempFile = await writeTempLyx("temp_f9_contains_deleted.lyx",
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "old deleted words\n" +
+    "\\change_unchanged\n" +
+    "current text\n" +
+    "\\end_layout\n");
+  try {
+    // A selector locates the paragraph even when the phrase is only in a
+    // rejected change (the output layer already shows it; --find would not).
+    const found = await runCliTest(["read", tempFile, "layout:contains('old deleted words')", "--count"]);
+    assertEquals((found.count as Record<string, number>)["layout[Standard]"], 1);
+    // Control: current text still matches.
+    const current = await runCliTest(["read", tempFile, "layout:contains('current text')", "--count"]);
+    assertEquals((current.count as Record<string, number>)["layout[Standard]"], 1);
+    // Mutation still refuses deleted text as an edit target.
+    const setResult = await runCliTest(["set", tempFile, "layout[Standard]", "X", "--find", "old deleted words"]);
+    assertEquals(setResult.code, "NO_MATCH");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- test_report_38 F3 (code_review_86-74 Deviation 2): split-after must reach
+// --- text inside nested layouts (e.g. a Foot inset's Plain Layout), restoring
+// --- the documented two-pass footnote workflow. Inset METADATA (CommandInset
+// --- label/cite lines) stays opaque.
+
+const FOOTNOTE_BODY =
+  "\\begin_layout Standard\n" +
+  "Alpha \n" +
+  "\\begin_inset Foot\n" +
+  "status collapsed\n" +
+  "\n" +
+  "\\begin_layout Plain Layout\n" +
+  "A footnote\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\end_inset\n" +
+  "\n" +
+  "Gamma\n" +
+  "\\end_layout\n";
+
+Deno.test("F3 - split-after on inset[Foot] reaches the nested Plain Layout text", async () => {
+  const tempFile = await writeTempLyx("temp_f3_footnote_split.lyx", FOOTNOTE_BODY);
+  try {
+    const result = await runCliTest([
+      "insert", tempFile, "inset[Foot]", "split-after", "A footnote", "--text", " with a citation",
+    ]);
+    assertEquals(result.matched_nodes, 1, "split-after must succeed, not SPLIT_NO_MATCH");
+    const text = await Deno.readTextFile(tempFile);
+    // The payload lands inside the footnote, after the matched text.
+    const posFootnote = text.indexOf("A footnote");
+    const posInserted = text.indexOf(" with a citation");
+    assertEquals(posFootnote !== -1 && posInserted > posFootnote, true,
+      "inserted text must appear after 'A footnote' inside the footnote");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("F3 - split-after on layout[Standard] reaches nested footnote text", async () => {
+  const tempFile = await writeTempLyx("temp_f3_layout_split.lyx", FOOTNOTE_BODY);
+  try {
+    const result = await runCliTest([
+      "insert", tempFile, "layout[Standard]", "split-after", "A footnote", "--text", " INS",
+    ]);
+    assertEquals(result.matched_nodes, 1, "split-after on the layout must succeed");
+    const text = await Deno.readTextFile(tempFile);
+    assertEquals(text.indexOf("A footnote") < text.indexOf(" INS"), true,
+      "inserted text must land inside the footnote");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("F3 - split-after on CommandInset label stays opaque (SPLIT_NO_MATCH)", async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "Alpha \n" +
+    "\\begin_inset CommandInset label\n" +
+    "LatexCommand label\n" +
+    "name \"sec:Section_label\"\n" +
+    "\\end_inset\n" +
+    "\n" +
+    "\\begin_inset Foot\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "A footnote\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\n" +
+    "Gamma\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_f3_label_opaque.lyx", body);
+  try {
+    // A label inset's metadata is not matchable; the footnote lives in a
+    // different subtree, so this must fail rather than reach across.
+    const result = await runCliTest([
+      "insert", tempFile, "inset[CommandInset label]", "split-after", "A footnote", "--text", " INS",
+    ]);
+    assertEquals(result.code, "SPLIT_NO_MATCH");
+    const text = await Deno.readTextFile(tempFile);
+    assertEquals(text.includes(" INS"), false, "file must be untouched");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+
+// --- Dev log 87: Step 3 fixes (test_report_38 F5-F7) ---
+
+Deno.test("DL87 F5 - replay undo names author mismatch when the change is another author's", { timeout: 15000 }, async () => {
+  // Alice (id 1) has a pending insertion containing 'QUICK'; Bob runs the undo.
+  const body =
+    "\\begin_layout Standard\n" +
+    "The quick brown fox\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "QUICK\n" +
+    "LY brown\n" +
+    "\\change_unchanged\n" +
+    " jumps over\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl87_f5_authormismatch.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]", "QUICK"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.undone_changes, 0, "nothing may be undone for the wrong author");
+    const msg = (result.warnings || []).join(" ");
+    assertStringIncludes(msg, "another author", "warning must name the author mismatch, not 'already been undone'");
+    assertStringIncludes(msg, "lq init --author-name", "warning must point at the corrective command");
+    assertEquals(msg.includes("already been undone"), false, "must not claim the change is gone");
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "QUICK", "file must be untouched on disk");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL87 F6 - --find reports modified_nodes as nodes actually modified", { timeout: 15000 }, async () => {
+  // Two Standard layouts match the selector; only one contains the substring.
+  const body =
+    "\\begin_layout Standard\nAlpha\n\\end_layout\n" +
+    "\\begin_layout Standard\nBeta gamma\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl87_f6_modified.lyx", body);
+  try {
+    const result = await runCliTest([
+      "set", tempFile, "layout[Standard]", "GAMMA", "--find", "gamma",
+    ]);
+    assertEquals(result.modified_nodes, 1, "only one of two matched layouts was actually modified");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL87 F7 - unknown and misapplied flags hard-error before mutating", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nHello\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl87_f7_flags.lyx", body);
+  try {
+    // Known-but-wrong-command flag: --track-changes is an init flag, not a set flag.
+    const misapplied = await runCliTest([
+      "set", tempFile, "layout[Standard]", "World", "--track-changes", "off",
+    ]);
+    assertEquals(misapplied.code, "INVALID_FLAG");
+    assertStringIncludes(misapplied.message!, "--track-changes is an 'init' flag");
+    assertStringIncludes(misapplied.message!, "lq init --track-changes off");
+    // Truly unknown flag (a typo / removed-in-DL76 flag).
+    const bogus = await runCliTest([
+      "set", tempFile, "layout[Standard]", "World", "--bogus-flag",
+    ]);
+    assertEquals(bogus.code, "INVALID_FLAG");
+    assertStringIncludes(bogus.message!, "Unknown flag");
+    // Non-flag commands reject stray flags too (delete).
+    const stray = await runCliTest([
+      "delete", tempFile, "layout[Standard]", "--bogus-flag",
+    ]);
+    assertEquals(stray.code, "INVALID_FLAG");
+    // File must be untouched by every attempt.
+    const text = await Deno.readTextFile(tempFile);
+    assertEquals(text.includes("World"), false, "no mutation may occur");
+    assertStringIncludes(text, "Hello");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+
 // --- Dev log 78: flatten tracked changes + snapshot undo ---
 
 /** Write a minimal .lyx file with the given body content. */
@@ -728,6 +999,16 @@ Deno.test("DL78 Flatten - Full-Replace on Tracked Node (properties preserved)", 
 
     const text = await Deno.readTextFile(tempFile);
     assertStringIncludes(text, "\\emph on", "inline properties must survive the flatten (dev log 79 N4)");
+    // Properties stay IN PLACE inside the deleted region, not appended after
+    // the change pair (test_report_38 F8 — matches LyX's own Paragraph::write
+    // shape, so rejecting the change restores the original formatting).
+    const deletedPos = text.indexOf("\\change_deleted");
+    const insertedPos = text.indexOf("\\change_inserted");
+    const emphPos = text.indexOf("\\emph on");
+    assertEquals(deletedPos !== -1 && insertedPos !== -1 && emphPos !== -1, true,
+      "deleted/inserted markers and \\emph must all be present");
+    assertEquals(emphPos > deletedPos && emphPos < insertedPos, true,
+      "\\emph must stay inside the deleted region, before the inserted region (test_report_38 F8)");
     const children = firstLayoutChildren(text);
     const keys = changeMarkers(children).map(m => m.key);
     // Flat: no change marker appears between an opener and its closer

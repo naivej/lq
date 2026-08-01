@@ -10,15 +10,17 @@ import { assert, assertEquals } from "@std/assert";
 import { refreshPreStep } from "../src/cli.ts";
 import { filterResponses } from "../src/lyxserver.ts";
 
-Deno.test("Refresh - save-reload pre-step connects when LyXServer available", { timeout: 10000 }, async () => {
-  // When LyX is running with LyXServer enabled, the pre-step should succeed.
-  // When LyX is not running, sendLyxCommands returns false and the pre-step
-  // blocks the mutation (REFRESH_PRE_ERROR). This test verifies the function
-  // doesn't crash and returns a boolean. The actual value depends on whether
-  // LyX happens to be running during the test.
-  const ok = await refreshPreStep("/tmp/test.lyx", "save-reload");
-  // Just check it returns a boolean (no crash)
-  assert(typeof ok === "boolean", "refreshPreStep must return a boolean");
+Deno.test("Refresh - save-reload pre-step returns a status", { timeout: 10000 }, async () => {
+  // The pre-step returns one of "ok" | "disconnect" | "unconfirmed" | "error"
+  // (test_report_38 F1 Option A): a genuine disconnect aborts, an unconfirmed
+  // (dispatched but lost) save proceeds with a warning, a confirmed error
+  // aborts. This test verifies the function doesn't crash and returns a valid
+  // status; the actual value depends on whether LyX happens to be running.
+  const status = await refreshPreStep("/tmp/test.lyx", "save-reload");
+  assert(
+    ["ok", "disconnect", "unconfirmed", "error"].includes(status),
+    `refreshPreStep must return a status string, got: ${status}`,
+  );
 });
 
 Deno.test("Refresh - reload mode has no pre-step", { timeout: 5000 }, async () => {

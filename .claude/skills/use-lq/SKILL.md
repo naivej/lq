@@ -24,6 +24,23 @@ To effectively use the query engine, Users need to understand how LyX syntax map
 - **Text Nodes**: The actual text content inside layouts and insets.
 - **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child. Use a sibling range such as `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` to retrieve paragraphs following a heading.
 
+## Tracked Changes
+
+With `--track-changes on` (the default), mutations record a reviewable edit instead of silently rewriting text: old content goes in `\change_deleted`, new content in `\change_inserted`, and the header gains `\tracking_changes true` plus an `\author` entry. Configure with `lq init --track-changes <on|off>` and `lq init --author-name <name>` (default `"lq user"`).
+
+**How each mutation records a change:**
+- `set` — old text in `\change_deleted` + new in `\change_inserted`.
+- `delete` — matched nodes wrapped in `\change_deleted`.
+- `insert` — new content wrapped in `\change_inserted`.
+
+**Selectors see all, mutations see current.** A tracked change keeps both versions of the text, and how much each operation sees follows one rule:
+- **Selectors see ALL text** — `:contains(...)` matches, and `read`/`dump`/`--text-only` show, text inside `\change_deleted` too. That's how you locate a phrase even when it lives in a rejected change.
+- **Mutations see only current text** — `--find` and `split-after` skip `\change_deleted`: it is old/replaced content, not a valid edit target.
+
+**Viewing tracked changes:** `dump` and `read` (default) annotate text inside tracked blocks with `changeStatus` (`deleted`/`inserted`); `read --text-only` marks them inline as `\change_deleted{...}` / `\change_inserted{...}`.
+
+**Reverting tracked changes:** `lq undo` — snapshot restore (no substring) reverts the last mutation, tracked or plain; replay undo (`undo <substring>`) removes the whole `\change_deleted`/`\change_inserted` block containing `<substring>` **and made by the current author**. If the change exists but belongs to another author, `undo` warns and undoes nothing — switch via `lq init --author-name <name>`.
+
 ## Query Engine
 
 The query engine supports traversing the CST using CSS-like selector:
@@ -63,14 +80,11 @@ The query engine supports traversing the CST using CSS-like selector:
   - `--layouts-dir <path>`: If not provided, auto-detects the highest installed LyX version's layouts directory.
   - `--refresh <mode>` configures automatic LyX buffer refresh in opened `.lyx` files after mutations:
     - `none` (default): No refresh. LyX detects external changes via its own polling and prompts the user to reload.
-    - `reload`: Reload the buffer after `lq` writes, fail silently if LyXserver disconnects. Fast, but discards unsaved in-LyX edits.
-    - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Throw an error and abort if LyXserver disconnects
-  - `--track-changes <on|off>`: Enable or disable tracked changes for all mutation commands. It's on by default, which sets `\tracking_changes true` and add an `\author` entry in the document header.
-    - Set preserves old text in `\change_deleted` + new in `\change_inserted`
-    - Delete wraps removed nodes in `\change_deleted`
-    - Insert wraps new content in `\change_inserted`
+    - `reload`: Reload the buffer after `lq` writes. Fast, but discards unsaved in-LyX edits. Best-effort — warns if LyX is unreachable or the reload can't be confirmed (the file is still written).
+    - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Aborts only when LyX is genuinely unreachable or reports a save error. **On Windows, LyXServer responses are unreliable** (a LyX server quirk — commands always execute, but confirmations can be lost): an unconfirmed save proceeds with a warning instead of aborting, since the save was almost certainly applied. Restart LyX if this repeats.
+  - `--track-changes <on|off>`: Enable or disable tracked changes for all mutation commands (default on).
+  - `--author-name <name>`: Set the author recorded on new tracked changes (default `"lq user"`).
   - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`.
-  - `--author-name <name>`: Set the author name used in tracked changes. Default: `"lq user"`.
 
 ### Query
 
@@ -87,16 +101,16 @@ The query engine supports traversing the CST using CSS-like selector:
   - Each citation includes `key`, `author`, `title`, and `year`.
   - `--search <text>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
 - `lq dump <file> [<selector>] [--depth <n>] [--toc]`
-  - Outputs the CST as a JSON document. Text nodes inside tracked change blocks are annotated with `changeStatus`.
+  - Outputs the CST as a JSON document.
   - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
   - `--toc`: Output a hierarchical heading tree (table of contents) instead of the raw CST. Heading levels come from the document class's `.layout` file (LaTeX's standard hierarchy as fallback). Mutually exclusive with `<selector>`.
   - `--depth <n>`: Limit the output depth. Meaning depends on the mode:
     - Raw CST (default or `<selector>`): parse-tree nesting — `--depth 0` = root node only, `--depth 1` = direct children, `--depth N` = descend N levels; omit `--depth` for full depth.
     - With `--toc`: absolute LyX `TocLevel` up to any integer. Typically `--depth 1` = Sections in the document.
 - `lq read <file> <selector> [--count] [--text-only]`
-  - Read matched nodes. Default mode returns CST nodes with `changeStatus` annotations on text inside tracked change blocks.
+  - Read matched nodes. Default mode returns CST nodes.
   - `--count`: Return match counts by type (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`).
-  - `--text-only`: Output the text content of matched nodes with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`). Tracked changes appear as `\change_deleted{...}` and `\change_inserted{...}` inline markers. Double newline between nodes.
+  - `--text-only`: Output the text content of matched nodes with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`).
 
 ### Mutate
 
@@ -107,14 +121,14 @@ The query engine supports traversing the CST using CSS-like selector:
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq undo <file> <selector> [<substring>]`
-  - 1- level **Snapshot restore** (default, no substring): consume the snapshot stored at `~/.lq/undo/` to reverts the last (tracked or plain) mutation, even when the mutation deleted the matched nodes.
-  - Unlimited-level **Replay undo**: Removes the entire tracked changes block (`change_deleted`/`change_inserted`), which contains <substring> and made by the current author. Can be reverted by snapshot restore.
+  - 1-level **Snapshot restore** (default, no substring): consume the snapshot stored at `~/.lq/undo/` to revert the last (tracked or plain) mutation, even when the mutation deleted the matched nodes.
+  - Unlimited-level **Replay undo**: removes the tracked changes block containing `<substring>` and made by the current author. Can be reverted by snapshot restore.
 - `lq insert <file> <selector> <position> [helper]`
   - Insert new blocks or properties relative to a selector.
   - Positions:
     - `before`/`after`: insert a layout as a **sibling** of the target.
     - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
-    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in current text (text inside `\change_deleted` blocks is skipped — those represent old/replaced content, not valid targets for new insertions).
+    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in current text.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: Insert a layout block with the given name and text (e.g., --layout 'Standard' --text 'Hello world'). --text requires --layout, except with 'split-after' where bare --text inserts inline text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
@@ -128,7 +142,7 @@ The query engine supports traversing the CST using CSS-like selector:
 ## Before you start
 
 1. **Run `lq init`**: Confirm configuration is set. Only change configuration with explicit user consent.
-2. **Stage before mutating**: `git stage`, then review with `git diff`. `git restore` reverts everything; `lq undo` reverts individual tracked changes without touching other edits. There is no `--dry-run` flag because git + undo cover the same need.
+2. **Stage before mutating**: `git stage`, then review with `git diff`. `git restore` reverts everything; Use `lq undo` for surgical restores. There is no `--dry-run` flag because git + undo cover the same need.
 3. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Raw LaTeX (like equations inside `inset[Formula]`) is pure string data. Target the `inset[Formula]` node and replace its text content.
 4. **Connect LyXServer in save-reload mode**: see [`LyX_CLI.md`](LyX_CLI.md).
 

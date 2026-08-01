@@ -173,8 +173,8 @@ Options:
                            none (default): No refresh. LyX detects changes via polling.
                            reload:         Reload and discards unsaved in-LyX edits. 
                                            Requires LyXServer.
-                           save-reload:    Save unsaved edits first before reload.
-                                           Requires LyXServer.
+                           save-reload:    Save unsaved edits first before reload; aborts
+                                           if LyX is unreachable. Requires LyXServer.
   --track-changes <on|off> Enable or disable tracked changes for all mutation commands.
                            On (default): set wraps old text in \\change_deleted + new in \\change_inserted,
                                          delete wraps removed nodes in \\change_deleted,
@@ -402,6 +402,54 @@ function printError(code: string, message: string, details: Record<string, unkno
   Deno.exit(1);
 }
 
+// Flags that only 'init' accepts. When a mutation command receives one, the
+// error names the exact corrective command instead of a generic "unknown flag"
+// (dev log 87 D3 / test_report_38 F7).
+const INIT_ONLY_FLAGS = ["layouts-dir", "refresh", "track-changes", "max-cache-entries", "author-name"];
+
+/**
+ * Hard-error on flags Deno's parseArgs accepted silently (it captures unknown
+ * keys too). `allowed` is the command's declared flag set; anything else —
+ * including known init flags misapplied to another command — aborts before any
+ * mutation (test_report_38 F7, user decision: no-risk stance).
+ */
+function assertNoUnknownFlags(
+  flags: Record<string, unknown>,
+  allowed: string[],
+  commandName: string,
+): void {
+  const unknown = Object.keys(flags).filter(k => k !== "_" && !allowed.includes(k));
+  if (unknown.length === 0) return;
+  const initFlag = unknown.find(u => INIT_ONLY_FLAGS.includes(u));
+  if (initFlag !== undefined) {
+    // Echo the exact value the user passed so the corrective is copy-pasteable
+    // (e.g. 'lq init --track-changes off' — dev log 87 D3 / test_report_38 F7).
+    const raw = flags[initFlag];
+    const value = typeof raw === "string" ? raw : "<value>";
+    printError("INVALID_FLAG",
+      `--${initFlag} is an 'init' flag, not a '${commandName}' flag. ` +
+      `Change it with 'lq init --${initFlag} ${value}', then re-run this command.`);
+  }
+  printError("INVALID_FLAG",
+    `Unknown flag${unknown.length === 1 ? "" : "s"} for '${commandName}': ` +
+    `${unknown.map(u => "--" + u).join(", ")}. ` +
+    `Run 'lq ${commandName} --help' to list valid flags.`);
+}
+
+/**
+ * Commands that take no flags at all (read/delete/undo/schema) still receive
+ * stray `--` tokens in their extra positional args — reject them instead of
+ * silently ignoring (test_report_38 F7).
+ */
+function assertNoStrayFlags(restArgs: string[], commandName: string): void {
+  const stray = restArgs.filter(a => a.startsWith("--"));
+  if (stray.length > 0) {
+    printError("INVALID_FLAG",
+      `Unknown flag${stray.length === 1 ? "" : "s"} for '${commandName}': ` +
+      `${stray.join(", ")}. Run 'lq ${commandName} --help' to list valid flags.`);
+  }
+}
+
 /** Walk the parsed raw CST and validate all inset types against the registry. */
 function validateRawInsets(doc: DocumentNode): string[] {
   const warnings: string[] = [];
@@ -596,8 +644,27 @@ function countOccurrences(text: string, findStr: string): number {
  * BEFORE lq reads and mutates the file. Must succeed or the mutation is aborted.
  * Returns true if the pre-step succeeded (or mode doesn't need a pre-step).
  */
-export async function refreshPreStep(filePath: string, mode: "none" | "reload" | "save-reload"): Promise<boolean> {
-  if (mode !== "save-reload") return true;
+/** Result of the save-reload pre-step (test_report_38 F1 / Option A). */
+export type RefreshPreStepResult = "ok" | "disconnect" | "unconfirmed" | "error";
+
+/**
+ * Pre-step for save-reload: saves the user's unsaved LyX edits to disk
+ * BEFORE lq reads and mutates the file. Must succeed or the mutation is aborted.
+ *
+ * On Windows the response delivery from LyXServer is unreliable (Server.cpp
+ * flushes its shared reply buffer only when the pipe loop wakes — test_report_38
+ * F1), so the pre-step distinguishes:
+ * - "disconnect" — could not even open/write the pipe: LyX is unreachable.
+ * - "unconfirmed" — the buffer-write was dispatched (LyX will execute it) but
+ *   the confirmation was lost to the race. The save is almost certainly applied,
+ *   so the caller proceeds with a warning rather than aborting (Option A).
+ * - "error" — LyX confirmed but reported an error saving.
+ */
+export async function refreshPreStep(
+  filePath: string,
+  mode: "none" | "reload" | "save-reload",
+): Promise<RefreshPreStepResult> {
+  if (mode !== "save-reload") return "ok";
 
   const commands: string[] = [];
   // buffer-switch ensures the correct file is active before saving.
@@ -608,7 +675,11 @@ export async function refreshPreStep(filePath: string, mode: "none" | "reload" |
   }
   commands.push("buffer-write");
 
-  return await sendLyxCommands(commands);
+  const { sent, confirmed, errored } = await sendLyxCommands(commands);
+  if (!sent) return "disconnect";
+  if (!confirmed) return "unconfirmed";
+  if (errored) return "error";
+  return "ok";
 }
 
 /**
@@ -624,8 +695,11 @@ async function refreshPostStep(filePath: string, mode: "none" | "reload" | "save
   }
   commands.push("buffer-reload");
 
-  const ok = await sendLyxCommands(commands);
-  if (!ok) {
+  // Best-effort: warn unless the reload was confirmed and did not error. On
+  // Windows a lost confirmation (sent but unconfirmed — test_report_38 F1) also
+  // warns, since the buffer may not have been reloaded.
+  const { confirmed, errored } = await sendLyxCommands(commands);
+  if (!confirmed || errored) {
     pushWarning(
       "LyX buffer was not reloaded — LyX may be closed, busy, or the server " +
       "connection timed out. The file was written successfully. " +
@@ -670,6 +744,7 @@ export async function runCli(args: string[]) {
 
   if (commandArg === "init") {
     const flags = parseArgs(cleanArgs.slice(1), { string: ["layouts-dir", "refresh", "track-changes", "max-cache-entries", "author-name"] });
+    assertNoUnknownFlags(flags, INIT_ONLY_FLAGS, "init");
     const hasFlags = flags["layouts-dir"] !== undefined ||
                      flags["refresh"] !== undefined ||
                      flags["track-changes"] !== undefined ||
@@ -826,6 +901,13 @@ export async function runCli(args: string[]) {
   const positionalArgs = cleanArgs.filter(a => a !== "--count" && a !== "--text-only");
   
   const [command, filePath, selector, ...restArgs] = positionalArgs;
+
+  // Commands without their own flag parsing must not silently swallow stray
+  // `--` tokens (test_report_38 F7). Flag-bearing commands (init/dump/bib/
+  // set/insert) validate via assertNoUnknownFlags at their parse site.
+  if (["read", "delete", "undo", "schema"].includes(command)) {
+    assertNoStrayFlags(restArgs, command);
+  }
   
   if (command !== "init" && !filePath.endsWith(".lyx")) {
     printError("INVALID_EXTENSION", `Target file '${filePath}' must have a .lyx extension. Select the LyX document to edit.`);
@@ -847,13 +929,32 @@ export async function runCli(args: string[]) {
     trackChanges = userConfig.trackChanges !== false;
     authorName = userConfig.authorName || "lq user";
     if (refreshMode !== "none") {
-      const preOk = await refreshPreStep(filePath, refreshMode);
-      if (!preOk) {
+      const preStep = await refreshPreStep(filePath, refreshMode);
+      if (preStep === "disconnect") {
         printError("REFRESH_PRE_ERROR",
           "save-reload: Cannot connect to LyX to save unsaved edits.\n" +
+          "Writing the file now would permanently destroy unsaved changes.\n" +
+          "Start LyX with LyXServer enabled (see 'lq init --refresh' help) and retry."
+        );
+        return;
+      }
+      if (preStep === "error") {
+        printError("REFRESH_PRE_ERROR",
+          "save-reload: LyX reported an error saving the buffer, so unsaved edits " +
+          "may not be on disk.\n" +
           "Writing the file now would permanently destroy unsaved changes."
         );
         return;
+      }
+      if (preStep === "unconfirmed") {
+        // Option A (test_report_38 F1): the save command was dispatched and LyX
+        // will execute it; only the confirmation was lost to the Windows pipe
+        // race. Proceed — aborting would needlessly block the mutation.
+        pushWarning(
+          "save-reload: the save command was sent to LyX but the confirmation was " +
+          "lost (a known Windows LyXServer race). Proceeding — the save was almost " +
+          "certainly applied. If this repeats, restart LyX."
+        );
       }
     }
   }
@@ -905,6 +1006,7 @@ function foldNegativeDepth(args: string[]): string[] {
     // into "--depth=-N" so negative TocLevels (Part=-1) parse correctly.
     const dumpArgs = foldNegativeDepth(selector ? [selector, ...restArgs] : restArgs);
     const dumpFlags = parseArgs(dumpArgs, { boolean: ["toc"], string: ["depth"] });
+    assertNoUnknownFlags(dumpFlags, ["toc", "depth"], "dump");
     const depthStr = dumpFlags["depth"];
     const tocMode = dumpFlags["toc"] === true;
     
@@ -1018,6 +1120,7 @@ function foldNegativeDepth(args: string[]): string[] {
   if (command === "bib") {
     const bibArgs = selector ? [selector, ...restArgs] : restArgs;
     const bibFlags = parseArgs(bibArgs, { string: ["search"] });
+    assertNoUnknownFlags(bibFlags, ["search"], "bib");
     const bibtexNodes = query(ast, "inset[CommandInset bibtex]");
     if (bibtexNodes.length === 0) {
       printError("NO_BIBLIO", "No bibliography inset was found. Inspect the document with 'lq read <file> \"inset[CommandInset bibtex]\"' or add a bibliography in LyX, then rerun 'lq bib'.");
@@ -1221,6 +1324,7 @@ function foldNegativeDepth(args: string[]): string[] {
 
   if (command === "set") {
     const flags = parseArgs(restArgs, { boolean: ["replace-all"], string: ["find"] });
+    assertNoUnknownFlags(flags, ["replace-all", "find"], "set");
     const replaceAll = flags["replace-all"] === true;
     const findStr: string | undefined = typeof flags["find"] === "string" ? flags["find"] : undefined;
 
@@ -1246,6 +1350,10 @@ function foldNegativeDepth(args: string[]): string[] {
 
     // Track total substring matches for stderr notification
     let totalFindMatches = 0;
+    // Nodes that actually had a --find occurrence. `modified_nodes` reports
+    // this instead of nodes.length for --find, which previously over-counted
+    // matched-but-unmodified nodes (test_report_38 F6).
+    let findNodesWithHits = 0;
     // Matches skipped because they straddle a tracked-change boundary —
     // reported with a dedicated error when nothing valid matched (dev log 78).
     let totalStraddles = 0;
@@ -1281,6 +1389,7 @@ function foldNegativeDepth(args: string[]): string[] {
             if (count > 0) {
               node.value = node.value.replaceAll(findStr, newValue);
               totalFindMatches += count;
+              findNodesWithHits++;
               addFindCount(node, count);
             }
           }
@@ -1325,20 +1434,27 @@ function foldNegativeDepth(args: string[]): string[] {
             : newChildren;
           totalFindMatches += nodeFindCount;
           totalStraddles += nodeStraddles;
-          if (nodeFindCount > 0) addFindCount(node, nodeFindCount);
+          if (nodeFindCount > 0) {
+            findNodesWithHits++;
+            addFindCount(node, nodeFindCount);
+          }
         } else if (trackChanges) {
           // Full-text replace with trackChanges: flatten old markers to plain
           // content before applying new markers, matching LyX's per-position
-          // overwrite model (dev log 78 Fix 1). All non-marker nodes (text,
-          // inline properties, insets) survive the flatten.
+          // overwrite model (dev log 78 Fix 1). All non-marker children (text,
+          // inline properties, insets) are preserved IN PLACE inside the
+          // deleted region — LyX's own writer emits font properties inside a
+          // change region (Paragraph::write), so rejecting the change restores
+          // the original formatting. Previously the non-text tail was appended
+          // after the change pair, leaving e.g. \emph at a meaningless
+          // trailing position (test_report_38 F8).
           if (hasTrackedChanges(node.children)) {
             const stripped = node.children.filter(c =>
               c.type !== "property" ||
               (!isChangeOpener(c.key) && !isChangeCloser(c.key)));
             node.children = [
-              ...wrapInChangeMarkers(stripped.filter(c => c.type === "text"), "deleted", tcAid, tcTs),
+              ...(stripped.length > 0 ? wrapInChangeMarkers(stripped, "deleted", tcAid, tcTs) : []),
               ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
-              ...stripped.filter(c => c.type !== "text"),
             ];
           } else if (replaceAll) {
             node.children = [
@@ -1370,6 +1486,7 @@ function foldNegativeDepth(args: string[]): string[] {
           if (count > 0) {
             node.text = node.text.replaceAll(findStr, newValue);
             totalFindMatches += count;
+            findNodesWithHits++;
           }
         } else {
           node.text = newValue;
@@ -1389,7 +1506,7 @@ function foldNegativeDepth(args: string[]): string[] {
       const nodeList = Object.entries(findPerNode)
         .map(([k, c]) => `${k} (${c} occurrence${c === 1 ? "" : "s"})`)
         .join(", ");
-      const findMsg = `--find matched ${totalFindMatches} occurrence${plural} of '${findStr}' across ${nodes.length} node(s): ${nodeList}. ` +
+      const findMsg = `--find matched ${totalFindMatches} occurrence${plural} of '${findStr}' across ${findNodesWithHits} node(s): ${nodeList}. ` +
         `To target a specific occurrence, use a longer unique substring (include surrounding words).`;
       pushWarning(findMsg);
     }
@@ -1400,7 +1517,10 @@ function foldNegativeDepth(args: string[]): string[] {
     await commitMutation(filePath, ast, preSnapshots);
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
-    printJson({ modified_nodes: nodes.length, changes });
+    // --find only modified the nodes that contained occurrences; report those,
+    // not every selector match (test_report_38 F6).
+    const reportedNodes = findStr !== undefined ? findNodesWithHits : nodes.length;
+    printJson({ modified_nodes: reportedNodes, changes });
     return;
   }
 
@@ -1521,6 +1641,7 @@ function foldNegativeDepth(args: string[]): string[] {
     const flags = parseArgs(flagArgs, {
       string: ["layout", "text", "raw-file", "cite", "cite-cmd", "ref", "ref-cmd", "label", "footnote"],
     });
+    assertNoUnknownFlags(flags, ["layout", "text", "raw-file", "cite", "cite-cmd", "ref", "ref-cmd", "label", "footnote"], "insert");
 
     let flagCount = 0;
     if (flags["raw-file"]) flagCount++;
@@ -1771,8 +1892,15 @@ function foldNegativeDepth(args: string[]): string[] {
       let splitTextIdx = -1;
       let splitInsertOffset = 0;
       if (position === "split-after" && targetParentBlock) {
-        // Build concatenated text of direct text children (skipping \change_deleted blocks)
-        const { segments, fullText } = concatenateTextNodes(targetParentBlock.children);
+        // Build concatenated text, recursing into nested layouts so the
+        // documented two-pass footnote workflow works (test_report_38 F3): a
+        // footnote's text lives in a nested Plain Layout inside inset[Foot].
+        // Text is collected only under layouts — inset metadata (status lines,
+        // CommandInset name lines) is not matchable.
+        const { segments, fullText } = concatenateTextNodes(targetParentBlock.children, {
+          recurseLayouts: true,
+          topLevelIsLayout: targetParentBlock.tag !== "inset",
+        });
 
         let totalMatches = 0;
         let matchStart = -1;
@@ -1804,13 +1932,15 @@ function foldNegativeDepth(args: string[]): string[] {
         // The split falls within a single text node at splitPoint.offset.
         // The "before" portion includes all text from the start of the children
         // up to splitPos; the matched text itself may span multiple text nodes
-        // but the split point is always within one node.
+        // but the split point is always within one node. With recursion the
+        // text node may live in a nested layout, so splice into the segment's
+        // OWNING children list (test_report_38 F3).
         const splitChildIdx = segments[splitPoint.segIdx].childIndex;
-        const splitText = (targetParentBlock.children[splitChildIdx] as TextNode).text;
+        splitParentList = segments[splitPoint.segIdx].owner ?? targetParentBlock.children;
+        const splitText = (splitParentList[splitChildIdx] as TextNode).text;
         const before = splitText.substring(0, splitPoint.offset);
         const splitAfterText = splitText.substring(splitPoint.offset);
 
-        splitParentList = targetParentBlock.children;
         splitTextIdx = splitChildIdx;
 
         const initialNodes: Node[] = [];
@@ -2063,6 +2193,11 @@ function foldNegativeDepth(args: string[]): string[] {
     const undoAuthorId = resolveAuthorId(ast, authorName);
 
     let undoneCount = 0;
+    // True when a change region contains the target substring but belongs to
+    // another author (or has an unparseable author id). Distinguishes "the
+    // change is already gone" from "the change is there, just not yours" so
+    // the replay warning picks the honest message (test_report_38 F5).
+    let anyContainsSubstringOtherAuthor = false;
     const undoneLabels: string[] = [];
 
     for (const node of nodes) {
@@ -2122,6 +2257,11 @@ function foldNegativeDepth(args: string[]): string[] {
           // Check if this change matches our target AND belongs to this author
           const shouldUndo = substring === undefined || enclosedText.includes(substring);
           const willUndo = changeAuthorId === undoAuthorId && shouldUndo;
+          if (substring !== undefined && shouldUndo && !willUndo) {
+            // Region contains the substring but isn't undoable by this author
+            // — flag it so the no-op warning below can name the real cause.
+            anyContainsSubstringOtherAuthor = true;
+          }
 
           if (willUndo) {
             if (markerType === "change_deleted") {
@@ -2187,7 +2327,17 @@ function foldNegativeDepth(args: string[]): string[] {
 
     const changes = undoneLabels.map(l => ({ label: l }));
     if (substring !== undefined && undoneCount === 0) {
-      pushWarning(`No tracked change matching '${substring}' found. It may have already been undone. To undo the last undo, run 'lq undo ${filePath} "${selector}"' without a substring.`);
+      if (anyContainsSubstringOtherAuthor) {
+        // The change is present — it just isn't this author's. "May have
+        // already been undone" would send the user chasing a ghost
+        // (test_report_38 F5).
+        pushWarning(
+          `A tracked change matching '${substring}' exists but belongs to another author. ` +
+          `Undo only reverts author '${authorName}'. Change the default via 'lq init --author-name <name>'.`
+        );
+      } else {
+        pushWarning(`No tracked change matching '${substring}' found. It may have already been undone. To undo the last undo, run 'lq undo ${filePath} "${selector}"' without a substring.`);
+      }
     }
     if (substring === undefined && undoneCount === 0) {
       // Reaching replay without a substring means tracked changes exist

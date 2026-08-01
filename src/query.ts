@@ -211,8 +211,10 @@ function nodeContainsText(node: Node, searchStr: string): boolean {
     return node.text.includes(searchStr);
   } else if (node.type === "block") {
     // Use shared concatenation utility so phrases spanning
-    // punctuation-induced text-node boundaries match.
-    const { fullText } = concatenateTextNodes(node.children);
+    // punctuation-induced text-node boundaries match. Selectors see ALL text,
+    // including \change_deleted (a selector locates nodes; mutations --find /
+    // split-after see only current text — dev log 87 D7).
+    const { fullText } = concatenateTextNodes(node.children, { includeDeleted: true });
     if (fullText.includes(searchStr)) return true;
     // Also recurse into sub-blocks (insets, nested layouts)
     for (const child of node.children) {
