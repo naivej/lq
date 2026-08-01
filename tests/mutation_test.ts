@@ -913,7 +913,7 @@ Deno.test("DL78 Replay Undo - Substring Still Works (regression)", { timeout: 15
   }
 });
 
-// --- Dev log 84/85: flat change-state model on the LyX-standard replacement shape ---
+// --- Dev log 84: flat change-state model on the LyX-standard replacement shape ---
 // LyX emits \change_deleted{old}\change_inserted{new} with no \change_unchanged
 // between them (one active Change per position). lq must treat an inserted
 // opener as terminating any open deleted run (dev log 84 F1, implemented 85).
@@ -929,8 +929,8 @@ const ADJACENT_PAIR_BODY =
   " something with tracked changes.\n" +
   "\\end_layout\n";
 
-Deno.test("DL85 F1 - --find matches current text after adjacent delete+insert pair", { timeout: 15000 }, async () => {
-  const tempFile = await writeTempLyx("temp_dl85_f1_find.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+Deno.test("DL84 F1 - --find matches current text after adjacent delete+insert pair", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl84_f1_find.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
   try {
     const result = await runCliWithConfig(
       ["set", tempFile, "layout[Standard]", "EDIT", "--find", "edit"],
@@ -942,8 +942,8 @@ Deno.test("DL85 F1 - --find matches current text after adjacent delete+insert pa
   }
 });
 
-Deno.test("DL85 F1 - --find on deleted text stays NO_MATCH", { timeout: 15000 }, async () => {
-  const tempFile = await writeTempLyx("temp_dl85_f1_deleted.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+Deno.test("DL84 F1 - --find on deleted text stays NO_MATCH", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl84_f1_deleted.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
   try {
     const result = await runCliWithConfig(
       ["set", tempFile, "layout[Standard]", "X", "--find", "write"],
@@ -955,8 +955,8 @@ Deno.test("DL85 F1 - --find on deleted text stays NO_MATCH", { timeout: 15000 },
   }
 });
 
-Deno.test("DL85 F1 - split-after works on inserted text", { timeout: 15000 }, async () => {
-  const tempFile = await writeTempLyx("temp_dl85_f1_split.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+Deno.test("DL84 F1 - split-after works on inserted text", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl84_f1_split.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
   try {
     const result = await runCliWithConfig(
       ["insert", tempFile, "layout[Standard]", "split-after", "edit", "--text", "X"],
@@ -969,8 +969,8 @@ Deno.test("DL85 F1 - split-after works on inserted text", { timeout: 15000 }, as
   }
 });
 
-Deno.test("DL85 F1 - :contains finds the paragraph", { timeout: 15000 }, async () => {
-  const tempFile = await writeTempLyx("temp_dl85_f1_contains.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+Deno.test("DL84 F1 - :contains finds the paragraph", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl84_f1_contains.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
   try {
     const result = await runCliTest(["read", tempFile, "layout:contains('edit')", "--count"]);
     assertEquals(typeof result.count, "object");
@@ -980,8 +980,8 @@ Deno.test("DL85 F1 - :contains finds the paragraph", { timeout: 15000 }, async (
   }
 });
 
-Deno.test("DL85 F1 - read annotations: inserted text labeled inserted, trailing unchanged", { timeout: 15000 }, async () => {
-  const tempFile = await writeTempLyx("temp_dl85_f1_read.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+Deno.test("DL84 F1 - read annotations: inserted text labeled inserted, trailing unchanged", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl84_f1_read.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
   try {
     const result = await runCliTest(["read", tempFile, "layout[Standard]"]);
     const node = (result.data as { children: Array<{ text?: string; changeStatus?: string }> }[])[0];
@@ -994,8 +994,8 @@ Deno.test("DL85 F1 - read annotations: inserted text labeled inserted, trailing 
   }
 });
 
-Deno.test("DL85 F5 - replay undo reports separate regions for the adjacent pair", { timeout: 15000 }, async () => {
-  const tempFile = await writeTempLyx("temp_dl85_f5_replay.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
+Deno.test("DL84 F5 - replay undo reports separate regions for the adjacent pair", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl84_f5_replay.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
   try {
     const undone = await runCliWithConfig(
       ["undo", tempFile, "layout[Standard]", "edit"],
@@ -1013,11 +1013,11 @@ Deno.test("DL85 F5 - replay undo reports separate regions for the adjacent pair"
   }
 });
 
-// --- Dev log 84/85 F3: same-author in-region edits unify to merge (Option A) ---
+// --- Dev log 84 F3: same-author in-region edits unify to merge (Option A) ---
 
-Deno.test("DL85 F3 - same-author match consuming whole region merges (not a pair)", { timeout: 15000 }, async () => {
+Deno.test("DL84 F3 - same-author match consuming whole region merges (not a pair)", { timeout: 15000 }, async () => {
   const body = "\\begin_layout Standard\n\\change_inserted 1 1700000000\nFIXED\n\\change_unchanged\n\\end_layout\n";
-  const tempFile = await writeTempLyx("temp_dl85_f3_whole.lyx", body, "\\author 1 \"Alice\"\n");
+  const tempFile = await writeTempLyx("temp_dl84_f3_whole.lyx", body, "\\author 1 \"Alice\"\n");
   try {
     const result = await runCliWithConfig(
       ["set", tempFile, "layout[Standard]", "FIXEDX", "--find", "FIXED"],
@@ -1040,9 +1040,9 @@ Deno.test("DL85 F3 - same-author match consuming whole region merges (not a pair
   }
 });
 
-Deno.test("DL85 F3 - different-author full-consumption still emits a delete+insert pair", { timeout: 15000 }, async () => {
+Deno.test("DL84 F3 - different-author full-consumption still emits a delete+insert pair", { timeout: 15000 }, async () => {
   const body = "\\begin_layout Standard\n\\change_inserted 1 1700000000\nFIXED\n\\change_unchanged\n\\end_layout\n";
-  const tempFile = await writeTempLyx("temp_dl85_f3_whole_diff.lyx", body, "\\author 1 \"Alice\"\n");
+  const tempFile = await writeTempLyx("temp_dl84_f3_whole_diff.lyx", body, "\\author 1 \"Alice\"\n");
   try {
     await runCliWithConfig(
       ["set", tempFile, "layout[Standard]", "FIXEDX", "--find", "FIXED"],
@@ -1060,11 +1060,11 @@ Deno.test("DL85 F3 - different-author full-consumption still emits a delete+inse
   }
 });
 
-// --- Dev log 84/85 F2: header snapshot makes tracked-mutation undo byte-exact ---
+// --- Dev log 84 F2: header snapshot makes tracked-mutation undo byte-exact ---
 
-Deno.test("DL85 F2 - tracked set --find then snapshot undo is byte-exact (header restored)", { timeout: 15000 }, async () => {
+Deno.test("DL84 F2 - tracked set --find then snapshot undo is byte-exact (header restored)", { timeout: 15000 }, async () => {
   const body = "\\begin_layout Standard\nold text here\n\\end_layout\n";
-  const tempFile = await writeTempLyx("temp_dl85_f2_undo.lyx", body);
+  const tempFile = await writeTempLyx("temp_dl84_f2_undo.lyx", body);
   try {
     const expected = serialize(parse(await Deno.readTextFile(tempFile)));
     const cfg = { trackChanges: true, authorName: "Alice" };
@@ -1087,9 +1087,9 @@ Deno.test("DL85 F2 - tracked set --find then snapshot undo is byte-exact (header
   }
 });
 
-Deno.test("DL85 F2 - tracked delete then snapshot undo is byte-exact (header restored)", { timeout: 15000 }, async () => {
+Deno.test("DL84 F2 - tracked delete then snapshot undo is byte-exact (header restored)", { timeout: 15000 }, async () => {
   const body = "\\begin_layout Standard\nold text here\n\\end_layout\n";
-  const tempFile = await writeTempLyx("temp_dl85_f2_undo_delete.lyx", body);
+  const tempFile = await writeTempLyx("temp_dl84_f2_undo_delete.lyx", body);
   try {
     const expected = serialize(parse(await Deno.readTextFile(tempFile)));
     const cfg = { trackChanges: true, authorName: "Alice" };
@@ -1107,9 +1107,9 @@ Deno.test("DL85 F2 - tracked delete then snapshot undo is byte-exact (header res
   }
 });
 
-Deno.test("DL85 F2 - untracked set undo stays byte-exact and counts only the body node", { timeout: 15000 }, async () => {
+Deno.test("DL84 F2 - untracked set undo stays byte-exact and counts only the body node", { timeout: 15000 }, async () => {
   const body = "\\begin_layout Standard\nold text here\n\\end_layout\n";
-  const tempFile = await writeTempLyx("temp_dl85_f2_undo_untracked.lyx", body);
+  const tempFile = await writeTempLyx("temp_dl84_f2_undo_untracked.lyx", body);
   try {
     const expected = serialize(parse(await Deno.readTextFile(tempFile)));
     await runCliTest(["set", tempFile, "layout[Standard]", "NEW", "--find", "old"]);
@@ -1122,11 +1122,11 @@ Deno.test("DL85 F2 - untracked set undo stays byte-exact and counts only the bod
   }
 });
 
-// --- Dev log 84/85 F4: --footnote inserts LyX's status line ---
+// --- Dev log 84 F4: --footnote inserts LyX's status line ---
 
-Deno.test("DL85 F4 - --footnote insert emits status line (untracked)", { timeout: 15000 }, async () => {
+Deno.test("DL84 F4 - --footnote insert emits status line (untracked)", { timeout: 15000 }, async () => {
   const body = "\\begin_layout Standard\nBase\n\\end_layout\n";
-  const tempFile = await writeTempLyx("temp_dl85_f4_untracked.lyx", body);
+  const tempFile = await writeTempLyx("temp_dl84_f4_untracked.lyx", body);
   try {
     await runCliTest(["insert", tempFile, "layout[Standard]", "append", "--footnote", "A footnote"]);
     const text = await Deno.readTextFile(tempFile);
@@ -1143,9 +1143,9 @@ Deno.test("DL85 F4 - --footnote insert emits status line (untracked)", { timeout
   }
 });
 
-Deno.test("DL85 F4 - --footnote insert emits status line (tracked)", { timeout: 15000 }, async () => {
+Deno.test("DL84 F4 - --footnote insert emits status line (tracked)", { timeout: 15000 }, async () => {
   const body = "\\begin_layout Standard\nBase\n\\end_layout\n";
-  const tempFile = await writeTempLyx("temp_dl85_f4_tracked.lyx", body);
+  const tempFile = await writeTempLyx("temp_dl84_f4_tracked.lyx", body);
   try {
     await runCliWithConfig(
       ["insert", tempFile, "layout[Standard]", "append", "--footnote", "A footnote"],
