@@ -143,7 +143,10 @@ Arguments:
   <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
   <new text>  The new text content to apply to the matched nodes.
 
-lq set preserves non-text children (insets, properties) and replaces only text nodes.
+lq set replaces text content and preserves insets as current content. Inline
+properties around the replaced text stay inside the change region when tracking
+is on (reject restores formatting) and are dropped when tracking is off (no dead
+markup).
 Options to change the default behaviour:
   --find <substring>        Replace all occurrences of <substring> within the matched
                             nodes' text, instead of replacing the entire text content.
@@ -398,6 +401,11 @@ function printJson(data: unknown) {
 }
 
 function printError(code: string, message: string, details: Record<string, unknown> = {}): never {
+  // Errors are self-contained: drop accumulated warnings so an error response
+  // never carries a mutation-style warning (e.g. the blast-radius notice) that
+  // could mislead an agent into thinking the command ran (test_report_39 F3,
+  // dev log 88 D4-a).
+  _warnings.length = 0;
   printJson({ code, message, ...details });
   Deno.exit(1);
 }
@@ -448,6 +456,34 @@ function assertNoStrayFlags(restArgs: string[], commandName: string): void {
       `Unknown flag${stray.length === 1 ? "" : "s"} for '${commandName}': ` +
       `${stray.join(", ")}. Run 'lq ${commandName} --help' to list valid flags.`);
   }
+}
+
+/**
+ * Build the children of a tracked full-text replace (lq set without --find /
+ * --replace-all, and the flatten of a node with pending changes).
+ *
+ * Old content (text + inline properties, in original order) is wrapped in
+ * \change_deleted; the new value is wrapped in \change_inserted. Properties
+ * stay IN PLACE inside the deleted region — LyX's Paragraph::write emits font
+ * properties inside a change region, so rejecting the change restores the
+ * original formatting (test_report_38 F8, test_report_39 F1).
+ *
+ * Insets stay OUTSIDE the change pair as current content (the documented
+ * "preserves non-text children" contract, dev log 88 D2-b) — they survive
+ * both accept and reject.
+ */
+function buildTrackedFullReplace(
+  children: Node[], newValue: string, tcAid: number, tcTs: string,
+): Node[] {
+  const stripped = children.filter(c =>
+    c.type !== "property" || (!isChangeOpener(c.key) && !isChangeCloser(c.key)));
+  const insets = stripped.filter(c => c.type === "block");
+  const deletedContent = stripped.filter(c => c.type !== "block");
+  return [
+    ...(deletedContent.length > 0 ? wrapInChangeMarkers(deletedContent, "deleted", tcAid, tcTs) : []),
+    ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
+    ...insets,
+  ];
 }
 
 /** Walk the parsed raw CST and validate all inset types against the registry. */
@@ -1444,42 +1480,34 @@ function foldNegativeDepth(args: string[]): string[] {
         } else if (trackChanges) {
           // Full-text replace with trackChanges: flatten old markers to plain
           // content before applying new markers, matching LyX's per-position
-          // overwrite model (dev log 78 Fix 1). All non-marker children (text,
-          // inline properties, insets) are preserved IN PLACE inside the
-          // deleted region — LyX's own writer emits font properties inside a
-          // change region (Paragraph::write), so rejecting the change restores
-          // the original formatting. Previously the non-text tail was appended
-          // after the change pair, leaving e.g. \emph at a meaningless
-          // trailing position (test_report_38 F8).
-          if (hasTrackedChanges(node.children)) {
-            const stripped = node.children.filter(c =>
-              c.type !== "property" ||
-              (!isChangeOpener(c.key) && !isChangeCloser(c.key)));
-            node.children = [
-              ...(stripped.length > 0 ? wrapInChangeMarkers(stripped, "deleted", tcAid, tcTs) : []),
-              ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
-            ];
-          } else if (replaceAll) {
+          // overwrite model (dev log 78 Fix 1). Inline properties are preserved
+          // IN PLACE inside the deleted region — LyX's own writer emits font
+          // properties inside a change region (Paragraph::write), so rejecting
+          // the change restores the original formatting (test_report_38 F8,
+          // test_report_39 F1). Insets stay OUTSIDE the change pair as current
+          // content (the documented "preserves non-text children" contract,
+          // dev log 88 D2-b) — they survive both accept and reject.
+          if (hasTrackedChanges(node.children) || !replaceAll) {
+            node.children = buildTrackedFullReplace(node.children, newValue, tcAid, tcTs);
+          } else {
+            // --replace-all deliberately wipes ALL children, insets included
+            // ("Wipe all children and rebuild from scratch").
             node.children = [
               ...wrapInChangeMarkers(node.children, "deleted", tcAid, tcTs),
               ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
             ];
-          } else {
-            const nonTextChildren = node.children.filter(c => c.type !== "text");
-            const oldTextNodes = node.children.filter(c => c.type === "text");
-            node.children = [
-              ...wrapInChangeMarkers(oldTextNodes, "deleted", tcAid, tcTs),
-              ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
-              ...nonTextChildren,
-            ];
           }
         } else {
-          // Full-text replace without trackChanges (existing behavior)
+          // Full-text replace without trackChanges.
           if (replaceAll) {
             node.children = [{ type: "text", text: newValue }];
           } else {
-            const nonTextChildren = node.children.filter(c => c.type !== "text");
-            node.children = [{ type: "text", text: newValue }, ...nonTextChildren];
+            // Preserve insets as current content; drop inline properties —
+            // they format the replaced text and would become dead trailing
+            // markup (test_report_39 F2). The result equals the tracked path's
+            // accept view (dev log 88).
+            const insets = node.children.filter(c => c.type === "block");
+            node.children = [{ type: "text", text: newValue }, ...insets];
           }
         }
       } else if (node.type === "text") {

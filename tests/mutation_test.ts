@@ -884,6 +884,169 @@ Deno.test("DL87 F7 - unknown and misapplied flags hard-error before mutating", {
   }
 });
 
+// --- Dev log 88 (test_report_39): full-replace property/inset placement + DX ---
+
+// F1: plain tracked full-replace (no pending changes) must keep inline
+// properties IN PLACE inside the deleted region — rejecting restores the
+// original formatting (test_report_39 F1; completes DL87 F8 on the default
+// path, which only fixed the flatten branch).
+Deno.test("DL88 F1 - tracked plain full-replace keeps properties inside the deleted region", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "The \n\\emph on\nquick\n\\emph default\n fox\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl88_f1_plain.lyx", body);
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "NEW TEXT"],
+      { trackChanges: true },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "NEW TEXT");
+    // Properties must sit inside the deleted region, before the inserted
+    // region — same position assertion as the DL78 N4 flatten test.
+    const deletedPos = text.indexOf("\\change_deleted");
+    const insertedPos = text.indexOf("\\change_inserted");
+    const emphOnPos = text.indexOf("\\emph on");
+    const emphDefaultPos = text.indexOf("\\emph default");
+    assertEquals(deletedPos !== -1 && insertedPos !== -1, true, "deleted/inserted markers must be present");
+    assertEquals(emphOnPos > deletedPos && emphOnPos < insertedPos, true,
+      "\\emph on must stay inside the deleted region");
+    assertEquals(emphDefaultPos > deletedPos && emphDefaultPos < insertedPos, true,
+      "\\emph default must stay inside the deleted region");
+    // No dead pair trails after the change pair.
+    assertEquals(text.lastIndexOf("\\emph") < insertedPos, true,
+      "no \\emph may trail after the inserted region");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// F2: untracked plain full-replace must drop inline properties (dead markup)
+// and keep insets as current content.
+Deno.test("DL88 F2 - untracked plain full-replace drops dead properties, keeps insets", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "The \n\\emph on\nquick\n\\emph default\n fox\n" +
+    "\\begin_inset Foot\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "a note\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl88_f2_untracked.lyx", body);
+  try {
+    const result = await runCliTest(["set", tempFile, "layout[Standard]", "NEW TEXT"]);
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "NEW TEXT");
+    assertEquals(text.includes("\\emph on"), false, "dead \\emph on must be dropped");
+    assertEquals(text.includes("\\emph default"), false, "dead \\emph default must be dropped");
+    assertStringIncludes(text, "\\begin_inset Foot", "inset must survive as current content");
+    assertEquals(text.indexOf("NEW TEXT") < text.indexOf("\\begin_inset Foot"), true,
+      "replacement text must precede the preserved inset");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// F1b: tracked plain full-replace over a paragraph containing an inset — the
+// inset stays OUTSIDE the change pair (survives accept).
+Deno.test("DL88 F1b - tracked plain full-replace keeps inset outside the change pair", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "The quick brown fox\n" +
+    "\\begin_inset Foot\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "a note\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl88_f1b_inset.lyx", body);
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "NEW TEXT"],
+      { trackChanges: true },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    // Inset must come after the inserted region's closer (the last
+    // \change_unchanged), i.e. outside the change pair — survives accept.
+    const lastUnchanged = text.lastIndexOf("\\change_unchanged");
+    const insetPos = text.indexOf("\\begin_inset Foot");
+    assertEquals(insetPos !== -1 && lastUnchanged !== -1, true, "inset and closer must be present");
+    assertEquals(insetPos > lastUnchanged, true,
+      "inset must stay outside the change pair (survive accept)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// D2-b: tracked full-replace over a node with pending changes + inset — the
+// flatten path must also keep the inset outside the change pair (previously it
+// folded the inset into \change_deleted, so accepting would drop the footnote).
+Deno.test("DL88 D2b - flatten keeps inset outside the change pair (survives accept)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "The quick brown fox\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "QUICK\n" +
+    "\\change_unchanged\n" +
+    "\\begin_inset Foot\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "a note\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl88_d2b_flatten_inset.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "NEW TEXT"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    const lastUnchanged = text.lastIndexOf("\\change_unchanged");
+    const insetPos = text.indexOf("\\begin_inset Foot");
+    assertEquals(insetPos !== -1 && lastUnchanged !== -1, true, "inset and closer must be present");
+    assertEquals(insetPos > lastUnchanged, true,
+      "flatten must keep the inset outside the change pair (D2-b)");
+    assertStringIncludes(text, "NEW TEXT");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// F3 (D4-a): a hard flag error must not carry the blast-radius warning.
+Deno.test("DL88 F3 - INVALID_FLAG error carries no warnings", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\nAlpha\n\\end_layout\n" +
+    "\\begin_layout Standard\nBeta\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl88_f3_warnings.lyx", body);
+  try {
+    const before = await Deno.readTextFile(tempFile);
+    const result = await runCliTest([
+      "set", tempFile, "layout[Standard]", "X", "--track-changes", "off",
+    ]);
+    assertEquals(result.code, "INVALID_FLAG");
+    assertEquals((result.warnings ?? []).length, 0,
+      "an error response must not carry the blast-radius warning (D4-a)");
+    const after = await Deno.readTextFile(tempFile);
+    assertEquals(after, before, "no mutation may occur on a hard flag error");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
 
 // --- Dev log 78: flatten tracked changes + snapshot undo ---
 
