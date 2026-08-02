@@ -3,7 +3,7 @@ name: use-lq
 description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use the LyX CLI to create, import, or export the documents.
 allowed-tools: Bash(lq *)
 ---
-# `lq` user manual
+# `lq` manual
 
 `lq` is a standalone CLI tool for parsing, querying, and mutating LyX documents (`.lyx` files).
 
@@ -252,7 +252,7 @@ lq insert file.lyx "layout[Standard]:last" after --raw-file /tmp/items.raw
 
 For nested lists, use `\begin_deeper` / `\end_deeper` around the nested items. For enumerated lists, use `\begin_layout Enumerate` instead. For description lists, use `\begin_layout Description`.
 
-# LyX user manual
+# LyX manual
 
 ## LyX Syntax Reference
 
