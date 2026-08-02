@@ -22,6 +22,16 @@ export function isChangeCloser(key: string): boolean {
 }
 
 /**
+ * Parse a change marker value ("<authorId> <ts>") into its parts. Shared by
+ * flattenNestedChanges, applyCrossNodeReplace, and the undo replay scanner so
+ * the marker format contract lives in one place (code_review_88-74 Standards-1).
+ */
+export function parseChangeMarker(value: string | undefined): { authorId: number; ts: string } {
+  const parts = value?.split(" ") ?? [];
+  return { authorId: parseInt(parts[0], 10) || 0, ts: parts[1] || "0" };
+}
+
+/**
  * Scan for the end of the change region opened by the marker at `start - 1`.
  *
  * `terminateAtDifferentType = false` (flatten / cross-node replace): the
@@ -275,11 +285,6 @@ export function wrapInChangeMarkers(
 export function flattenNestedChanges(children: Node[]): Node[] {
   const result: Node[] = [];
 
-  const parseMarker = (value: string | undefined): { authorId: number; ts: string } => {
-    const parts = value?.split(" ") ?? [];
-    return { authorId: parseInt(parts[0], 10) || 0, ts: parts[1] || "0" };
-  };
-
   // Collect the content of the change region opened by the marker at
   // `start - 1`: everything up to (excluding) the matching \change_unchanged.
   // Returns the content and the index of that closer. The extent scan is
@@ -304,7 +309,7 @@ export function flattenNestedChanges(children: Node[]): Node[] {
     }
 
     if (child.type === "property" && child.key === "change_inserted") {
-      const outer = parseMarker(child.value);
+      const outer = parseChangeMarker(child.value);
       const { content, closer } = collectRegion(i + 1);
 
       // Split region content into flat segments: outer-author runs, and
@@ -323,7 +328,7 @@ export function flattenNestedChanges(children: Node[]): Node[] {
       while (k < content.length) {
         const n = content[k];
         if (n.type === "property" && isChangeOpener(n.key)) {
-          const inner = parseMarker(n.value);
+          const inner = parseChangeMarker(n.value);
           // Find the inner region's extent within the outer content
           const { closer } = scanRegionEnd(content, k + 1, n.key, false);
           const innerContent: Node[] = [];
@@ -714,10 +719,10 @@ export function applyCrossNodeReplace(
       // than flushed after it as a top-level delete+insert pair.
       if (child.type === "property") {
         if (child.key === "change_inserted") {
-          const parts = (child.value || "").split(" ");
+          const marker = parseChangeMarker(child.value);
           insertedRegionOpener = child as PropertyNode;
-          insertedRegionAuthor = parseInt(parts[0], 10) || null;
-          insertedRegionTs = parseInt(parts[1], 10) || 0;
+          insertedRegionAuthor = marker.authorId === 0 ? null : marker.authorId;
+          insertedRegionTs = parseInt(marker.ts, 10) || 0;
         } else if (child.key === "change_deleted") {
           // F3 (test_report_36 F1): a different-type opener terminates any
           // open inserted region (LyX's flat model — one active Change per

@@ -20,6 +20,7 @@ import {
   hasTrackedChanges,
   isChangeCloser,
   isChangeOpener,
+  parseChangeMarker,
   resolveAuthorId,
   scanRegionEnd,
   wrapInChangeMarkers,
@@ -2281,8 +2282,11 @@ function foldNegativeDepth(args: string[]): string[] {
           const regionEnd = closerAt !== -1 ? closerAt : nextOpenerAt;
           const nextStart = closerAt !== -1 ? closerAt + 1 : nextOpenerAt;
 
-          const authorIdMatch = child.value?.match(/^(\d+)/);
-          const changeAuthorId = authorIdMatch ? parseInt(authorIdMatch[1], 10) : null;
+          // Author id is the marker value's first token ("<authorId> <ts>").
+          // 0 only arises from non-numeric/missing prefixes and never equals a
+          // real undo author (resolveAuthorId returns >= 1 on well-formed
+          // documents), so the previous null-vs-0 handling is preserved.
+          const changeAuthorId = parseChangeMarker(child.value).authorId;
           const enclosedText = textParts.join("");
 
           // Check if this change matches our target AND belongs to this author

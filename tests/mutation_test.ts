@@ -525,15 +525,8 @@ Deno.test("Bib Engine - Extract Citations", async () => {
 
 const REPRO_FIXTURE = new URL("./fixtures/PerDevLog/test_report_33_repro.lyx", import.meta.url);
 
-async function createTempReproFixture(name: string): Promise<string> {
-  const tempDir = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";
-  const tempPath = `${tempDir}/${name}`;
-  await Deno.copyFile(REPRO_FIXTURE, tempPath);
-  return tempPath;
-}
-
 Deno.test("Cross-Node --find (untracked)", async () => {
-  const tempFile = await createTempReproFixture("temp_cross_find_untracked.lyx");
+  const tempFile = await createTempFixture("temp_cross_find_untracked.lyx", REPRO_FIXTURE);
   try {
     // "Compared to the literature, we find" spans a comma-induced text-node boundary
     const result = await runCliTest([
@@ -555,7 +548,7 @@ Deno.test("Cross-Node --find (untracked)", async () => {
 });
 
 Deno.test("Cross-Node --find (tracked)", async () => {
-  const tempFile = await createTempReproFixture("temp_cross_find_tracked.lyx");
+  const tempFile = await createTempFixture("temp_cross_find_tracked.lyx", REPRO_FIXTURE);
   try {
     const result = await runCliWithConfig(
       ["set", tempFile, "layout[Standard]:first", "REPLACED",
@@ -578,7 +571,7 @@ Deno.test("Cross-Node --find (tracked)", async () => {
 });
 
 Deno.test("Cross-Node split-after", async () => {
-  const tempFile = await createTempReproFixture("temp_cross_split.lyx");
+  const tempFile = await createTempFixture("temp_cross_split.lyx", REPRO_FIXTURE);
   try {
     // "literature, we find" spans the comma boundary
     const result = await runCliTest([
@@ -602,7 +595,7 @@ Deno.test("Cross-Node split-after", async () => {
 });
 
 Deno.test("Cross-Node :contains()", async () => {
-  const tempFile = await createTempReproFixture("temp_cross_contains.lyx");
+  const tempFile = await createTempFixture("temp_cross_contains.lyx", REPRO_FIXTURE);
   try {
     // :contains should match across the comma boundary
     const result = await runCliTest([

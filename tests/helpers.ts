@@ -203,9 +203,9 @@ export async function runCliWithConfig(
  */
 const FIXTURE = new URL("./fixtures/my_template.lyx", import.meta.url);
 
-export async function createTempFixture(name: string): Promise<string> {
+export async function createTempFixture(name: string, fixture: URL = FIXTURE): Promise<string> {
   const tempDir = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";
   const tempPath = `${tempDir}/${name}`;
-  await Deno.copyFile(FIXTURE, tempPath);
+  await Deno.copyFile(fixture, tempPath);
   return tempPath;
 }
