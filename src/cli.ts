@@ -174,11 +174,11 @@ Run 'lq <command> --help' for more information on a specific command.`,
 
   selector: `lq selector - CSS-like selector to traverse the LyX document.
 
-Tag[args]: Run 'lq schema <file>' to see optional args
-  layout[documentLayouts]
-  inset[insets]
-  inset[CommandInset commandInsetSubtypes]
-  property[inlineProperties]
+Tag[args]: substitute a value from 'lq schema <file>' (these are categories, not literal queries)
+  layout[Section]              a document layout from documentLayouts
+  inset[Formula]               an inset type from insets
+  inset[CommandInset citation] a CommandInset subtype from commandInsetSubtypes
+  property[family]             an inline property key from inlineProperties
   
 Combinators:
   Space for descendant  e.g. layout[Section] inset[Formula]

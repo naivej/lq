@@ -28,12 +28,12 @@ To effectively use the query engine, Users need to understand how LyX syntax map
 
 The query engine supports traversing the CST using CSS-like selector:
 
-- **Tag[args]** (Run `lq schema <file>` to see optional args)
+- **Tag[args]** — substitute a concrete value from `lq schema <file>` (the names below are categories, not literal queries)
 
-  - layout[documentLayouts]
-  - inset[insets]
-  - inset[CommandInset commandInsetSubtypes]
-  - property[inlineProperties]
+  - `layout[Section]` — a document layout from `documentLayouts`
+  - `inset[Formula]` — an inset type from `insets`
+  - `inset[CommandInset citation]` — a CommandInset subtype from `commandInsetSubtypes`
+  - `property[family]` — an inline property key from `inlineProperties`
 - **Combinators**
 
   - Space for descendant. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.
