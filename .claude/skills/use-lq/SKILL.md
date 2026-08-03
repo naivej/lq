@@ -21,7 +21,7 @@ To effectively use the query engine, Users need to understand how LyX syntax map
 - **Layout Nodes**: Structures like `\begin_layout Section` map to a `layout` tag with a `Section` argument. Users select them using `layout[Section]`.
 - **Inset Nodes**: Structures like `\begin_inset Formula` map to an `inset` tag with a `Formula` argument. Users select them using `inset[Formula]`.
 - **Property Nodes**: Single-line settings like `\textclass article` map to property nodes.
-- **Text Nodes**: The actual text content inside layouts and insets.
+- **Text Nodes**: The actual text content inside layouts and insets. The parser splits text at every property boundary (`\change_deleted`, `\emph on`, `\family roman`, …), so a text node never straddles a tracked-change region or an inline-style span. Regions and style spans are therefore always **runs of whole nodes** — never sub-node ranges.
 - **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child. Use a sibling range such as `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` to retrieve paragraphs following a heading.
 
 ## Query Engine
@@ -39,13 +39,14 @@ The query engine supports traversing the CST using CSS-like selector:
   - Space for descendant. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.
   - `~` for sibling. Example: `layout[Section] ~ layout[Standard]` matches all Standard layouts after a Section.
   - `,` for OR group. Example: `layout[Section], inset[Foot]` matches all Section and Foot layouts.
-- **Chainable Pseudo-classes** (must follow a tag e.g. `layout:contains("text")`, `inset:first`)
+- **Chainable Pseudo-classes** — node predicates: each is a true/false filter that keeps only nodes matching its condition. Must follow a tag (e.g. `layout:contains("text")`, `inset:first`); chain several to narrow further.
 
   - `:first`, `:last`, `:nth-child(an+b/even/odd)`,
   - `:contains("text")` searches recursively and case-sensitively node children for text.
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
   - `:until(selector)` bounds a `~` sibling range — rejects nodes that have a sibling matching the inner selector between themselves and the anchor. Example: `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` gives all Standard paragraphs in the Introduction section.
+  - `:change(current|inserted|deleted)` matches nodes by the tracked-change region they sit in. Text nodes match by their own region; layouts/insets match if they contain text in that region, recursively; property nodes never match. Also scopes `set --find` / `split-after` to that region.
   - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 
 ## Context-Aware Strict Validation
@@ -112,7 +113,7 @@ The query engine supports traversing the CST using CSS-like selector:
   - Positions:
     - `before`/`after`: insert a layout as a **sibling** of the target.
     - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
-    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in current text.
+    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in the matched text.
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: Insert a layout block with the given name and text (e.g., --layout 'Standard' --text 'Hello world'). --text requires --layout, except with 'split-after' where bare --text inserts inline text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
@@ -123,20 +124,18 @@ The query engine supports traversing the CST using CSS-like selector:
 
 ## Tracked Changes
 
-With `--track-changes on` (the default), mutations record a reviewable edit instead of silently rewriting text: old content goes in `\change_deleted`, new content in `\change_inserted`, and the header gains `\tracking_changes true` plus an `\author` entry. Configure with `lq init --track-changes <on|off>` and `lq init --author-name <name>` (default `"lq user"`).
+With `--track-changes on` (the default), mutations record a reviewable edit instead of silently rewriting text: old content goes in `\change_deleted`, new content in `\change_inserted`, and the header gains `\tracking_changes true` plus an `\author` entry.
 
 **How each mutation records a change:**
 - `set` — old text in `\change_deleted` + new in `\change_inserted`. On a full-text `set`, inline properties around the replaced text are kept **in place** inside `\change_deleted`, so rejecting the change restores the original formatting; insets are preserved as current content outside the change pair.
 - `delete` — matched nodes wrapped in `\change_deleted`.
 - `insert` — new content wrapped in `\change_inserted`.
 
-**Selectors see all, mutations see current.** A tracked change keeps both versions of the text, and how much each operation sees follows one rule:
-- **Selectors see ALL text** — `:contains(...)` matches, and `read`/`dump`/`--text-only` show, text inside `\change_deleted` too. That's how you locate a phrase even when it lives in a rejected change.
-- **Mutations see only current text** — `--find` and `split-after` skip `\change_deleted`: it is old/replaced content, not a valid edit target.
+**Selecting tracked changes:** `:contains(...)` matches text inside `\change_deleted`.
+
+**Mutating tracked changes:** `--find` and `split-after` match `\change_deleted` as well. Editing rejected text inserts the replacement as a new tracked change adjacent to the deletion (never nested); the deleted text is preserved.
 
 **Viewing tracked changes:** `dump` and `read` (default) annotate text inside tracked blocks with `changeStatus` (`deleted`/`inserted`); `read --text-only` marks them inline as `\change_deleted{...}` / `\change_inserted{...}`.
-
-**Reverting tracked changes:** `lq undo` — snapshot restore (no substring) reverts the last mutation, tracked or plain; replay undo (`undo <substring>`) removes the whole `\change_deleted`/`\change_inserted` block containing `<substring>` **and made by the current author**. If the change exists but belongs to another author, `undo` warns and undoes nothing — switch via `lq init --author-name <name>`.
 
 # Best Practices
 

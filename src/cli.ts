@@ -6,7 +6,7 @@ import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode, TextNode } from "./ast.ts";
 import { validateInsetType, KNOWN_COMMAND_INSET_TYPES } from "./registry.ts";
-import { concatenateTextNodes, mapPosToSegment } from "./text_utils.ts";
+import { advanceChangeDepths, concatenateTextNodes, mapPosToSegment } from "./text_utils.ts";
 import { getCachedAst, setCachedAst, hashText, hashFile, setMaxCacheEntries } from "./cache.ts";
 import { clearSnapshot, collectSnapshots, commitMutation, loadSnapshot, nodeAtPath } from "./undo.ts";
 import {
@@ -28,6 +28,116 @@ import {
 } from "./tracked_changes.ts";
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
+
+/**
+ * Map every text node in the tree to its parent children list + index.
+ * Used to route a bare-text `set --find` inside a change region through the
+ * marker-aware rebuild (dev log 90 1b) — a plain replace would embed the
+ * replacement inside the surrounding \change_deleted and be rejected with it.
+ */
+function collectTextParents(ast: DocumentNode): Map<Node, { list: Node[]; index: number }> {
+  const map = new Map<Node, { list: Node[]; index: number }>();
+  const walk = (list: Node[]) => {
+    for (let i = 0; i < list.length; i++) {
+      const n = list[i];
+      if (n.type === "text") map.set(n, { list, index: i });
+      else if (n.type === "block") walk((n as BlockNode).children);
+    }
+  };
+  walk(ast.children);
+  return map;
+}
+
+/**
+ * Region a text node sits in, computed from the change markers preceding it
+ * in its parent's children: "deleted" | "inserted" | "current".
+ */
+function nodeInChangeRegion(list: Node[], index: number): "deleted" | "inserted" | "current" {
+  let deletedDepth = 0;
+  let insertedDepth = 0;
+  for (let i = 0; i < index; i++) {
+    const c = list[i];
+    if (c.type === "property" && (isChangeOpener(c.key) || isChangeCloser(c.key))) {
+      const d = advanceChangeDepths(c.key, deletedDepth, insertedDepth);
+      deletedDepth = d.deletedDepth;
+      insertedDepth = d.insertedDepth;
+    }
+  }
+  if (deletedDepth > 0) return "deleted";
+  if (insertedDepth > 0) return "inserted";
+  return "current";
+}
+
+/**
+ * Extract a :change(current|inserted|deleted) region scope from a selector, if
+ * present. The last :change() in the selector wins. Returns undefined when the
+ * selector has no region scope (default: mutations see all text — dev log 90).
+ */
+function selectorRegionFilter(selector: string): "current" | "inserted" | "deleted" | undefined {
+  const matches = [...selector.matchAll(/:\s*change\s*\(\s*(current|inserted|deleted)\s*\)/g)];
+  if (matches.length === 0) return undefined;
+  return matches[matches.length - 1][1] as "current" | "inserted" | "deleted";
+}
+
+/** Region a split-after segment sits in (its owning children list). */
+function segmentRegion(seg: { owner?: Node[]; childIndex: number }): "deleted" | "inserted" | "current" {
+  if (!seg.owner) return "current";
+  return nodeInChangeRegion(seg.owner, seg.childIndex);
+}
+
+/** Is the whole span [ms, me) of a segment list inside the given region? */
+function matchSpanInRegion(
+  segments: { owner?: Node[]; childIndex: number; text: string }[],
+  ms: number,
+  me: number,
+  region: string,
+): boolean {
+  let offset = 0;
+  for (const seg of segments) {
+    const segStart = offset;
+    const segEnd = offset + seg.text.length;
+    if (segEnd > ms && segStart < me) {
+      if (segmentRegion(seg) !== region) return false;
+    }
+    offset = segEnd;
+  }
+  return true;
+}
+
+/**
+ * The change region open at the given index in a children list (scans forward
+ * with the flat-model depth rule): its marker key, author, timestamp, and the
+ * opener node (for timestamp bumps). Returns null when no region is open.
+ */
+function openRegionInfo(
+  list: Node[],
+  index: number,
+): { key: "change_deleted" | "change_inserted"; author: number; ts: string; node: PropertyNode } | null {
+  let deletedDepth = 0;
+  let insertedDepth = 0;
+  let deletedInfo: { author: number; ts: string; node: PropertyNode } | null = null;
+  let insertedInfo: { author: number; ts: string; node: PropertyNode } | null = null;
+  for (let i = 0; i < index; i++) {
+    const c = list[i];
+    if (c.type === "property" && (isChangeOpener(c.key) || isChangeCloser(c.key))) {
+      const d = advanceChangeDepths(c.key, deletedDepth, insertedDepth);
+      deletedDepth = d.deletedDepth;
+      insertedDepth = d.insertedDepth;
+      if (c.key === "change_deleted" || c.key === "change_inserted") {
+        const m = parseChangeMarker(c.value);
+        const info = { author: m.authorId, ts: m.ts, node: c as PropertyNode };
+        if (c.key === "change_deleted") deletedInfo = info;
+        else insertedInfo = info;
+      } else if (c.key === "change_unchanged") {
+        if (insertedDepth === 0) deletedInfo = null;
+        if (deletedDepth === 0) insertedInfo = null;
+      }
+    }
+  }
+  if (deletedDepth > 0 && deletedInfo) return { key: "change_deleted", ...deletedInfo };
+  if (insertedDepth > 0 && insertedInfo) return { key: "change_inserted", ...insertedInfo };
+  return null;
+}
 
 /** Standard LaTeX heading hierarchy used as fallback when .layout files are unavailable. */
 const DEFAULT_HEADING_HIERARCHY = [
@@ -151,6 +261,9 @@ markup).
 Options to change the default behaviour:
   --find <substring>        Replace all occurrences of <substring> within the matched
                             nodes' text, instead of replacing the entire text content.
+                            Matches ALL text by default, including \change_deleted
+                            (rejected) text; scope with :change(current|inserted|deleted)
+                            to target a specific region.
   --replace-all             Replace ALL children of the target block, not just text nodes.
                             Mutually exclusive with --find.`,
 
@@ -1388,18 +1501,30 @@ function foldNegativeDepth(args: string[]): string[] {
 
     const newValue = flags._.join(" ");
 
+    // Region scope from a :change(...) selector (dev log 90 §5.5): restricts
+    // --find to the scoped region, disambiguating a phrase present in both
+    // current and rejected text. Undefined = see all text by default.
+    const regionFilter = selectorRegionFilter(selector);
+
     // Track total substring matches for stderr notification
     let totalFindMatches = 0;
     // Nodes that actually had a --find occurrence. `modified_nodes` reports
     // this instead of nodes.length for --find, which previously over-counted
     // matched-but-unmodified nodes (test_report_38 F6).
     let findNodesWithHits = 0;
-    // Matches skipped because they straddle a tracked-change boundary —
-    // reported with a dedicated error when nothing valid matched (dev log 78).
-    let totalStraddles = 0;
+    // Occurrences that matched inside \change_deleted (rejected text) — the
+    // warning appends a note so editing rejected text is not silent (dev log
+    // 90 §5.7).
+    let totalDeletedHits = 0;
     // Per-node type counts captured during mutation (before trackChanges wraps text
     // in change_inserted markers, which could cause double-counting if re-scanned)
     const findPerNode: Record<string, number> = {};
+
+    // Parent index for bare-text `--find` routing (dev log 90 1b): a text node
+    // inside a change region is rebuilt at the parent level (see-all), so the
+    // replacement is not swallowed by the surrounding \change_deleted.
+    const textParentIndex = collectTextParents(ast);
+    const processedParents = new Set<Node[]>();
 
     // Snapshot pre-mutation state for undo — must run BEFORE the mutation loop
     // AND before resolveAuthorId/ensureTrackingChangesInHeader below (dev log
@@ -1464,16 +1589,16 @@ function foldNegativeDepth(args: string[]): string[] {
         if (findStr !== undefined) {
           // Cross-node surgical replace: concatenates text children
           // and matches findStr across punctuation-induced text-node boundaries.
-          const { newChildren, matchCount: nodeFindCount, straddleCount: nodeStraddles } = applyCrossNodeReplace(
-            node.children, findStr, newValue, trackChanges, tcAid, tcTs,
+          const { newChildren, matchCount: nodeFindCount, deletedHitCount: nodeDeletedHits } = applyCrossNodeReplace(
+            node.children, findStr, newValue, trackChanges, tcAid, tcTs, regionFilter,
           );
           // Flatten any nested markers produced by editing inside existing
-          // tracked changes (dev log 78 Fix 1).
+          // tracked changes (safety net — the rebuild emits flat markers).
           node.children = trackChanges
             ? flattenNestedChanges(newChildren)
             : newChildren;
           totalFindMatches += nodeFindCount;
-          totalStraddles += nodeStraddles;
+          totalDeletedHits += nodeDeletedHits;
           if (nodeFindCount > 0) {
             findNodesWithHits++;
             addFindCount(node, nodeFindCount);
@@ -1513,12 +1638,36 @@ function foldNegativeDepth(args: string[]): string[] {
         }
       } else if (node.type === "text") {
         if (findStr !== undefined) {
-          // Direct text node surgical replace (no trackChanges for bare text nodes)
-          const count = countOccurrences(node.text, findStr);
-          if (count > 0) {
-            node.text = node.text.replaceAll(findStr, newValue);
-            totalFindMatches += count;
-            findNodesWithHits++;
+          // Direct text node surgical replace. A text node inside a change
+          // region must route through the marker-aware rebuild (dev log 90
+          // 1b): a plain replace would embed the replacement inside the
+          // surrounding \change_deleted and be rejected with it.
+          const parentCtx = textParentIndex.get(node);
+          if (parentCtx && nodeInChangeRegion(parentCtx.list, parentCtx.index) !== "current") {
+            if (!processedParents.has(parentCtx.list)) {
+              processedParents.add(parentCtx.list);
+              const { newChildren, matchCount, deletedHitCount } = applyCrossNodeReplace(
+                parentCtx.list, findStr, newValue, trackChanges, tcAid, tcTs, regionFilter,
+              );
+              parentCtx.list.splice(
+                0,
+                parentCtx.list.length,
+                ...(trackChanges ? flattenNestedChanges(newChildren) : newChildren),
+              );
+              totalFindMatches += matchCount;
+              totalDeletedHits += deletedHitCount;
+              if (matchCount > 0) {
+                findNodesWithHits++;
+                addFindCount(node, matchCount);
+              }
+            }
+          } else {
+            const count = countOccurrences(node.text, findStr);
+            if (count > 0) {
+              node.text = node.text.replaceAll(findStr, newValue);
+              totalFindMatches += count;
+              findNodesWithHits++;
+            }
           }
         } else {
           node.text = newValue;
@@ -1529,17 +1678,18 @@ function foldNegativeDepth(args: string[]): string[] {
     // After loop: check if --find had any matches
     if (findStr !== undefined) {
       if (totalFindMatches === 0) {
-        if (totalStraddles > 0) {
-          printError("NO_MATCH", `--find '${findStr}' spans across tracked-change boundaries. Run 'lq undo ${filePath} "${selector}"' first, then retry.`);
-        }
         printError("NO_MATCH", `--find '${findStr}' matched no occurrences within the targeted nodes. Run 'lq read ${filePath} "${selector}" --text-only' to inspect their text.`);
       }
       const plural = totalFindMatches === 1 ? "" : "s";
       const nodeList = Object.entries(findPerNode)
         .map(([k, c]) => `${k} (${c} occurrence${c === 1 ? "" : "s"})`)
         .join(", ");
-      const findMsg = `--find matched ${totalFindMatches} occurrence${plural} of '${findStr}' across ${findNodesWithHits} node(s): ${nodeList}. ` +
+      let findMsg = `--find matched ${totalFindMatches} occurrence${plural} of '${findStr}' across ${findNodesWithHits} node(s): ${nodeList}. ` +
         `To target a specific occurrence, use a longer unique substring (include surrounding words).`;
+      if (totalDeletedHits > 0) {
+        const delPlural = totalDeletedHits === 1 ? "" : "s";
+        findMsg += ` ${totalDeletedHits} occurrence${delPlural} matched inside \\change_deleted (rejected text) — the replacement is inserted as a new tracked change adjacent to the deletion; scope with :change(current|inserted|deleted) to target a region.`;
+      }
       pushWarning(findMsg);
     }
 
@@ -1923,15 +2073,28 @@ function foldNegativeDepth(args: string[]): string[] {
       let splitParentList: Node[] | null = null;
       let splitTextIdx = -1;
       let splitInsertOffset = 0;
+      // Region at the split point (dev log 90 §5.4): a split inside a change
+      // region must never nest the inserted block — it merges (same author)
+      // or splits into adjacent flat blocks.
+      let splitRegion: "deleted" | "inserted" | "current" = "current";
+      let splitRegionInfo: { key: "change_deleted" | "change_inserted"; author: number; ts: string; node: PropertyNode } | null = null;
+      let splitRegionContinues = false;
+      // Region scope from a :change(...) selector (dev log 90 §5.4): resolves
+      // SPLIT_AMBIGUOUS by restricting the match to the scoped region.
+      const splitRegionFilter = selectorRegionFilter(selector);
       if (position === "split-after" && targetParentBlock) {
         // Build concatenated text, recursing into nested layouts so the
         // documented two-pass footnote workflow works (test_report_38 F3): a
         // footnote's text lives in a nested Plain Layout inside inset[Foot].
         // Text is collected only under layouts — inset metadata (status lines,
-        // CommandInset name lines) is not matchable.
+        // CommandInset name lines) is not matchable. Mutations see all text
+        // (dev log 90): \change_deleted text is matchable too, so split-after
+        // can target a rejected region; SPLIT_AMBIGUOUS is resolved by
+        // :change() scoping.
         const { segments, fullText } = concatenateTextNodes(targetParentBlock.children, {
           recurseLayouts: true,
           topLevelIsLayout: targetParentBlock.tag !== "inset",
+          includeDeleted: true,
         });
 
         let totalMatches = 0;
@@ -1939,8 +2102,11 @@ function foldNegativeDepth(args: string[]): string[] {
         {
           let pos = 0;
           while ((pos = fullText.indexOf(splitMatch!, pos)) !== -1) {
-            totalMatches++;
-            if (matchStart === -1) matchStart = pos;
+            const me = pos + splitMatch!.length;
+            if (!splitRegionFilter || matchSpanInRegion(segments, pos, me, splitRegionFilter)) {
+              totalMatches++;
+              if (matchStart === -1) matchStart = pos;
+            }
             pos += splitMatch!.length;
           }
         }
@@ -1949,7 +2115,7 @@ function foldNegativeDepth(args: string[]): string[] {
           printError("SPLIT_NO_MATCH", `split-after: substring '${splitMatch}' not found in matched block.`);
         }
         if (totalMatches > 1) {
-          printError("SPLIT_AMBIGUOUS", `split-after: substring '${splitMatch}' appears ${totalMatches} times in matched block. Use a more specific selector or a longer match string.`);
+          printError("SPLIT_AMBIGUOUS", `split-after: substring '${splitMatch}' appears ${totalMatches} times in matched block (including rejected \\change_deleted text). Scope with :change(current|inserted|deleted), or use a more specific selector or a longer match string.`);
         }
 
         const splitPos = matchStart + splitMatch!.length;
@@ -1979,6 +2145,33 @@ function foldNegativeDepth(args: string[]): string[] {
         if (before.length > 0) initialNodes.push({ type: "text", text: before });
         if (splitAfterText.length > 0) initialNodes.push({ type: "text", text: splitAfterText });
         splitParentList.splice(splitTextIdx, 1, ...initialNodes);
+
+        // Region at the split point. A split inside a change region must not
+        // nest the inserted block: same-author inserted merges; otherwise the
+        // block lands as an adjacent flat block and the region reopens after
+        // it if it continues (dev log 90 §5.4).
+        splitRegion = nodeInChangeRegion(splitParentList, splitTextIdx);
+        splitRegionInfo = splitRegion !== "current"
+          ? openRegionInfo(splitParentList, splitTextIdx)
+          : null;
+        splitRegionContinues = splitAfterText.length > 0;
+        if (!splitRegionContinues && splitRegion !== "current") {
+          let dDepth = splitRegion === "deleted" ? 1 : 0;
+          let iDepth = splitRegion === "inserted" ? 1 : 0;
+          for (let j = splitTextIdx + 1; j < splitParentList.length; j++) {
+            const c = splitParentList[j];
+            if (c.type === "text") {
+              splitRegionContinues = true;
+              break;
+            }
+            if (c.type === "property" && (isChangeOpener(c.key) || isChangeCloser(c.key))) {
+              const dd = advanceChangeDepths(c.key, dDepth, iDepth);
+              dDepth = dd.deletedDepth;
+              iDepth = dd.insertedDepth;
+              if (dDepth === 0 && iDepth === 0) break;
+            }
+          }
+        }
       }
 
       // Clone payload to avoid mutating shared nodes across target iterations.
@@ -2102,10 +2295,32 @@ function foldNegativeDepth(args: string[]): string[] {
           // iterations have already been inserted (fixes multi-block order).
           const insertIdx = splitTextIdx + 1 + splitInsertOffset;
           if (trackChanges && nodeToInsert.type === "text") {
-            // Generate change tracking markers inline for bare text nodes.
-            const wrapped = wrapInChangeMarkers([copy], "inserted", insertAuthorId, insertTs);
-            splitParentList.splice(insertIdx, 0, ...wrapped);
-            splitInsertOffset += wrapped.length;
+            if (splitRegion === "inserted" && splitRegionInfo && splitRegionInfo.author === insertAuthorId) {
+              // Same author — merge into the pending insertion (bare text, no
+              // new markers, never nested). Bump the region's timestamp.
+              splitParentList.splice(insertIdx, 0, copy);
+              splitInsertOffset++;
+              const newTs = parseInt(insertTs, 10) || 0;
+              const oldTs = parseInt(splitRegionInfo.ts, 10) || 0;
+              if (newTs > oldTs) splitRegionInfo.node.value = `${insertAuthorId} ${insertTs}`;
+            } else {
+              // New tracked block. When the split point is inside a change
+              // region (different author, or deleted), the block must NOT
+              // nest: emit it as an adjacent flat block and REOPEN the region
+              // after it if it continues, so the surrounding region text stays
+              // in its region (dev log 90 §5.4).
+              const wrapped = wrapInChangeMarkers([copy], "inserted", insertAuthorId, insertTs);
+              splitParentList.splice(insertIdx, 0, ...wrapped);
+              splitInsertOffset += wrapped.length;
+              if (splitRegion !== "current" && splitRegionContinues && splitRegionInfo) {
+                splitParentList.splice(insertIdx + wrapped.length, 0, {
+                  type: "property",
+                  key: splitRegionInfo.key,
+                  value: `${splitRegionInfo.author} ${splitRegionInfo.ts}`,
+                });
+                splitInsertOffset++;
+              }
+            }
           } else {
             splitParentList.splice(insertIdx, 0, copy);
             splitInsertOffset++;

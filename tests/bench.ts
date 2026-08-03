@@ -167,3 +167,62 @@ Deno.bench("insert | small | --layout 1 node", async () => {
     "bench",
   ]);
 });
+
+// — Dev log 90: see-all matching on a large TRACKED fixture —
+// The stock fixtures are largely untracked, so generate a tracked variant of
+// LARGE once (copy + a tracked --find that injects change markers at scale),
+// then bench the see-all mutation and :change() query paths against it.
+
+const TRACKED_LARGE = `${TMP_DIR}/tracked_large_src.lyx`;
+const TRACKED_HOME = `${TMP_DIR}/bench_home_tracked`;
+
+async function ensureTrackedLarge(): Promise<string> {
+  try {
+    await Deno.stat(TRACKED_LARGE);
+    return TRACKED_LARGE;
+  } catch {
+    const src = await copyFixture(LARGE);
+    // Inject tracked regions: replace every "The" with tracking on, producing
+    // \change_deleted{The}\change_inserted{the} pairs across the document.
+    // Tracking is a config setting, so run under a temp HOME with it enabled.
+    await Deno.mkdir(`${TRACKED_HOME}/.lq`, { recursive: true });
+    await Deno.writeTextFile(
+      `${TRACKED_HOME}/.lq/config.json`,
+      JSON.stringify({ trackChanges: true, refresh: "none" }),
+    );
+    const cmd = new Deno.Command(Deno.execPath(), {
+      args: ["run", "-A", "--no-check", MAIN_TS, "set", src, "layout[Standard]", "the", "--find", "The"],
+      stdout: "null",
+      stderr: "null",
+      env: { ...Deno.env.toObject(), HOME: TRACKED_HOME, USERPROFILE: TRACKED_HOME },
+    });
+    const { code } = await cmd.output();
+    if (code !== 0) {
+      await Deno.remove(src).catch(() => {});
+      throw new Error("Failed to generate tracked fixture");
+    }
+    await Deno.rename(src, TRACKED_LARGE);
+    return TRACKED_LARGE;
+  }
+}
+
+Deno.bench("set | large tracked | --find inside \\change_deleted (see-all)", async () => {
+  // benchMutate's copyFixture targets TMP_DIR/<basename>, which collides with
+  // the canonical tracked fixture — copy to a distinct temp name instead.
+  const src = await ensureTrackedLarge();
+  const tmp = `${TMP_DIR}/tracked_large_bench_${Deno.pid}.lyx`;
+  await Deno.copyFile(src, tmp);
+  try {
+    const { success } = await run(["set", tmp, "layout[Standard]", "Z", "--find", "the"]);
+    if (!success) throw new Error("Mutation failed");
+    const verify = lq(["read", tmp, "layout"]);
+    const { code } = await verify.output();
+    if (code !== 0) throw new Error("Mutation left file unreadable");
+  } finally {
+    await Deno.remove(tmp).catch(() => {});
+  }
+});
+
+Deno.bench("read | large tracked | text:change(deleted)", async () => {
+  await run(["read", await ensureTrackedLarge(), "text:change(deleted)"]);
+});

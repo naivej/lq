@@ -1,8 +1,8 @@
 import { DocumentNode, Node, BlockNode } from "./ast.ts";
-import { concatenateTextNodes } from "./text_utils.ts";
+import { advanceChangeDepths, concatenateTextNodes } from "./text_utils.ts";
 
 export interface PseudoClass {
-  name: "first" | "last" | "contains" | "nth-child" | "not" | "adjacent" | "until";
+  name: "first" | "last" | "contains" | "nth-child" | "not" | "adjacent" | "until" | "change";
   argRaw?: string;
 }
 
@@ -27,8 +27,12 @@ function parsePseudoClasses(suffix: string): PseudoClass[] {
     const pName = pMatch[1];
     const pArg = pMatch[2] ? pMatch[2].trim() : undefined;
 
-    if (!["first", "last", "nth-child", "contains", "not", "adjacent", "until"].includes(pName)) {
+    if (!["first", "last", "nth-child", "contains", "not", "adjacent", "until", "change"].includes(pName)) {
       throw new Error(`Unsupported pseudo-class: :${pName}`);
+    }
+
+    if (pName === "change" && !pArg) {
+      throw new Error(`:change() requires an argument, e.g. :change(current|inserted|deleted)`);
     }
 
     if (pName === "not" || pName === "adjacent" || pName === "until") {
@@ -226,7 +230,58 @@ function nodeContainsText(node: Node, searchStr: string): boolean {
   return false;
 }
 
-function matchNode(node: Node, part: SelectorPart): boolean {
+/**
+ * Region a node sits in, computed from the change markers before it in its
+ * parent's children: "deleted" | "inserted" | "current".
+ */
+function regionAt(list: Node[], index: number): "deleted" | "inserted" | "current" {
+  let deletedDepth = 0;
+  let insertedDepth = 0;
+  for (let i = 0; i < index; i++) {
+    const c = list[i];
+    if (c.type === "property" && isChangeMarkerKey(c.key)) {
+      const d = advanceChangeDepths(c.key, deletedDepth, insertedDepth);
+      deletedDepth = d.deletedDepth;
+      insertedDepth = d.insertedDepth;
+    }
+  }
+  return deletedDepth > 0 ? "deleted" : insertedDepth > 0 ? "inserted" : "current";
+}
+
+/** Change marker keys (\change_deleted / \change_inserted / \change_unchanged). */
+function isChangeMarkerKey(key: string): boolean {
+  return key === "change_deleted" || key === "change_inserted" || key === "change_unchanged";
+}
+
+/** Does a block contain any text sitting in the given region? (:change() on layouts.) */
+function blockContainsRegion(node: BlockNode, want: "current" | "inserted" | "deleted"): boolean {
+  let found = false;
+  const walk = (list: Node[]) => {
+    if (found) return;
+    let deletedDepth = 0;
+    let insertedDepth = 0;
+    for (const c of list) {
+      if (found) return;
+      if (c.type === "text") {
+        const region = deletedDepth > 0 ? "deleted" : insertedDepth > 0 ? "inserted" : "current";
+        if (region === want) {
+          found = true;
+          return;
+        }
+      } else if (c.type === "property" && isChangeMarkerKey(c.key)) {
+        const d = advanceChangeDepths(c.key, deletedDepth, insertedDepth);
+        deletedDepth = d.deletedDepth;
+        insertedDepth = d.insertedDepth;
+      } else if (c.type === "block") {
+        walk((c as BlockNode).children);
+      }
+    }
+  };
+  walk(node.children);
+  return found;
+}
+
+function matchNode(node: Node, part: SelectorPart, region?: "deleted" | "inserted" | "current"): boolean {
   if (part.tag === "property") {
     if (node.type !== "property") return false;
     if (part.argExact && node.key !== part.argExact) return false;
@@ -286,6 +341,28 @@ function matchNode(node: Node, part: SelectorPart): boolean {
         }
         // For non-block nodes, :not() always passes (there are no descendants to check).
       }
+
+      if (p.name === "change" && p.argRaw !== undefined) {
+        // :change(current|inserted|deleted) — select text by the region it sits
+        // in (the ambiguity-resolution mechanism for the see-all mutation
+        // default, dev log 90). On a text node, matches when the node's region
+        // equals the argument. On a block (layout), matches when the block
+        // CONTAINS text in that region (e.g. layout:change(deleted) selects
+        // deleted-bearing layouts).
+        let want = p.argRaw;
+        if (want.startsWith('"') && want.endsWith('"')) want = want.substring(1, want.length - 1);
+        if (want.startsWith("'") && want.endsWith("'")) want = want.substring(1, want.length - 1);
+        if (want !== "current" && want !== "inserted" && want !== "deleted") {
+          throw new Error(`Invalid :change() argument: ${want}. Expected current, inserted, or deleted.`);
+        }
+        if (node.type === "text") {
+          if (region !== want) return false;
+        } else if (node.type === "block") {
+          if (!blockContainsRegion(node, want)) return false;
+        } else {
+          return false;
+        }
+      }
     }
   }
 
@@ -293,12 +370,21 @@ function matchNode(node: Node, part: SelectorPart): boolean {
 }
 
 function findDescendants(nodes: Node[], part: SelectorPart, results: Node[] = []): Node[] {
+  let deletedDepth = 0;
+  let insertedDepth = 0;
   for (const node of nodes) {
-    if (matchNode(node, part)) {
+    const region: "deleted" | "inserted" | "current" =
+      deletedDepth > 0 ? "deleted" : insertedDepth > 0 ? "inserted" : "current";
+    if (matchNode(node, part, region)) {
       results.push(node);
     }
     if (node.type === "block") {
       findDescendants(node.children, part, results);
+    }
+    if (node.type === "property" && isChangeMarkerKey(node.key)) {
+      const d = advanceChangeDepths(node.key, deletedDepth, insertedDepth);
+      deletedDepth = d.deletedDepth;
+      insertedDepth = d.insertedDepth;
     }
   }
 
@@ -384,7 +470,7 @@ function findFollowingSiblings(
   const results: Node[] = [];
   for (let i = ctx.index + 1; i < ctx.parentChildren.length; i++) {
     const sibling = ctx.parentChildren[i];
-    if (matchNode(sibling, part)) {
+    if (matchNode(sibling, part, regionAt(ctx.parentChildren, i))) {
       results.push(sibling);
     }
     // Also search descendants of sibling blocks (like space combinator does)
@@ -407,7 +493,7 @@ function hasInterveningMatch(
 ): boolean {
   for (let i = startIndex; i < parentChildren.length; i++) {
     if (parentChildren[i] === node) return false; // reached target, no match found
-    if (matchNode(parentChildren[i], innerPart)) return true;
+    if (matchNode(parentChildren[i], innerPart, regionAt(parentChildren, i))) return true;
     // Also check descendants of intervening blocks
     if (parentChildren[i].type === "block") {
       const descMatches = findDescendants((parentChildren[i] as BlockNode).children, innerPart);
@@ -502,7 +588,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
               for (let si = ctx.index - 1; si >= 0; si--) {
                 const prev = ctx.parentChildren[si];
                 if (prev.type === "text" || prev.type === "property") continue;
-                return matchNode(prev, innerPart);
+                return matchNode(prev, innerPart, regionAt(ctx.parentChildren, si));
               }
               return false;
             });

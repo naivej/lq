@@ -14,6 +14,7 @@ import * as path from "@std/path";
 import { parse } from "../src/parser.ts";
 import { serialize } from "../src/serializer.ts";
 import { BlockNode, Node, PropertyNode, TextNode } from "../src/ast.ts";
+import { advanceChangeDepths } from "../src/text_utils.ts";
 import { runCliTest, runCliWithConfig, createTempFixture } from "./helpers.ts";
 
 Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
@@ -685,7 +686,7 @@ Deno.test("F2 - :contains() still matches across a formatting property", async (
 
 // test_report_38 F9 (D7, query/mutation model): SELECTORS see all text —
 // :contains() matches a phrase even when it lives inside \change_deleted.
-// Mutations (--find) still see only current text.
+// Mutations see all text too (dev log 90): --find matches rejected text.
 Deno.test("F9 - :contains() matches text inside \\change_deleted (selectors see all)", async () => {
   const tempFile = await writeTempLyx("temp_f9_contains_deleted.lyx",
     "\\begin_layout Standard\n" +
@@ -702,9 +703,18 @@ Deno.test("F9 - :contains() matches text inside \\change_deleted (selectors see 
     // Control: current text still matches.
     const current = await runCliTest(["read", tempFile, "layout:contains('current text')", "--count"]);
     assertEquals((current.count as Record<string, number>)["layout[Standard]"], 1);
-    // Mutation still refuses deleted text as an edit target.
+    // Mutations see all text too (dev log 90): --find on rejected text now
+    // matches and edits it, instead of NO_MATCH.
     const setResult = await runCliTest(["set", tempFile, "layout[Standard]", "X", "--find", "old deleted words"]);
-    assertEquals(setResult.code, "NO_MATCH");
+    assertEquals(setResult.modified_nodes, 1, "--find now matches rejected text");
+    const after = await Deno.readTextFile(tempFile);
+    assertStringIncludes(after, "X", "replacement applied to the rejected region");
+    assertEquals(after.includes("old deleted words"), false, "rejected text erased");
+    assertEquals(
+      setResult.warnings?.some(w => w.includes("change_deleted")),
+      true,
+      "deleted-hit warning fires so editing rejected text is not silent",
+    );
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -1123,13 +1133,20 @@ Deno.test("DL78 Flatten - Different-Author Split (adjacent flat blocks)", { time
 
     const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
     const markers = changeMarkers(children);
-    // Split into two adjacent flat blocks, one shared closer, no nesting
-    assertEquals(markers.map(m => m.key), ["change_inserted", "change_inserted", "change_unchanged"]);
-    assertEquals((markers[0].value || "").split(" ")[0], "2", "Bob's block first (id 2)");
-    assertEquals(markers[1].value, "1 1700000000", "Alice's remainder keeps author and timestamp");
+    // Range-erase model (dev log 90): Bob's replacement is inserted at the
+    // match start; Alice's pending text is marked DELETED by Bob (LyX
+    // eraseChars re-authors the erased range). The \cd region is terminated
+    // by the following \ci opener (flat model — one active Change per
+    // position, no closer between different types).
+    assertEquals(
+      markers.map(m => m.key),
+      ["change_inserted", "change_unchanged", "change_deleted", "change_inserted", "change_unchanged"],
+    );
+    assertEquals((markers[0].value || "").split(" ")[0], "2", "Bob's replacement first (id 2)");
     const text = allText(children);
     assertEquals(text.includes("FAST"), true);
-    assertEquals(text.includes("QUICK"), false, "deletion of pending-inserted text drops it");
+    assertEquals(text.includes("QUICK"), true, "different-author pending text is preserved as deleted, not dropped");
+    assertEquals(maxMarkerDepth(children), 1, "no nesting");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -1183,21 +1200,29 @@ Deno.test("DL78 Flatten - Full-Replace on Tracked Node (properties preserved)", 
   }
 });
 
-Deno.test("DL78 - Straddling --find Errors (not generic NO_MATCH)", { timeout: 15000 }, async () => {
-  const body = "\\begin_layout Standard\nThe quick brown fox jumps over\n\\end_layout\n";
-  const tempFile = await writeTempLyx("temp_dl78_straddle.lyx", body);
+Deno.test("DL78 - Straddling --find now succeeds (range-erase, dev log 90)", { timeout: 15000 }, async () => {
+  // A pending insertion mid-sentence: "word" is inserted, " plus" is current.
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "accepted word\n" +
+    "\\change_unchanged\n" +
+    " plus normal text\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl78_straddle.lyx", body, "\\author 1 \"Alice\"\n");
   try {
-    await runCliWithConfig(
-      ["set", tempFile, "layout[Standard]", "QUICK", "--find", "quick"],
-      { trackChanges: true },
-    );
-    // "QUICK brown" spans the inserted block and the original text after it
+    // "word plus" spans the inserted block and the original text after it.
+    // Previously refused as a straddle (DL78); now a valid range-erase edit.
     const result = await runCliWithConfig(
-      ["set", tempFile, "layout[Standard]", "X", "--find", "QUICK brown"],
-      { trackChanges: true },
+      ["set", tempFile, "layout[Standard]", "X", "--find", "word plus"],
+      { trackChanges: true, authorName: "Alice" },
     );
-    assertEquals(result.code, "NO_MATCH");
-    assertStringIncludes(result.message!, "spans across tracked-change boundaries");
+    assertEquals(result.modified_nodes, 1, "straddling match must now succeed");
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    // Same-author inserted part merges; the current part is marked deleted.
+    assertStringIncludes(allText(children), "accepted X", "replacement merged at the match start");
+    assertStringIncludes(allText(children), " plus", "current part of the erased range preserved as deleted");
+    assertEquals(maxMarkerDepth(children), 1, "no nested markers");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -1275,7 +1300,7 @@ Deno.test("DL78 Snapshot Undo - 1-Level Enforcement + Consume", { timeout: 15000
   }
 });
 
-Deno.test("DL78 - --find Inside change_deleted Is Invisible (NO_MATCH)", { timeout: 15000 }, async () => {
+Deno.test("DL78 - --find Inside change_deleted Matches (see-all, dev log 90)", { timeout: 15000 }, async () => {
   const body =
     "\\begin_layout Standard\n" +
     "The quick brown fox\n" +
@@ -1286,14 +1311,21 @@ Deno.test("DL78 - --find Inside change_deleted Is Invisible (NO_MATCH)", { timeo
     "\\end_layout\n";
   const tempFile = await writeTempLyx("temp_dl78_deleted_nomatch.lyx", body, "\\author 1 \"Alice\"\n");
   try {
-    // Deleted text is invisible to mutations: --find on it is a genuine
-    // NO_MATCH (generic message, NOT the straddle error)
+    // Mutations see all text (dev log 90): --find on rejected text matches and
+    // edits it — the replacement is inserted as a tracked change adjacent.
     const result = await runCliWithConfig(
       ["set", tempFile, "layout[Standard]", "X", "--find", "lazy dog"],
       { trackChanges: true, authorName: "Alice" },
     );
-    assertEquals(result.code, "NO_MATCH");
-    assertStringIncludes(result.message!, "matched no occurrences");
+    assertEquals(result.modified_nodes, 1, "deleted text is a valid edit target under see-all");
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "X", "replacement inserted");
+    assertStringIncludes(text, "lazy dog", "rejected text preserved as deleted");
+    assertEquals(
+      result.warnings?.some(w => w.includes("change_deleted")),
+      true,
+      "deleted-hit warning fires so editing rejected text is not silent",
+    );
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -1379,14 +1411,18 @@ Deno.test("DL84 F1 - --find matches current text after adjacent delete+insert pa
   }
 });
 
-Deno.test("DL84 F1 - --find on deleted text stays NO_MATCH", { timeout: 15000 }, async () => {
+Deno.test("DL84 F1 - --find on deleted text now matches (see-all)", { timeout: 15000 }, async () => {
   const tempFile = await writeTempLyx("temp_dl84_f1_deleted.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
   try {
     const result = await runCliWithConfig(
       ["set", tempFile, "layout[Standard]", "X", "--find", "write"],
       { trackChanges: true, authorName: "Alice" },
     );
-    assertEquals(result.code, "NO_MATCH");
+    assertEquals(result.modified_nodes, 1, "deleted text matches under see-all");
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "X", "replacement present");
+    assertStringIncludes(text, "write", "deleted text preserved as deleted");
+    assertStringIncludes(text, "edit", "adjacent inserted text untouched");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -1489,7 +1525,7 @@ Deno.test("DL84 F3 - same-author match consuming whole region merges (not a pair
   }
 });
 
-Deno.test("DL84 F3 - different-author full-consumption still emits a delete+insert pair", { timeout: 15000 }, async () => {
+Deno.test("DL84 F3 - different-author full-consumption emits insert-then-delete (dev log 90)", { timeout: 15000 }, async () => {
   const body = "\\begin_layout Standard\n\\change_inserted 1 1700000000\nFIXED\n\\change_unchanged\n\\end_layout\n";
   const tempFile = await writeTempLyx("temp_dl84_f3_whole_diff.lyx", body, "\\author 1 \"Alice\"\n");
   try {
@@ -1501,8 +1537,8 @@ Deno.test("DL84 F3 - different-author full-consumption still emits a delete+inse
     const markers = changeMarkers(children);
     assertEquals(
       markers.map(m => m.key),
-      ["change_deleted", "change_unchanged", "change_inserted", "change_unchanged"],
-      "different author keeps a reviewable delete+insert pair",
+      ["change_inserted", "change_unchanged", "change_deleted", "change_unchanged"],
+      "insert-first (dev log 90): replacement at match start, old text deleted",
     );
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
@@ -1654,13 +1690,19 @@ const ADJACENT_INSERT_DELETE_BODY =
   " tail\n" +
   "\\end_layout\n";
 
-/** Max change-marker nesting depth of a node's children (flat = 1). */
+/** Max change-marker depth of a node's children under the FLAT model (dev log
+ * 90): a different-type opener terminates the open region (one active Change
+ * per position), so adjacent different-type regions are depth 1 — only genuine
+ * same-type nesting (or deleted-inside-inserted) exceeds 1. */
 function maxMarkerDepth(children: Node[]): number {
-  let depth = 0;
+  let deletedDepth = 0;
+  let insertedDepth = 0;
   let max = 0;
   for (const m of changeMarkers(children)) {
-    if (m.key === "change_unchanged") depth--;
-    else depth++;
+    const d = advanceChangeDepths(m.key, deletedDepth, insertedDepth);
+    deletedDepth = d.deletedDepth;
+    insertedDepth = d.insertedDepth;
+    const depth = deletedDepth + insertedDepth;
     if (depth > max) max = depth;
   }
   return max;
@@ -1939,6 +1981,278 @@ Deno.test("DL85 F5 - untracked mutation on a header-less document still works", 
     const result = await runCliTest(["set", tempFile, "layout[Standard]", "NEW", "--find", "Hello"]);
     assertEquals(result.modified_nodes, 1);
     assertStringIncludes(await Deno.readTextFile(tempFile), "NEW");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- Dev log 90: range-erase across tracked regions ---
+
+Deno.test("DL90 F3 - --find spanning a deleted region erases one contiguous range (Spec-2)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "A\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "B\n" +
+    "\\change_unchanged\n" +
+    "C\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl90_f3.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    // Under see-all the concatenation is "ABC" (deleted text occupies
+    // positions), so the match spans current\u2192deleted\u2192current contiguously.
+    // (The original Spec-2 "AC"-skipping-B scenario cannot occur under see-all
+    // — that is exactly why the straddle guard is gone.)
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "X", "--find", "ABC"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, "spanning match succeeds");
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    // Insert-first: \ci{X} then the whole erased range as one \cd{A B C}.
+    assertEquals(markers.map(m => m.key), ["change_inserted", "change_unchanged", "change_deleted", "change_unchanged"]);
+    const text = allText(children);
+    assertStringIncludes(text, "X");
+    assertStringIncludes(text, "B", "interposed deleted text absorbed into the erased range");
+    assertEquals(maxMarkerDepth(children), 1, "flat, never nested");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL90 - --find fully inside \\change_deleted splits the region flat (see-all)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "This is bad text\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl90_insidedeleted.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "terrible", "--find", "bad"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, "rejected text is a valid edit target under see-all");
+    const text = allText(firstLayoutChildren(await Deno.readTextFile(tempFile)));
+    assertStringIncludes(text, "This is ", "pre-match rejected text survives");
+    assertStringIncludes(text, "terrible", "replacement inserted adjacent");
+    assertStringIncludes(text, "bad text", "matched rejected text preserved as deleted");
+    assertEquals(maxMarkerDepth(firstLayoutChildren(await Deno.readTextFile(tempFile))), 1, "flat, never nested");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL90 - split-after inside a same-author inserted region merges (never nested)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "Title\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl90_splitins.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "Tit", "--text", " X"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.matched_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    assertEquals(changeMarkers(children).map(m => m.key), ["change_inserted", "change_unchanged"], "merged into one region");
+    assertStringIncludes(allText(children), "Tit X", "payload merged into the region");
+    assertEquals(maxMarkerDepth(children), 1, "flat, never nested");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL90 - split-after inside a different-author inserted region emits adjacent flat blocks", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "Title\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl90_splitdiff.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "Tit", "--text", " X"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.matched_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    // Bob's block between Alice's region halves: \ci{A} Tit \ci{B} X \cu \ci{A} le \cu
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_inserted", "change_inserted", "change_unchanged", "change_inserted", "change_unchanged"],
+      "adjacent flat blocks, never nested",
+    );
+    assertStringIncludes(allText(children), "Tit Xle", "both parts present");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL90 - split-after inside a deleted region splits flat (never nested)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "This is bad text\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl90_splitdel.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "This", "--text", " NEW"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.matched_nodes, 1, "split-after reaches rejected text under see-all");
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "NEW", "payload inserted");
+    const children = firstLayoutChildren(text);
+    assertEquals(maxMarkerDepth(children), 1, "flat, never nested");
+    assertStringIncludes(allText(children), "This", "pre-split rejected text survives");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL90 - :change(deleted) scoped --find touches only the rejected region", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "and\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl90_scope_del.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]:change(deleted)", "X", "--find", "and"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, "scoped find matches the rejected phrase");
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const text = allText(children);
+    assertStringIncludes(text, "X", "rejected 'and' replaced");
+    // The current-text 'and' sits before any change marker — untouched.
+    assertStringIncludes(text.split("\\change_")[0], "and", "current-text 'and' untouched");
+    assertEquals((text.match(/and/g) || []).length, 2, "current + rejected 'and' both survive");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL90 - :change(current) scoped --find touches only current text", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "and\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl90_scope_cur.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]:change(current)", "X", "--find", "and"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, "scoped find matches the current phrase");
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const text = allText(children);
+    assertStringIncludes(text, "X", "current 'and' replaced");
+    assertStringIncludes(text, "and", "rejected 'and' preserved");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL90 - :change(inserted) scoped --find touches only the pending insertion", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "and\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\change_deleted 1 1700000001\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl90_scope_ins.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]:change(inserted)", "X", "--find", "and"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, "scoped find matches only the inserted phrase");
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const text = allText(children);
+    assertStringIncludes(text, "X", "inserted 'and' replaced");
+    assertStringIncludes(text.split("\\change_")[0], "and", "current-text 'and' untouched");
+    // current + rejected 'and' survive; the inserted copy became X
+    assertEquals((text.match(/and/g) || []).length, 2, "current + rejected 'and' both survive");
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_inserted", "change_unchanged", "change_deleted", "change_unchanged"],
+      "replacement stays inside one flat inserted region (same-author merge)",
+    );
+    assertEquals(maxMarkerDepth(children), 1, "flat, never nested");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL90 - text:change(deleted) + set --find is tracked, not swallowed", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "rejected old text\n" +
+    "\\change_unchanged\n" +
+    " current text\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl90_baretext.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "text:change(deleted)", "X", "--find", "old"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, "bare text node inside a deletion is editable");
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_inserted", "replacement is a tracked insert, not embedded in the deletion");
+    assertStringIncludes(text, "X", "replacement present");
+    assertStringIncludes(text, " current text", "current text untouched");
+    assertEquals(maxMarkerDepth(firstLayoutChildren(text)), 1, "flat, never nested");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL90 - split-after SPLIT_AMBIGUOUS resolved by :change(deleted)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "and\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl90_splitamb.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    // Without scoping the phrase exists in both current and rejected text.
+    const ambiguous = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "and", "--text", " X"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(ambiguous.code, "SPLIT_AMBIGUOUS", "phrase in both regions is ambiguous without scoping");
+    assertStringIncludes(ambiguous.message!, ":change", "error names the escape hatch");
+    // Scoped to the deleted region, the match is unique.
+    const scoped = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]:change(deleted)", "split-after", "and", "--text", " X"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(scoped.matched_nodes, 1, "scoped split-after succeeds");
+    assertStringIncludes(await Deno.readTextFile(tempFile), " X", "payload inserted in the rejected region");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }

@@ -286,15 +286,30 @@ export function flattenNestedChanges(children: Node[]): Node[] {
   const result: Node[] = [];
 
   // Collect the content of the change region opened by the marker at
-  // `start - 1`: everything up to (excluding) the matching \change_unchanged.
-  // Returns the content and the index of that closer. The extent scan is
-  // shared via scanRegionEnd (depth-counting, nested openers allowed).
-  const collectRegion = (start: number): { content: Node[]; closer: number } => {
-    const { closer: found } = scanRegionEnd(children, start, "", false);
-    const closer = found === -1 ? children.length - 1 : found;
+  // `start - 1`, under LyX's flat model (dev log 90): a different-type opener
+  // terminates the open region (one active Change per position), so the region
+  // extends until the matching \change_unchanged OR the first different-type
+  // opener, whichever comes first. `closer` is the \change_unchanged index
+  // (or -1); `end` is where the region stops (the closer, or the different-type
+  // opener to be reprocessed at the top level, or children.length).
+  const collectRegion = (
+    start: number,
+    markerKey: string,
+  ): { content: Node[]; end: number; closer: number } => {
+    const { closer: found, nextOpener } = scanRegionEnd(children, start, markerKey, true);
+    let end: number;
+    let closer = -1;
+    if (found !== -1) {
+      end = found;
+      closer = found;
+    } else if (nextOpener !== -1) {
+      end = nextOpener;
+    } else {
+      end = children.length;
+    }
     const content: Node[] = [];
-    for (let j = start; j < closer; j++) content.push(children[j]);
-    return { content, closer };
+    for (let j = start; j < end; j++) content.push(children[j]);
+    return { content, end, closer };
   };
 
   let i = 0;
@@ -302,15 +317,22 @@ export function flattenNestedChanges(children: Node[]): Node[] {
     const child = children[i];
 
     if (child.type === "property" && child.key === "change_deleted") {
-      const { closer } = collectRegion(i + 1);
-      for (let k = i; k <= closer && k < children.length; k++) result.push(children[k]);
-      i = closer + 1;
+      const { content, closer } = collectRegion(i + 1, "change_deleted");
+      result.push(child);
+      result.push(...content);
+      if (closer !== -1) {
+        result.push(children[closer]); // the matching \change_unchanged
+        i = closer + 1;
+      } else {
+        // Ends at a different-type opener (reprocess it) or at end of list.
+        i = i + 1 + content.length;
+      }
       continue;
     }
 
     if (child.type === "property" && child.key === "change_inserted") {
       const outer = parseChangeMarker(child.value);
-      const { content, closer } = collectRegion(i + 1);
+      const { content, end, closer } = collectRegion(i + 1, "change_inserted");
 
       // Split region content into flat segments: outer-author runs, and
       // different-author inner blocks. Same-author inners are absorbed.
@@ -356,7 +378,7 @@ export function flattenNestedChanges(children: Node[]): Node[] {
         result.push({ type: "property", key: "change_inserted", value: `${seg.authorId} ${seg.ts}` }, ...seg.nodes);
       }
       if (segments.length > 0) result.push({ type: "property", key: "change_unchanged" });
-      i = closer + 1;
+      i = closer !== -1 ? closer + 1 : end;
       continue;
     }
 
@@ -419,31 +441,50 @@ function segmentsCrossInset(children: Node[], segA: TextSegment, segB: TextSegme
 }
 
 /**
- * Straddle detection: do two matched segments lie on opposite sides of a
- * tracked-change boundary (one inside \change_inserted, the other in
- * original text)? Such a match is invalid — LyX's flat model can't
- * represent a single edit spanning both regions (dev log 78 Fix 1).
- * Segments never reference \change_deleted text (concatenateTextNodes
- * skips it), so only the inserted state needs tracking.
+ * Is the whole buffer range [ms, me) inside a single region of the given
+ * type? Used to restrict --find to a :change(current|inserted|deleted) scope
+ * (dev log 90 §5.5): the selector's region filter disambiguates a phrase that
+ * exists in both current and rejected text.
  */
-function straddlesChangeBoundary(children: Node[], segA: TextSegment, segB: TextSegment): boolean {
-  let insertedDepth = 0;
-  let aInsideInserted: boolean | null = null;
-
-  for (let i = 0; i < children.length; i++) {
-    const child = children[i];
-    if (child.type === "property") {
-      if (isChangeOpener(child.key) || isChangeCloser(child.key)) {
-        insertedDepth = advanceChangeDepths(child.key, 0, insertedDepth).insertedDepth;
-      }
-      continue;
+function matchInRegion(
+  segments: TextSegment[],
+  segRegions: { deleted: boolean; inserted: boolean; author: number }[],
+  ms: number,
+  me: number,
+  region: "current" | "inserted" | "deleted",
+): boolean {
+  let offset = 0;
+  for (let j = 0; j < segments.length; j++) {
+    const segStart = offset;
+    const segEnd = offset + segments[j].text.length;
+    if (segEnd > ms && segStart < me) {
+      const r = segRegions[j].deleted ? "deleted" : segRegions[j].inserted ? "inserted" : "current";
+      if (r !== region) return false;
     }
-    if (child.type !== "text") continue;
-
-    if (i === segA.childIndex) aInsideInserted = insertedDepth > 0;
-    if (i === segB.childIndex) return aInsideInserted !== (insertedDepth > 0);
+    offset = segEnd;
   }
-  return false; // safety: if we can't determine, allow the match
+  return true;
+}
+
+/**
+ * Does the buffer range [ms, me) in the concatenated text overlap any segment
+ * that sits inside a \change_deleted region? Used to count matches that touch
+ * rejected text, so the caller can warn (dev log 90 §5.7).
+ */
+function rangeTouchesDeleted(
+  segments: TextSegment[],
+  segRegions: { deleted: boolean; inserted: boolean; author: number }[],
+  ms: number,
+  me: number,
+): boolean {
+  let offset = 0;
+  for (let j = 0; j < segments.length; j++) {
+    const segStart = offset;
+    const segEnd = offset + segments[j].text.length;
+    if (segEnd > ms && segStart < me && segRegions[j].deleted) return true;
+    offset = segEnd;
+  }
+  return false;
 }
 
 /**
@@ -476,7 +517,8 @@ function propertyStrictlyInsideMatch(
   }
   if (beforeIdx === -1 || afterIdx === -1) return false;
 
-  // Both neighbors must be visible segments (deleted text is not in `segments`).
+  // Both neighbors must be segments (deleted text is in `segments` too —
+  // mutations see all text, dev log 90).
   let segBefore = -1;
   let segAfter = -1;
   for (let j = 0; j < segments.length; j++) {
@@ -492,14 +534,26 @@ function propertyStrictlyInsideMatch(
 }
 
 /**
- * Core cross-node substring replacement. Concatenates all non-deleted text
- * children, finds all occurrences of findStr, and rebuilds the children array
- * with matched portions split out and (if tracked) wrapped in change markers.
+ * Core cross-node substring replacement (dev log 90 range-erase model).
+ * Concatenates ALL text children — including \change_deleted, since mutations
+ * see all text by default — finds all occurrences of findStr, and rebuilds the
+ * children array with matched portions handled by the uniform rule:
+ * - the replacement is inserted as \change_inserted (current editor) at the
+ *   match start (insert-first, matching LyX's replaceAll: erase the range,
+ *   then insert at pos);
+ * - the erased range becomes \change_deleted (current editor). Exceptions:
+ *   matched text inside a same-author \change_inserted region is dropped (F3
+ *   merge semantics), and change markers strictly inside a match are absorbed
+ *   so the erased range serializes as one contiguous delete region (flat
+ *   model — never nested).
  *
  * Matches that cross a structural boundary (inset between text nodes) are
- * silently skipped. Matches that straddle a tracked-change boundary are
- * skipped too, but reported via straddleCount so the caller can emit the
- * dedicated error (dev log 78) instead of the generic NO_MATCH.
+ * silently skipped. When `regionFilter` is set (a :change(inserted|deleted|current)
+ * selector), only matches fully inside that region are accepted — the selector's
+ * region scope disambiguates a phrase present in both current and rejected text
+ * (dev log 90 §5.5), and the deleted-hit warning is suppressed (explicit scoping
+ * needs no warning). deletedHitCount reports how many occurrences touched
+ * \change_deleted text, so the caller can warn.
  */
 export function applyCrossNodeReplace(
   children: Node[],
@@ -508,10 +562,11 @@ export function applyCrossNodeReplace(
   tracked: boolean,
   authorId: number,
   ts: string,
-): { newChildren: Node[]; matchCount: number; straddleCount: number } {
-  const { segments, fullText } = concatenateTextNodes(children);
+  regionFilter?: "current" | "inserted" | "deleted",
+): { newChildren: Node[]; matchCount: number; deletedHitCount: number } {
+  const { segments, fullText } = concatenateTextNodes(children, { includeDeleted: true });
   if (segments.length === 0 || fullText.length === 0) {
-    return { newChildren: [...children], matchCount: 0, straddleCount: 0 };
+    return { newChildren: [...children], matchCount: 0, deletedHitCount: 0 };
   }
 
   // Find all match positions in the concatenated text
@@ -521,12 +576,35 @@ export function applyCrossNodeReplace(
     matchStarts.push(pos);
     pos += findStr.length;
   }
-  if (matchStarts.length === 0) return { newChildren: [...children], matchCount: 0, straddleCount: 0 };
+  if (matchStarts.length === 0) return { newChildren: [...children], matchCount: 0, deletedHitCount: 0 };
+
+  // Precompute each segment's original region state, so matched runs can be
+  // treated per-region (same-author inserted → drop; deleted → absorb) and
+  // matches touching rejected text can be counted for the warning.
+  const segRegions: { deleted: boolean; inserted: boolean; author: number }[] = [];
+  {
+    let deletedDepth = 0;
+    let insertedDepth = 0;
+    let insertedAuthor = 0;
+    let seg = 0;
+    for (let i = 0; i < children.length; i++) {
+      const c = children[i];
+      if (c.type === "property" && (isChangeOpener(c.key) || isChangeCloser(c.key))) {
+        const depths = advanceChangeDepths(c.key, deletedDepth, insertedDepth);
+        deletedDepth = depths.deletedDepth;
+        insertedDepth = depths.insertedDepth;
+        if (c.key === "change_inserted") insertedAuthor = parseChangeMarker(c.value).authorId;
+      } else if (c.type === "text" && seg < segments.length && segments[seg].childIndex === i) {
+        segRegions.push({ deleted: deletedDepth > 0, inserted: insertedDepth > 0, author: insertedAuthor });
+        seg++;
+      }
+    }
+  }
 
   // Build a boolean array: isMatched[i] = true if character i is inside a valid match
   const isMatched = new Array(fullText.length).fill(false);
   let validCount = 0;
-  let straddleCount = 0;
+  let deletedHitCount = 0;
   for (const ms of matchStarts) {
     const me = ms + findStr.length;
     const s = mapPosToSegment(segments, ms);
@@ -535,16 +613,14 @@ export function applyCrossNodeReplace(
     // blocks beyond the actual match range.
     const e = mapPosToSegment(segments, me > 0 ? me - 1 : 0);
     if (segmentsCrossInset(children, segments[s.segIdx], segments[e.segIdx])) continue;
-    // Straddle check: match must not cross a \change_unchanged boundary
-    // between tracked and original text (dev log 78 Fix 1).
-    if (straddlesChangeBoundary(children, segments[s.segIdx], segments[e.segIdx])) {
-      straddleCount++;
-      continue;
-    }
+    // Region filter from a :change(...) selector: only matches fully inside
+    // the scoped region are accepted (dev log 90 §5.5).
+    if (regionFilter && !matchInRegion(segments, segRegions, ms, me, regionFilter)) continue;
+    if (!regionFilter && rangeTouchesDeleted(segments, segRegions, ms, me)) deletedHitCount++;
     for (let p = ms; p < me; p++) isMatched[p] = true;
     validCount++;
   }
-  if (validCount === 0) return { newChildren: [...children], matchCount: 0, straddleCount };
+  if (validCount === 0) return { newChildren: [...children], matchCount: 0, deletedHitCount };
 
   // Concat offset of each segment's start — used to decide whether a property
   // between two segments sits strictly inside a matched span (test_report_38 F2).
@@ -557,61 +633,40 @@ export function applyCrossNodeReplace(
     }
   }
 
-  // Rebuild children array: iterate original children, splitting text nodes
-  // at match boundaries and collecting matched portions into tracking blocks.
-  const result: Node[] = [];
+  // --- Rebuild (range-erase) ---
+  // Build a list of output atoms, then serialize with change markers derived
+  // from per-position state transitions (flat model: markers fire on state
+  // change; a different-type opener terminates the open region without a
+  // closer).
+  type OutState = "u" | "d" | "i";
+  interface Atom {
+    kind: "text" | "prop" | "block";
+    text?: string;
+    state?: OutState;
+    author?: number;
+    ts?: string;
+    node?: Node;
+  }
+  const atoms: Atom[] = [];
   let concatPos = 0; // cursor in the concatenated fullText
   let segIdx = 0;    // current segment index
-  let matchedBuffer: Node[] = [];
   let inMatch = false;
   // Non-marker properties encountered after a match's last character are
-  // deferred here and emitted right after the flushed replacement — so the
-  // replacement inherits the match-start font (test_report_38 F2, e.g.
-  // \emph default closing a match that started inside an emphasized region).
+  // deferred and emitted right after the match, so the replacement inherits
+  // the match-start font (test_report_38 F2, e.g. \emph default closing a
+  // match that started inside an emphasized region).
   let pendingProps: Node[] = [];
+  // Original region state derived from the change markers while walking.
+  let openDeletedDepth = 0;
+  let openInsertedDepth = 0;
+  let openAuthor = 0;
+  let openTs = "";
+  const openState = (): OutState => (openDeletedDepth > 0 ? "d" : openInsertedDepth > 0 ? "i" : "u");
 
-  // F3 (dev log 84): track the enclosing \change_inserted region while
-  // walking, so a same-author match fully inside the region is merged in
-  // place instead of emitted as a delete+insert pair. `insertedRegionOpener`
-  // references the pushed opener node so its timestamp can be bumped.
-  let insertedRegionOpener: PropertyNode | null = null;
-  let insertedRegionAuthor: number | null = null;
-  let insertedRegionTs = 0;
-
-  function flushMatched() {
-    if (matchedBuffer.length === 0) {
-      // No pending match, but deferred edge properties may still exist in a
-      // degenerate case — never drop them silently.
-      result.push(...pendingProps);
-      pendingProps = [];
-      return;
-    }
-    if (tracked) {
-      if (insertedRegionAuthor !== null && insertedRegionAuthor === authorId) {
-        // F3: same-author edit fully inside an inserted region — merge by
-        // absorbing the replacement text into the region (ts = max) instead
-        // of emitting a delete+insert pair. The matched old text is dropped:
-        // same-author deletion of pending-inserted text removes it.
-        result.push({ type: "text", text: newValue });
-        const newTs = parseInt(ts, 10) || 0;
-        if (newTs > insertedRegionTs) {
-          insertedRegionTs = newTs;
-          if (insertedRegionOpener) insertedRegionOpener.value = `${authorId} ${ts}`;
-        }
-      } else {
-        result.push(...wrapInChangeMarkers(matchedBuffer, "deleted", authorId, ts));
-        result.push(...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", authorId, ts));
-      }
-    } else {
-      result.push({ type: "text", text: newValue });
-    }
-    // Deferred edge properties belong right after the replacement (they close
-    // a formatting run that the match ended inside — test_report_38 F2).
-    result.push(...pendingProps);
+  const flushProps = () => {
+    for (const p of pendingProps) atoms.push({ kind: "prop", node: p });
     pendingProps = [];
-    matchedBuffer = [];
-    inMatch = false;
-  }
+  };
 
   for (let i = 0; i < children.length; i++) {
     const child = children[i];
@@ -621,6 +676,7 @@ export function applyCrossNodeReplace(
       const seg = segments[segIdx];
       const segStart = concatPos;
       const segText = seg.text;
+      const segRegion = segRegions[segIdx];
 
       // DL81 (test_report_34 Finding 2): for UNTRACKED matches entirely within
       // a single text node, replace in place so the node — and thus its
@@ -628,16 +684,16 @@ export function applyCrossNodeReplace(
       // into three nodes serializes to three lines, which LyX rejects. A matched
       // run of exactly findStr.length within one segment is a complete match
       // (a cross-node match's per-segment part is always shorter).
-      let inPlaceText: string | null = null;
-      let needsStandardPath = false;
-      {
+      if (!tracked && segText.length > 0) {
+        let inPlaceText: string | null = null;
+        let needsStandardPath = false;
         let k = 0;
         while (k < segText.length) {
           const gp = segStart + k;
           if (isMatched[gp]) {
             let re = k;
             while (re < segText.length && isMatched[segStart + re]) re++;
-            if (tracked || (re - k) !== findStr.length) {
+            if ((re - k) !== findStr.length) {
               needsStandardPath = true;
               break;
             }
@@ -650,109 +706,159 @@ export function applyCrossNodeReplace(
             k = re;
           }
         }
+        if (!needsStandardPath && inPlaceText !== null) {
+          atoms.push({ kind: "text", text: inPlaceText, state: openState(), author: openAuthor, ts: openTs });
+          concatPos += segText.length;
+          segIdx++;
+          continue;
+        }
       }
 
-      if (!needsStandardPath && inPlaceText !== null) {
-        // In-place: this segment had only complete single-segment matches.
-        result.push({ type: "text", text: inPlaceText });
-      } else if (segText.length === 0) {
-        // Empty text node (a blank line). The rebuild loop emits nothing for
-        // an empty segment, silently dropping blank lines inside ERT insets
-        // and paragraphs — preserve it (test_report_36 F3). Flush a pending
-        // match first so the blank line lands after the change pair,
-        // matching its original position.
-        if (inMatch) flushMatched();
-        result.push({ type: "text", text: "" });
-      } else {
-        // Existing standard (split) path: matches that cross nodes or are
-        // tracked still split at match boundaries.
-        let charIdx = 0;
-        while (charIdx < segText.length) {
-          const globalPos = segStart + charIdx;
+      if (segText.length === 0) {
+        // Empty text node (a blank line) — preserve it (test_report_36 F3).
+        if (inMatch) {
+          inMatch = false;
+          flushProps();
+        }
+        atoms.push({ kind: "text", text: "", state: "u" });
+        concatPos += segText.length;
+        segIdx++;
+        continue;
+      }
 
-          if (isMatched[globalPos]) {
-            // Find end of this matched run within the segment
-            let runEnd = charIdx;
-            while (runEnd < segText.length && isMatched[segStart + runEnd]) runEnd++;
-            matchedBuffer.push({ type: "text", text: segText.substring(charIdx, runEnd) });
+      // Standard (split) path with range-erase handling.
+      let charIdx = 0;
+      while (charIdx < segText.length) {
+        const globalPos = segStart + charIdx;
+
+        if (isMatched[globalPos]) {
+          // Find end of this matched run within the segment
+          let runEnd = charIdx;
+          while (runEnd < segText.length && isMatched[segStart + runEnd]) runEnd++;
+          const runText = segText.substring(charIdx, runEnd);
+          if (!inMatch) {
+            // New match — the replacement lands at the match start
+            // (insert-first, LyX replaceAll: insert(pos, ...) after
+            // eraseChars(pos, pos + match_len)).
             inMatch = true;
-            charIdx = runEnd;
-          } else {
-            if (inMatch) flushMatched();
-            // Find end of this unmatched run
-            let runEnd = charIdx;
-            while (runEnd < segText.length && !isMatched[segStart + runEnd]) runEnd++;
-            result.push({ type: "text", text: segText.substring(charIdx, runEnd) });
-            charIdx = runEnd;
+            if (tracked) atoms.push({ kind: "text", text: newValue, state: "i", author: authorId, ts });
+            else atoms.push({ kind: "text", text: newValue, state: "u" });
           }
+          if (tracked) {
+            // Erased run: same-author inserted text is dropped (F3 merge —
+            // same-author deletion of pending-inserted text removes it);
+            // everything else becomes DELETED by the current editor (LyX
+            // eraseChars re-authors the whole erased range).
+            if (!(segRegion.inserted && segRegion.author === authorId)) {
+              atoms.push({ kind: "text", text: runText, state: "d", author: authorId, ts });
+            }
+          }
+          // untracked: erased text is dropped (no atoms)
+          charIdx = runEnd;
+        } else {
+          if (inMatch) {
+            inMatch = false;
+            flushProps();
+          }
+          // Find end of this unmatched run
+          let runEnd = charIdx;
+          while (runEnd < segText.length && !isMatched[segStart + runEnd]) runEnd++;
+          atoms.push({
+            kind: "text",
+            text: segText.substring(charIdx, runEnd),
+            state: openState(),
+            author: openAuthor,
+            ts: openTs,
+          });
+          charIdx = runEnd;
         }
       }
 
       concatPos += segText.length;
       segIdx++;
     } else {
-      // Non-segment child (property, block, or deleted text)
-      // Flush matched buffer before a block boundary
-      if (inMatch && child.type === "block") flushMatched();
+      // Non-segment child (change marker, font property, or block).
 
-      // test_report_38 F2 (mimic LyX — lyxfind.cpp replaceAll): a non-marker
-      // property strictly inside a matched span is dropped (LyX erases the span
-      // including its font change points and re-inserts at the match-start
-      // font). Keeping it reorders it to the front of the paragraph, wrapping
-      // nothing — the DL77 bug. Properties at the match EDGES are kept: one
-      // before the match applies to the replacement (match-start font), one
-      // after the match is deferred so it lands after the replacement.
-      if (child.type === "property" &&
-          !isChangeOpener(child.key) && !isChangeCloser(child.key)) {
+      if (child.type === "property" && (isChangeOpener(child.key) || isChangeCloser(child.key))) {
+        // Change markers are derived during serialization — only update the
+        // walk's region state here. Markers strictly inside a match are
+        // absorbed (the erased range re-serializes as one delete region).
+        const depths = advanceChangeDepths(child.key, openDeletedDepth, openInsertedDepth);
+        openDeletedDepth = depths.deletedDepth;
+        openInsertedDepth = depths.insertedDepth;
+        if (child.key === "change_inserted" || child.key === "change_deleted") {
+          const m = parseChangeMarker(child.value);
+          openAuthor = m.authorId;
+          openTs = m.ts;
+        }
+        continue;
+      }
+
+      if (inMatch && child.type === "block") {
+        // Flush before a block boundary (a match never legitimately crosses
+        // an inset — segmentsCrossInset skips those — so this is a safety net).
+        inMatch = false;
+        flushProps();
+      }
+
+      // test_report_38 F2: a non-marker property strictly inside a matched
+      // span is dropped (LyX erases the span including its font change points
+      // and re-inserts at the match-start font). Properties at the match EDGES
+      // are kept: one before the match applies to the replacement (match-start
+      // font), one after the match is deferred so it lands after the match.
+      if (child.type === "property") {
         if (propertyStrictlyInsideMatch(children, segments, segStartOffsets, isMatched, i)) {
           continue; // drop — strictly inside the matched span
         }
         if (inMatch) {
-          pendingProps.push(child); // defer — emit after the flushed replacement
+          pendingProps.push(child); // defer — emit after the match
           continue;
         }
       }
 
-      // F3: track the enclosing inserted region while walking; flush a
-      // pending same-author match before a closer so a match consuming the
-      // region's last text node is absorbed into the region (merge) rather
-      // than flushed after it as a top-level delete+insert pair.
-      if (child.type === "property") {
-        if (child.key === "change_inserted") {
-          const marker = parseChangeMarker(child.value);
-          insertedRegionOpener = child as PropertyNode;
-          insertedRegionAuthor = marker.authorId === 0 ? null : marker.authorId;
-          insertedRegionTs = parseInt(marker.ts, 10) || 0;
-        } else if (child.key === "change_deleted") {
-          // F3 (test_report_36 F1): a different-type opener terminates any
-          // open inserted region (LyX's flat model — one active Change per
-          // position). Flush a pending match BEFORE the interposed region's
-          // markers, close the inserted region with a synthetic
-          // \change_unchanged, and reset the tracking. Otherwise the
-          // interposed deleted region is read as nested and destroyed by
-          // flattenNestedChanges.
-          if (insertedRegionAuthor !== null) {
-            if (inMatch) flushMatched();
-            result.push({ type: "property", key: "change_unchanged" });
-            insertedRegionOpener = null;
-            insertedRegionAuthor = null;
-            insertedRegionTs = 0;
-          }
-        } else if (isChangeCloser(child.key)) {
-          if (inMatch && insertedRegionAuthor !== null && insertedRegionAuthor === authorId) {
-            flushMatched();
-          }
-          insertedRegionOpener = null;
-          insertedRegionAuthor = null;
-          insertedRegionTs = 0;
-        }
-      }
-      result.push(child);
+      atoms.push({ kind: child.type === "block" ? "block" : "prop", node: child } as Atom);
     }
   }
 
   // Flush any trailing matched text
-  if (inMatch) flushMatched();
+  if (inMatch) {
+    inMatch = false;
+    flushProps();
+  }
 
-  return { newChildren: result, matchCount: validCount, straddleCount };
+  // --- Serialize atoms into children with marker emission on state change ---
+  const result: Node[] = [];
+  let curState: OutState = "u";
+  let curAuthor = -1;
+  const emitText = (text: string, state: OutState, author: number, tsv: string) => {
+    if (state === "u") {
+      if (curState !== "u") {
+        result.push({ type: "property", key: "change_unchanged" });
+        curState = "u";
+      }
+    } else {
+      if (!(curState === state && curAuthor === author)) {
+        const key = state === "d" ? "change_deleted" : "change_inserted";
+        result.push({ type: "property", key, value: `${author} ${tsv}` });
+        curState = state;
+        curAuthor = author;
+      }
+    }
+    result.push({ type: "text", text });
+  };
+  for (const atom of atoms) {
+    if (atom.kind === "text") {
+      if (atom.text === "") {
+        // Empty text nodes carry no state — emit verbatim without transitions.
+        result.push({ type: "text", text: "" });
+        continue;
+      }
+      emitText(atom.text!, atom.state!, atom.author!, atom.ts!);
+    } else {
+      result.push(atom.node!);
+    }
+  }
+  if (curState !== "u") result.push({ type: "property", key: "change_unchanged" });
+
+  return { newChildren: result, matchCount: validCount, deletedHitCount };
 }

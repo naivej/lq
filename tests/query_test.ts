@@ -1,6 +1,7 @@
 import { assertEquals } from "@std/assert";
 import { parse } from "../src/parser.ts";
 import { query, parseSelector } from "../src/query.ts";
+import { TextNode } from "../src/ast.ts";
 
 Deno.test("Selector Parsing", () => {
   const parsed1 = parseSelector("layout[Section]");
@@ -204,4 +205,69 @@ Deno.test("Query Engine on LyX Document", async () => {
   assertEquals(dualParsed[0][0].pseudos!.length, 2);
   assertEquals(dualParsed[0][0].pseudos![0].name, "contains");
   assertEquals(dualParsed[0][0].pseudos![1].name, "contains");
+});
+
+// --- Dev log 90: :change(current|inserted|deleted) pseudo-class ---
+
+const TRACKED_QUERY_BODY =
+  "#LyX 2.5 created this file.\n" +
+  "\\begin_document\n" +
+  "\\begin_header\n" +
+  "\\author 1 \"Alice\"\n" +
+  "\\end_header\n" +
+  "\\begin_body\n" +
+  "\\begin_layout Standard\n" +
+  "current words here\n" +
+  "\\change_inserted 1 1700000000\n" +
+  "inserted words\n" +
+  "\\change_unchanged\n" +
+  "\\change_deleted 1 1700000001\n" +
+  "deleted words\n" +
+  "\\change_unchanged\n" +
+  "more current\n" +
+  "\\end_layout\n" +
+  "\\begin_layout Section\n" +
+  "plain section text\n" +
+  "\\end_layout\n" +
+  "\\end_body\n" +
+  "\\end_document\n";
+
+Deno.test("DL90 - :change() selects text nodes by region", () => {
+  const ast = parse(TRACKED_QUERY_BODY);
+  const deleted = query(ast, "text:change(deleted)");
+  assertEquals(deleted.length, 1);
+  assertEquals((deleted[0] as TextNode).text, "deleted words");
+  const inserted = query(ast, "text:change(inserted)");
+  assertEquals(inserted.length, 1);
+  assertEquals((inserted[0] as TextNode).text, "inserted words");
+  // current: the three in-layout text nodes (plus document-level nodes from
+  // the fixture header) — assert by content, not a fragile total count.
+  const current = query(ast, "text:change(current)");
+  const curTexts = current.filter(n => n.type === "text").map(n => (n as TextNode).text);
+  assertEquals(curTexts.includes("current words here"), true);
+  assertEquals(curTexts.includes("more current"), true);
+  assertEquals(curTexts.includes("plain section text"), true);
+  assertEquals(curTexts.includes("inserted words"), false);
+  assertEquals(curTexts.includes("deleted words"), false);
+});
+
+Deno.test("DL90 - :change() on layouts selects region-bearing layouts", () => {
+  const ast = parse(TRACKED_QUERY_BODY);
+  const delLayouts = query(ast, "layout:change(deleted)");
+  assertEquals(delLayouts.length, 1);
+  assertEquals((delLayouts[0] as { tag?: string }).tag, "layout");
+  const insLayouts = query(ast, "layout:change(inserted)");
+  assertEquals(insLayouts.length, 1);
+  const curLayouts = query(ast, "layout:change(current)");
+  assertEquals(curLayouts.length, 2, "Standard + Section both contain current text");
+});
+
+Deno.test("DL90 - :change() rejects invalid or missing arguments", () => {
+  const ast = parse(TRACKED_QUERY_BODY);
+  let err = "";
+  try { query(ast, "text:change(bogus)"); } catch (e) { err = (e as Error).message; }
+  assertEquals(err.includes("Invalid :change() argument"), true, err);
+  err = "";
+  try { query(ast, "text:change()"); } catch (e) { err = (e as Error).message; }
+  assertEquals(err.includes("requires an argument"), true, err);
 });
