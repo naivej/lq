@@ -563,10 +563,10 @@ export function applyCrossNodeReplace(
   authorId: number,
   ts: string,
   regionFilter?: "current" | "inserted" | "deleted",
-): { newChildren: Node[]; matchCount: number; deletedHitCount: number } {
+): { newChildren: Node[]; matchCount: number; deletedHitCount: number; crossedInsetCount: number } {
   const { segments, fullText } = concatenateTextNodes(children, { includeDeleted: true });
   if (segments.length === 0 || fullText.length === 0) {
-    return { newChildren: [...children], matchCount: 0, deletedHitCount: 0 };
+    return { newChildren: [...children], matchCount: 0, deletedHitCount: 0, crossedInsetCount: 0 };
   }
 
   // Find all match positions in the concatenated text
@@ -576,7 +576,7 @@ export function applyCrossNodeReplace(
     matchStarts.push(pos);
     pos += findStr.length;
   }
-  if (matchStarts.length === 0) return { newChildren: [...children], matchCount: 0, deletedHitCount: 0 };
+  if (matchStarts.length === 0) return { newChildren: [...children], matchCount: 0, deletedHitCount: 0, crossedInsetCount: 0 };
 
   // Precompute each segment's original region state, so matched runs can be
   // treated per-region (same-author inserted → drop; deleted → absorb) and
@@ -605,6 +605,7 @@ export function applyCrossNodeReplace(
   const isMatched = new Array(fullText.length).fill(false);
   let validCount = 0;
   let deletedHitCount = 0;
+  let crossedInsetCount = 0;
   for (const ms of matchStarts) {
     const me = ms + findStr.length;
     const s = mapPosToSegment(segments, ms);
@@ -612,7 +613,12 @@ export function applyCrossNodeReplace(
     // boundary doesn't map to the next segment and falsely check for
     // blocks beyond the actual match range.
     const e = mapPosToSegment(segments, me > 0 ? me - 1 : 0);
-    if (segmentsCrossInset(children, segments[s.segIdx], segments[e.segIdx])) continue;
+    if (segmentsCrossInset(children, segments[s.segIdx], segments[e.segIdx])) {
+      // The phrase is present in the concatenated text but every occurrence
+      // spans an inset — the caller reports this explicitly (dev log 91 F2).
+      crossedInsetCount++;
+      continue;
+    }
     // Region filter from a :change(...) selector: only matches fully inside
     // the scoped region are accepted (dev log 90 §5.5).
     if (regionFilter && !matchInRegion(segments, segRegions, ms, me, regionFilter)) continue;
@@ -620,7 +626,7 @@ export function applyCrossNodeReplace(
     for (let p = ms; p < me; p++) isMatched[p] = true;
     validCount++;
   }
-  if (validCount === 0) return { newChildren: [...children], matchCount: 0, deletedHitCount };
+  if (validCount === 0) return { newChildren: [...children], matchCount: 0, deletedHitCount, crossedInsetCount };
 
   // Concat offset of each segment's start — used to decide whether a property
   // between two segments sits strictly inside a matched span (test_report_38 F2).
@@ -860,5 +866,5 @@ export function applyCrossNodeReplace(
   }
   if (curState !== "u") result.push({ type: "property", key: "change_unchanged" });
 
-  return { newChildren: result, matchCount: validCount, deletedHitCount };
+  return { newChildren: result, matchCount: validCount, deletedHitCount, crossedInsetCount };
 }

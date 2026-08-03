@@ -45,7 +45,7 @@ The query engine supports traversing the CST using CSS-like selector:
   - `:contains("text")` searches recursively and case-sensitively node children for text.
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
-  - `:until(selector)` bounds a `~` sibling range — rejects nodes that have a sibling matching the inner selector between themselves and the anchor. Example: `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` gives all Standard paragraphs in the Introduction section.
+  - `:until(selector)` bounds a `~` sibling range — rejects nodes that have a sibling matching the inner selector between themselves and the anchor. Example: `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` gives all Standard paragraphs in the Introduction section. **Caution:** `:contains` is recursive (matches body/tables too), so a common heading word explodes the range — anchor on unique heading text and run `--count` first (e.g. `layout[Section]:contains('Introduction'):first`).
   - `:change(current|inserted|deleted)` matches nodes by the tracked-change region they sit in. Text nodes match by their own region; layouts/insets match if they contain text in that region, recursively; property nodes never match. Also scopes `set --find` / `split-after` to that region.
   - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 
@@ -113,7 +113,7 @@ The query engine supports traversing the CST using CSS-like selector:
   - Positions:
     - `before`/`after`: insert a layout as a **sibling** of the target.
     - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
-    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in the matched text.
+    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in the matched text. For prose with citations, insert a text + citation-inset payload in one pass with `--raw-file`; for complex payloads, prefer two passes (skeleton first, then populate).
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: Insert a layout block with the given name and text (e.g., --layout 'Standard' --text 'Hello world'). --text requires --layout, except with 'split-after' where bare --text inserts inline text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
@@ -180,8 +180,9 @@ All mutations (`insert`, `set`, `delete`, `undo`) apply to all matched nodes of 
 When modifying a document, follow this safe workflow:
 
 1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
-2. **Test Blast Radius**: Run `lq read <file> <selector> --count` first. The subtype breakdown (e.g. `{"layout[Section]": 8, "layout[Standard]": 120}`) tells you the composition — if you meant to target sections but see 120 Standard layouts, your selector is wrong. Narrow before mutating.
+2. **Test Blast Radius**: Run `lq read <file> <selector> --count` first. The subtype breakdown (e.g. `{"layout[Section]": 8, "layout[Standard]": 120}`) tells you the composition — if you meant to target sections but see 120 Standard layouts, your selector is wrong. Narrow before mutating: anchor on unique text, take one with `:first`, and prefer `layout:contains(...)` + `--text-only` inspection over `text:` selectors.
 3. **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`. **Keep `new_text` scoped to only the changed substring.** `--find` operates on individual text nodes; `new_text` is the literal replacement, not merged with surrounding nodes.
+4. **Verify the edit**: after any mutation, `lq read <file> "<selector>" --text-only` (or `--count`) confirms the result — the no-GUI diff substitute; `git diff` remains the general answer.
 
 ## Cross-Referencing
 

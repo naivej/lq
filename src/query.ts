@@ -65,6 +65,16 @@ function parseSelectorPart(raw: string, allowBarePseudo = false): SelectorPart {
   const tag = tagMatch[1];
   const rawArg = tagMatch[2];
 
+  // Text nodes carry no [args] — args select block/property identity. Allowing
+  // text[arg] would silently ignore the filter and match every text node (dev
+  // log 91 F1-b); hard-error instead, pointing at the two valid selectors.
+  if (tag === "text" && rawArg) {
+    throw new Error(
+      `Invalid selector: text nodes have no [args] ('${rawArg}' selects layout/inset/property identity). ` +
+      `Select text by content (text:contains('...')) or by tracked-change region (text:change(current|inserted|deleted)).`
+    );
+  }
+
   let argExact: string | undefined = undefined;
   if (rawArg) {
     const attrMatch = rawArg.match(/^(?:[a-zA-Z0-9_-]+=['"]?([^'"]+)['"]?|['"]?([^'"]+)['"]?)$/);
@@ -179,6 +189,15 @@ export function parseSelector(selector: string): SelectorPart[][] {
         
         const tag = tagMatch[1];
         const rawArg = tagMatch[2];
+
+        // Text nodes carry no [args] — hard-error instead of silently matching
+        // all text nodes (dev log 91 F1-b; same rule as parseSelectorPart).
+        if (tag === "text" && rawArg) {
+          throw new Error(
+            `Invalid selector: text nodes have no [args] ('${rawArg}' selects layout/inset/property identity). ` +
+            `Select text by content (text:contains('...')) or by tracked-change region (text:change(current|inserted|deleted)).`
+          );
+        }
 
         let argExact: string | undefined = undefined;
         if (rawArg) {

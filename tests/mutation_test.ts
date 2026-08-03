@@ -2257,3 +2257,33 @@ Deno.test("DL90 - split-after SPLIT_AMBIGUOUS resolved by :change(deleted)", { t
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
+
+Deno.test("DL91 - --find spanning an inset NO_MATCH names the blocker", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "A\n" +
+    "\\begin_inset Foot\n" +
+    "\\begin_layout Plain Layout\n" +
+    "foot\n" +
+    "\\end_layout\n" +
+    "\\end_inset\n" +
+    "B\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl91_inset.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    // "AB" exists only if the footnote is ignored — the match spans an inset.
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "X", "--find", "AB"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.code, "NO_MATCH", "phrase spanning an inset cannot match");
+    assertStringIncludes(result.message!, "spans an inset", "NO_MATCH names the inset blocker");
+    assertStringIncludes(result.message!, "split the phrase", "NO_MATCH suggests the escape hatch");
+    // File untouched.
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "A\n", "pre-match text intact");
+    assertStringIncludes(text, "B\n", "post-match text intact");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});

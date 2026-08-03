@@ -1516,6 +1516,9 @@ function foldNegativeDepth(args: string[]): string[] {
     // warning appends a note so editing rejected text is not silent (dev log
     // 90 §5.7).
     let totalDeletedHits = 0;
+    // Matches that were present but skipped because every occurrence spans an
+    // inset — NO_MATCH reports this explicitly (dev log 91 F2).
+    let totalCrossedInset = 0;
     // Per-node type counts captured during mutation (before trackChanges wraps text
     // in change_inserted markers, which could cause double-counting if re-scanned)
     const findPerNode: Record<string, number> = {};
@@ -1589,7 +1592,7 @@ function foldNegativeDepth(args: string[]): string[] {
         if (findStr !== undefined) {
           // Cross-node surgical replace: concatenates text children
           // and matches findStr across punctuation-induced text-node boundaries.
-          const { newChildren, matchCount: nodeFindCount, deletedHitCount: nodeDeletedHits } = applyCrossNodeReplace(
+          const { newChildren, matchCount: nodeFindCount, deletedHitCount: nodeDeletedHits, crossedInsetCount: nodeCrossedInset } = applyCrossNodeReplace(
             node.children, findStr, newValue, trackChanges, tcAid, tcTs, regionFilter,
           );
           // Flatten any nested markers produced by editing inside existing
@@ -1599,6 +1602,7 @@ function foldNegativeDepth(args: string[]): string[] {
             : newChildren;
           totalFindMatches += nodeFindCount;
           totalDeletedHits += nodeDeletedHits;
+          totalCrossedInset += nodeCrossedInset;
           if (nodeFindCount > 0) {
             findNodesWithHits++;
             addFindCount(node, nodeFindCount);
@@ -1646,7 +1650,7 @@ function foldNegativeDepth(args: string[]): string[] {
           if (parentCtx && nodeInChangeRegion(parentCtx.list, parentCtx.index) !== "current") {
             if (!processedParents.has(parentCtx.list)) {
               processedParents.add(parentCtx.list);
-              const { newChildren, matchCount, deletedHitCount } = applyCrossNodeReplace(
+              const { newChildren, matchCount, deletedHitCount, crossedInsetCount } = applyCrossNodeReplace(
                 parentCtx.list, findStr, newValue, trackChanges, tcAid, tcTs, regionFilter,
               );
               parentCtx.list.splice(
@@ -1656,6 +1660,7 @@ function foldNegativeDepth(args: string[]): string[] {
               );
               totalFindMatches += matchCount;
               totalDeletedHits += deletedHitCount;
+              totalCrossedInset += crossedInsetCount;
               if (matchCount > 0) {
                 findNodesWithHits++;
                 addFindCount(node, matchCount);
@@ -1678,7 +1683,11 @@ function foldNegativeDepth(args: string[]): string[] {
     // After loop: check if --find had any matches
     if (findStr !== undefined) {
       if (totalFindMatches === 0) {
-        printError("NO_MATCH", `--find '${findStr}' matched no occurrences within the targeted nodes. Run 'lq read ${filePath} "${selector}" --text-only' to inspect their text.`);
+        let noMatchMsg = `--find '${findStr}' matched no occurrences within the targeted nodes. Run 'lq read ${filePath} "${selector}" --text-only' to inspect their text.`;
+        if (totalCrossedInset > 0) {
+          noMatchMsg += ` The phrase spans an inset (citation/footnote) — matches cannot cross an inset; split the phrase or use full 'set' to replace the whole text.`;
+        }
+        printError("NO_MATCH", noMatchMsg);
       }
       const plural = totalFindMatches === 1 ? "" : "s";
       const nodeList = Object.entries(findPerNode)

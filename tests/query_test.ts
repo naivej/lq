@@ -271,3 +271,17 @@ Deno.test("DL90 - :change() rejects invalid or missing arguments", () => {
   try { query(ast, "text:change()"); } catch (e) { err = (e as Error).message; }
   assertEquals(err.includes("requires an argument"), true, err);
 });
+
+Deno.test("DL91 - text[arg] hard-errors instead of silently matching all", () => {
+  const ast = parse(TRACKED_QUERY_BODY);
+  for (const sel of ["text[changeStatus=inserted]", "text[foo]"]) {
+    let err = "";
+    try { query(ast, sel); } catch (e) { err = (e as Error).message; }
+    assertEquals(err.includes("text nodes have no [args]"), true, `${sel} -> ${err}`);
+    assertEquals(err.includes("text:contains"), true, `${sel} points to content selection`);
+    assertEquals(err.includes("text:change"), true, `${sel} points to region selection`);
+  }
+  // Bare `text` (no args) is still valid — only text[...] is rejected.
+  const t = query(ast, "text");
+  assertEquals(t.length > 0, true, "bare 'text' selector still matches");
+});
