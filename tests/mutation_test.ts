@@ -1486,6 +1486,30 @@ Deno.test("DL78 Snapshot Undo - 1-Level Enforcement + Consume", { timeout: 15000
   }
 });
 
+Deno.test("User report - selector-only undo never falls back to replay", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nThe quick brown fox\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_user_report_snapshot_fallback.lyx", body);
+  try {
+    await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "QUICK", "--find", "quick"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    const tracked = await Deno.readTextFile(tempFile);
+    await Deno.writeTextFile(tempFile, tracked + "\n");
+    const beforeUndo = await Deno.readTextFile(tempFile);
+
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+
+    assertEquals(result.code, "UNDO_SNAPSHOT_UNAVAILABLE");
+    assertEquals(await Deno.readTextFile(tempFile), beforeUndo);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("DL78 - --find Inside change_deleted Matches (see-all, dev log 90)", { timeout: 15000 }, async () => {
   const body =
     "\\begin_layout Standard\n" +
@@ -2410,6 +2434,49 @@ Deno.test("DL90 - text:change(deleted) + set --find is tracked, not swallowed", 
     assertStringIncludes(text, "X", "replacement present");
     assertStringIncludes(text, " current text", "current text untouched");
     assertEquals(maxMarkerDepth(firstLayoutChildren(text)), 1, "flat, never nested");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("User report - scoped bare-text find preserves region boundaries", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "current before\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "Inserted region with mainly through internal sources.\n" +
+    "\\change_unchanged\n" +
+    "current after\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_user_report_region_scope.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      [
+        "set",
+        tempFile,
+        "layout[Standard]:contains('mainly through internal sources.'):first text:change(inserted)",
+        "Fourth",
+        "--find",
+        "mainly through internal sources.",
+      ],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1);
+
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const insertedStart = children.findIndex(c => c.type === "property" && (c as PropertyNode).key === "change_inserted");
+    const insertedEnd = children.findIndex(c => c.type === "property" && (c as PropertyNode).key === "change_unchanged");
+    const beforeIndex = children.findIndex(c => c.type === "text" && (c as TextNode).text.includes("current before"));
+    const afterIndex = children.findIndex(c => c.type === "text" && (c as TextNode).text.includes("current after"));
+    assert(insertedStart >= 0 && insertedEnd > insertedStart);
+    assert(beforeIndex >= 0 && beforeIndex < insertedStart, "current text before the region must stay current");
+    assert(afterIndex > insertedEnd, "current text after the region must stay current");
+    const insertedText = children
+      .slice(insertedStart + 1, insertedEnd)
+      .filter(c => c.type === "text")
+      .map(c => (c as TextNode).text)
+      .join("");
+    assertStringIncludes(insertedText, "Fourth");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }

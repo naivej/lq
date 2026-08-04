@@ -41,13 +41,13 @@ import * as path from "@std/path";
  * marker-aware rebuild (dev log 90 1b) — a plain replace would embed the
  * replacement inside the surrounding \change_deleted and be rejected with it.
  */
-function collectTextParents(ast: DocumentNode): Map<Node, { list: Node[]; index: number }> {
-  const map = new Map<Node, { list: Node[]; index: number }>();
-  const walk = (list: Node[]) => {
+function collectTextParents(ast: DocumentNode): Map<Node, { list: Node[]; index: number; parentBlock: BlockNode | null }> {
+  const map = new Map<Node, { list: Node[]; index: number; parentBlock: BlockNode | null }>();
+  const walk = (list: Node[], parentBlock: BlockNode | null = null) => {
     for (let i = 0; i < list.length; i++) {
       const n = list[i];
-      if (n.type === "text") map.set(n, { list, index: i });
-      else if (n.type === "block") walk((n as BlockNode).children);
+      if (n.type === "text") map.set(n, { list, index: i, parentBlock });
+      else if (n.type === "block") walk((n as BlockNode).children, n as BlockNode);
     }
   };
   walk(ast.children);
@@ -1734,7 +1734,7 @@ function foldNegativeDepth(args: string[]): string[] {
                 tcAid,
                 tcTs,
                 scope,
-                nodeState,
+                parentCtx.parentBlock ? traversalStateIndex.get(parentCtx.parentBlock) : undefined,
               );
               parentCtx.list.splice(
                 0,
@@ -2519,6 +2519,7 @@ function foldNegativeDepth(args: string[]): string[] {
     // is specified. The snapshot is consumed on restore: undo-after-undo
     // is UNDO_STALE, not a redo (dev log 78 — bounded, predictable undo).
     if (substring === undefined) {
+      let snapshotFailure = "No snapshot found for the current file content.";
       const currentHash = await hashFile(filePath);
       const snapshot = await loadSnapshot(currentHash);
       if (snapshot) {
@@ -2555,20 +2556,24 @@ function foldNegativeDepth(args: string[]): string[] {
           printJson({ undone_changes: restoredCount, method: "snapshot" });
           return;
         }
-        // Snapshot existed but no nodes matched — fall through to replay
-        pushWarning("Snapshot found but file structure changed. Falling back to tracked-change undo.");
+        snapshotFailure = "A snapshot was found, but the document structure changed before it could be restored.";
       }
 
-      // No usable snapshot: if there is also nothing to replay, undo is
-      // stale. Checked before resolving the author ID so a clean file
-      // stays untouched (no spurious \author entry).
+      // A clean file with no snapshot is stale. Checked before resolving the
+      // author ID so it stays untouched (no spurious \author entry).
       const hasAnyTracked = nodes.some(n => n.type === "block" && hasTrackedChanges(n.children));
       if (!hasAnyTracked) {
         printError("UNDO_STALE", "Nothing to undo. No snapshot found and no tracked changes to revert.");
       }
+
+      printError(
+        "UNDO_SNAPSHOT_UNAVAILABLE",
+        `${snapshotFailure} Selector-only undo never replays tracked changes. ` +
+        `Verify that the file was not changed externally, or provide a substring explicitly for replay undo.`,
+      );
     }
 
-    // --- Replay-based undo (fallback path) ---
+    // --- Replay-based undo (explicit substring only) ---
     // Replay scans the matched nodes' children, so it needs live matches —
     // unlike snapshot restore, which addresses nodes by path and therefore
     // works even when the mutation removed the matched nodes entirely.

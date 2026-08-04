@@ -81,7 +81,8 @@ export async function saveSnapshot(
 /**
  * Load a pre-mutation snapshot by post-mutation content hash.
  * Returns null if no snapshot exists, on any error, or if the file predates
- * the path-based entry format (such snapshots degrade to replay undo).
+ * the path-based entry format (the caller must report that snapshot restore is
+ * unavailable rather than silently changing undo modes).
  */
 export async function loadSnapshot(fileHash: string): Promise<SnapshotFile | null> {
   try {
