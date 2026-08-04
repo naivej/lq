@@ -109,13 +109,13 @@ The query engine supports traversing the CST using CSS-like selector:
   - Deletes the targeted nodes.
 - `lq undo <file> <selector> [<substring>]`
   - 1-level **Snapshot restore** (default, no substring): consume the snapshot stored at `~/.lq/undo/` to revert the last (tracked or plain) mutation, even when the mutation deleted the matched nodes.
-  - Unlimited-level **Replay undo**: removes the tracked changes block containing `<substring>` and made by the current author. Can be reverted by snapshot restore.
+  - Unlimited-level **Replay undo**: removes only the tracked-change block containing `<substring>` and made by the current author. A paired `set` edit is not restored as one unit; use snapshot restore for that. Can be reverted by snapshot restore.
 - `lq insert <file> <selector> <position> [helper]`
   - Insert new blocks or properties relative to a selector.
   - Positions:
     - `before`/`after`: insert a layout as a **sibling** of the target.
     - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
-    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. All text is visible by default, including `\change_deleted`; scope with `:change(...)` or `:property(...)`. Recursive `split-after` reaches prose in nested layouts inside insets but never inset metadata. Only proceeds if the match appears **exactly once** in the matched text. For prose with citations, insert a text + citation-inset payload in one pass with `--raw-file`; for complex payloads, prefer two passes (skeleton first, then populate).
+    - `split-after <text>`: split a **block target** (such as `layout` or `inset`) right after the exact, case-sensitive substring and insert new content at that point. A direct `text` selector is not a valid target; apply `:change(...)` or `:property(...)` to the containing block instead. All text is visible by default, including `\change_deleted`; scope with `:change(...)` or `:property(...)`. Recursive `split-after` reaches prose in nested layouts inside insets but never inset metadata. Only proceeds if the match appears **exactly once** in the matched text. For prose with citations, insert a text + citation-inset payload in one pass with `--raw-file`; for complex payloads, prefer two passes (skeleton first, then populate).
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: Insert a layout block with the given name and text (e.g., --layout 'Standard' --text 'Hello world'). --text requires --layout, except with 'split-after' where bare --text inserts inline text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.

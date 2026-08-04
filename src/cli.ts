@@ -15,6 +15,7 @@ import {
 } from "./text_utils.ts";
 import { getCachedAst, setCachedAst, hashText, hashFile, setMaxCacheEntries } from "./cache.ts";
 import { clearSnapshot, collectSnapshots, commitMutation, loadSnapshot, nodeAtPath } from "./undo.ts";
+import { getUserHomeDir } from "./paths.ts";
 import {
   annotateChanges,
   annotateChangesInPlace,
@@ -330,9 +331,10 @@ Arguments:
                                    inside a layout, etc.).
               'split-after <text>' Split the target's text right after the exact,
                                    case-sensitive <text> substring and insert new
-                                   content at the split point. Only proceeds if <text>
-                                   appears exactly once in the target. All text is visible
-                                   by default, including \\change_deleted; scope with
+                                   content at the split point. The target must be a
+                                   block (such as layout or inset), and <text> must
+                                   appear exactly once. All text is visible by default,
+                                   including \\change_deleted; scope with
                                    :change(current|inserted|deleted) or :property(...).
 
 Options (provide exactly one generation helper):
@@ -362,9 +364,10 @@ Two modes, distinguished by the presence of a substring argument:
                                          when the mutation deleted the matched nodes.
 
   lq undo <file> <selector> <substring>  Replay undo (unlimited levels).
-                                         Removes the entire tracked changes block (change_deleted/
-                                         change_inserted), which contains <substring>
-                                         and made by the current author.
+                                         Removes only the tracked-change block
+                                         (change_deleted/change_inserted) containing
+                                         <substring> and made by the current author;
+                                         a paired set edit is not restored as one unit.
                                          Can be reverted by snapshot restore.
 
 Arguments:
@@ -384,7 +387,7 @@ interface UserConfig {
 
 async function loadUserConfig(): Promise<UserConfig> {
   try {
-    const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+    const homeDir = getUserHomeDir();
     if (homeDir) {
       const configPath = path.join(homeDir, ".lq", "config.json");
       const stat = await Deno.stat(configPath);
@@ -991,7 +994,7 @@ export async function runCli(args: string[]) {
     // If no flags and config exists, print it and exit
     if (!hasFlags) {
       const existing = await loadUserConfig();
-      const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+      const homeDir = getUserHomeDir();
       if (homeDir) {
         const configPath = path.join(homeDir, ".lq", "config.json");
         try {
@@ -1017,7 +1020,7 @@ export async function runCli(args: string[]) {
       printError("DIR_NOT_FOUND", `Could not find layouts directory at '${dir}'. Please provide it manually via --layouts-dir.`);
     }
 
-    const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+    const homeDir = getUserHomeDir();
     if (!homeDir) {
       printError("NO_HOME", "Could not determine home directory to save config.");
     }
@@ -2192,7 +2195,10 @@ function foldNegativeDepth(args: string[]): string[] {
 
       if (position === "prepend" || position === "append" || position === "split-after") {
         if (targetNode.type !== "block") {
-          printError("INVALID_TARGET", `Cannot ${position} to a non-block node.`);
+          const message = position === "split-after"
+            ? "Cannot split-after to a non-block node. Select a layout or inset block and apply :change(...) or :property(...) to that block; text selectors cannot be split directly."
+            : `Cannot ${position} to a non-block node.`;
+          printError("INVALID_TARGET", message);
 
         }
         targetParentBlock = targetNode as BlockNode;
@@ -2569,7 +2575,8 @@ function foldNegativeDepth(args: string[]): string[] {
       printError(
         "UNDO_SNAPSHOT_UNAVAILABLE",
         `${snapshotFailure} Selector-only undo never replays tracked changes. ` +
-        `Verify that the file was not changed externally, or provide a substring explicitly for replay undo.`,
+        `Verify that the file was not changed externally, or provide a substring explicitly for per-block replay undo. ` +
+        `Replay does not restore a paired set edit as one unit.`,
       );
     }
 

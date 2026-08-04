@@ -2,6 +2,7 @@ import { Node, BlockNode, DocumentNode } from "./ast.ts";
 import { serialize } from "./serializer.ts";
 import { hashText, setCachedAst } from "./cache.ts";
 import { getHeader } from "./tracked_changes.ts";
+import { getUserHomeDir } from "./paths.ts";
 import * as path from "@std/path";
 
 export interface SnapshotEntry {
@@ -22,7 +23,7 @@ export interface SnapshotFile {
 }
 
 function getUndoDir(): string | null {
-  const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+  const homeDir = getUserHomeDir();
   if (!homeDir) return null;
   return path.join(homeDir, ".lq", "undo");
 }

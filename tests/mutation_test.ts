@@ -226,6 +226,32 @@ Deno.test("Mutation Engine - Insert Split-After Position", async () => {
   }
 });
 
+Deno.test("Mutation Engine - Split-After explains block-target requirement", async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "Inserted phrase\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_split_after_text_target.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliTest([
+      "insert",
+      tempFile,
+      "text:change(inserted)",
+      "split-after",
+      "Inserted",
+      "--text",
+      " X",
+    ]);
+    assertEquals(result.code, "INVALID_TARGET");
+    assertStringIncludes(result.message!, "Select a layout or inset block");
+    assertStringIncludes(result.message!, "text selectors cannot be split directly");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("Mutation Engine - Insert Split-After with trackChanges", { timeout: 10000 }, async () => {
   const tempFile = await createTempFixture("temp_split_tc.lyx");
   try {

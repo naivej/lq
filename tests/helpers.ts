@@ -74,8 +74,8 @@ async function getTestHome(): Promise<string> {
 /** Env vars that redirect lq to the isolated test config. */
 async function testEnv(): Promise<Record<string, string>> {
   const home = await getTestHome();
-  // Override both HOME and USERPROFILE — on Windows with Git Bash, HOME
-  // takes priority over USERPROFILE, so we must set both to be safe.
+  // Keep both variables aligned so config, cache, and undo resolve to the
+  // same isolated home on every host shell.
   return { HOME: home, USERPROFILE: home };
 }
 

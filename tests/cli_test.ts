@@ -12,8 +12,27 @@
 
 import { assertEquals, assert, assertStringIncludes, assertGreater, assertMatch } from "@std/assert";
 import { runCliTest, runCliRaw, runCliWithEnv, runCliWithConfig, createTempFixture } from "./helpers.ts";
+import { getUserHomeDir } from "../src/paths.ts";
 
 const FIXTURE = "tests/fixtures/my_template.lyx";
+
+Deno.test("Paths - normalize Git Bash HOME on Windows", () => {
+  if (Deno.build.os !== "windows") return;
+  const values: Record<string, string> = {
+    HOME: "/c/Users/Shifu",
+    USERPROFILE: "C:\\Users\\Fallback",
+  };
+  assertEquals(getUserHomeDir({ get: name => values[name] }), "C:\\Users\\Shifu");
+});
+
+Deno.test("Paths - prefer a native HOME override on Windows", () => {
+  if (Deno.build.os !== "windows") return;
+  const values: Record<string, string> = {
+    HOME: "D:\\lq-home",
+    USERPROFILE: "C:\\Users\\Fallback",
+  };
+  assertEquals(getUserHomeDir({ get: name => values[name] }), "D:\\lq-home");
+});
 
 // ---------------------------------------------------------------------------
 // 1. Global help
@@ -52,6 +71,8 @@ Deno.test("CLI - per-command help (insert)", { timeout: 10000 }, async () => {
   assertStringIncludes(stdout, "<position>");
   assertStringIncludes(stdout, "before");
   assertStringIncludes(stdout, "split-after");
+  assertStringIncludes(stdout, "target must be a");
+  assertStringIncludes(stdout, "block (such as layout or inset)");
   assertStringIncludes(stdout, "--layout");
   assertStringIncludes(stdout, "--raw-file");
   assertStringIncludes(stdout, "All text is visible");

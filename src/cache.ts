@@ -1,4 +1,5 @@
 import { DocumentNode } from "./ast.ts";
+import { getUserHomeDir } from "./paths.ts";
 import * as path from "@std/path";
 
 let maxCacheEntries = 50;
@@ -27,7 +28,7 @@ export async function hashText(text: string): Promise<string> {
 }
 
 function getCacheDir(): string | null {
-  const homeDir = Deno.env.get("HOME") || Deno.env.get("USERPROFILE");
+  const homeDir = getUserHomeDir();
   if (!homeDir) return null;
   return path.join(homeDir, ".lq", "cache");
 }
