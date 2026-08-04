@@ -285,3 +285,177 @@ Deno.test("DL91 - text[arg] hard-errors instead of silently matching all", () =>
   const t = query(ast, "text");
   assertEquals(t.length > 0, true, "bare 'text' selector still matches");
 });
+
+// --- Dev log 92 phase A: :property(key[=value]) predicate + :change() block fix ---
+
+const STYLE_QUERY_BODY =
+  "#LyX 2.5 created this file.\n" +
+  "\\begin_document\n" +
+  "\\begin_header\n" +
+  "\\textclass article\n" +
+  "\\end_header\n" +
+  "\\begin_body\n" +
+  "\\begin_layout Standard\n" +
+  "This is \n" +
+  "\\emph on\n" +
+  "emphasized text\n" +
+  "\\emph default\n" +
+  "and \n" +
+  "\\series bold\n" +
+  "bold text\n" +
+  "\\series default\n" +
+  "here.\n" +
+  "\\end_layout\n" +
+  "\\begin_layout Section\n" +
+  "plain section\n" +
+  "\\end_layout\n" +
+  "\\end_body\n" +
+  "\\end_document\n";
+
+Deno.test("DL92 - :property() selects text by active inline style", () => {
+  const ast = parse(STYLE_QUERY_BODY);
+  const emph = query(ast, "text:property(emph)");
+  assertEquals(emph.length, 1);
+  assertEquals((emph[0] as TextNode).text, "emphasized text");
+  const bold = query(ast, "text:property(series=bold)");
+  assertEquals(bold.length, 1);
+  assertEquals((bold[0] as TextNode).text, "bold text");
+  // Case-insensitive VALUE (LyX lowercases values on read — FontInfo.cpp ascii_lowercase); keys stay exact.
+  const upper = query(ast, "text:property(series=BOLD)");
+  assertEquals(upper.length, 1);
+  assertEquals((upper[0] as TextNode).text, "bold text");
+  // Explicit default is NOT "active" for the bare-key form...
+  const active = query(ast, "text:property(emph)");
+  const texts = active.filter(n => n.type === "text").map(n => (n as TextNode).text);
+  assertEquals(texts.includes("and "), false, "emph=default must not match :property(emph)");
+  // ...but :property(key=default) matches the explicit reset explicitly.
+  const explicitDefault = query(ast, "text:property(emph=default)");
+  const defTexts = explicitDefault.filter(n => n.type === "text").map(n => (n as TextNode).text);
+  assertEquals(defTexts.includes("and "), true);
+  assertEquals(defTexts.includes("here."), true);
+});
+
+Deno.test("DL92 - :property() on blocks selects containers of styled text", () => {
+  const ast = parse(STYLE_QUERY_BODY);
+  const layouts = query(ast, "layout:property(emph)");
+  assertEquals(layouts.length, 1);
+  assertEquals((layouts[0] as { tag?: string }).tag, "layout");
+  const section = query(ast, "layout[Section]:property(emph)");
+  assertEquals(section.length, 0, "Section has no emphasized text");
+});
+
+Deno.test("DL92 - :property() validation rejects missing/unknown/change keys", () => {
+  const ast = parse(STYLE_QUERY_BODY);
+  let err = "";
+  try { query(ast, "text:property()"); } catch (e) { err = (e as Error).message; }
+  assertEquals(err.includes("requires an argument"), true, err);
+  err = "";
+  try { query(ast, "text:property(bogus)"); } catch (e) { err = (e as Error).message; }
+  assertEquals(err.includes("Invalid :property() key: 'bogus'"), true, err);
+  assertEquals(err.includes("Valid inline style keys are"), true, err);
+  err = "";
+  try { query(ast, "text:property(change_deleted)"); } catch (e) { err = (e as Error).message; }
+  assertEquals(err.includes("Invalid :property() key: 'change_deleted'"), true, err);
+  assertEquals(err.includes(":change(current|inserted|deleted)"), true, err);
+});
+
+const INSET_STYLE_BODY =
+  "#LyX 2.5 created this file.\n" +
+  "\\begin_document\n" +
+  "\\begin_header\n" +
+  "\\textclass article\n" +
+  "\\end_header\n" +
+  "\\begin_body\n" +
+  "\\begin_layout Standard\n" +
+  "\\emph on\n" +
+  "before \n" +
+  "\\begin_inset Foot\n" +
+  "status open\n" +
+  "\n" +
+  "\\begin_layout Plain Layout\n" +
+  "foot content\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\end_inset\n" +
+  "\n" +
+  " after\n" +
+  "\\emph default\n" +
+  "\\end_layout\n" +
+  "\\end_body\n" +
+  "\\end_document\n";
+
+Deno.test("DL92 - :property() on a block sitting inside a parent style span matches (inset in emph run)", () => {
+  const ast = parse(INSET_STYLE_BODY);
+  const insets = query(ast, "inset:property(emph)");
+  assertEquals(insets.length, 1);
+  assertEquals((insets[0] as { tag?: string }).tag, "inset");
+});
+
+const TRACKED_STYLE_BODY =
+  "#LyX 2.5 created this file.\n" +
+  "\\begin_document\n" +
+  "\\begin_header\n" +
+  "\\textclass article\n" +
+  "\\author 1 \"Alice\"\n" +
+  "\\end_header\n" +
+  "\\begin_body\n" +
+  "\\begin_layout Standard\n" +
+  "\\emph on\n" +
+  "\\change_deleted 1 1700000000\n" +
+  "rejected emph\n" +
+  "\\change_unchanged\n" +
+  "\\change_inserted 1 1700000001\n" +
+  "accepted\n" +
+  "\\change_unchanged\n" +
+  "\\emph default\n" +
+  "current plain\n" +
+  "\\end_layout\n" +
+  "\\end_body\n" +
+  "\\end_document\n";
+
+Deno.test("DL92 - :property() chains with :change() as a conjunction", () => {
+  const ast = parse(TRACKED_STYLE_BODY);
+  const both = query(ast, "text:property(emph):change(deleted)");
+  assertEquals(both.length, 1);
+  assertEquals((both[0] as TextNode).text, "rejected emph");
+  const onlyEmph = query(ast, "text:property(emph)");
+  const emphTexts = onlyEmph.filter(n => n.type === "text").map(n => (n as TextNode).text);
+  assertEquals(emphTexts.includes("rejected emph"), true);
+  assertEquals(emphTexts.includes("accepted"), true);
+});
+
+const INSET_DELETED_BODY =
+  "#LyX 2.5 created this file.\n" +
+  "\\begin_document\n" +
+  "\\begin_header\n" +
+  "\\textclass article\n" +
+  "\\author 1 \"Alice\"\n" +
+  "\\end_header\n" +
+  "\\begin_body\n" +
+  "\\begin_layout Standard\n" +
+  "\\change_deleted 1 1700000000\n" +
+  "rejected \n" +
+  "\\begin_inset Foot\n" +
+  "status open\n" +
+  "\n" +
+  "\\begin_layout Plain Layout\n" +
+  "foot body\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\end_inset\n" +
+  "\n" +
+  "\\change_unchanged\n" +
+  "current\n" +
+  "\\end_layout\n" +
+  "\\end_body\n" +
+  "\\end_document\n";
+
+Deno.test("DL92 - :change() block matches an inset sitting inside a deleted region (§2.1)", () => {
+  const ast = parse(INSET_DELETED_BODY);
+  const insets = query(ast, "inset:change(deleted)");
+  assertEquals(insets.length, 1);
+  assertEquals((insets[0] as { tag?: string }).tag, "inset");
+  // layout:change(deleted) unchanged — still matches via "contains text in region"
+  const layouts = query(ast, "layout:change(deleted)");
+  assertEquals(layouts.length, 1);
+});

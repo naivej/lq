@@ -1,8 +1,9 @@
 import { DocumentNode, Node, BlockNode } from "./ast.ts";
 import { advanceChangeDepths, concatenateTextNodes } from "./text_utils.ts";
+import { INLINE_PROPERTIES, isInlineStyleKey } from "./registry.ts";
 
 export interface PseudoClass {
-  name: "first" | "last" | "contains" | "nth-child" | "not" | "adjacent" | "until" | "change";
+  name: "first" | "last" | "contains" | "nth-child" | "not" | "adjacent" | "until" | "change" | "property";
   argRaw?: string;
 }
 
@@ -27,12 +28,16 @@ function parsePseudoClasses(suffix: string): PseudoClass[] {
     const pName = pMatch[1];
     const pArg = pMatch[2] ? pMatch[2].trim() : undefined;
 
-    if (!["first", "last", "nth-child", "contains", "not", "adjacent", "until", "change"].includes(pName)) {
+    if (!["first", "last", "nth-child", "contains", "not", "adjacent", "until", "change", "property"].includes(pName)) {
       throw new Error(`Unsupported pseudo-class: :${pName}`);
     }
 
     if (pName === "change" && !pArg) {
       throw new Error(`:change() requires an argument, e.g. :change(current|inserted|deleted)`);
+    }
+
+    if (pName === "property" && !pArg) {
+      throw new Error(`:property() requires an argument, e.g. :property(emph) or :property(family=roman)`);
     }
 
     if (pName === "not" || pName === "adjacent" || pName === "until") {
@@ -249,11 +254,10 @@ function nodeContainsText(node: Node, searchStr: string): boolean {
   return false;
 }
 
-/**
- * Region a node sits in, computed from the change markers before it in its
+/** Region a node sits in, computed from the change markers before it in its
  * parent's children: "deleted" | "inserted" | "current".
  */
-function regionAt(list: Node[], index: number): "deleted" | "inserted" | "current" {
+export function regionAt(list: Node[], index: number): "deleted" | "inserted" | "current" {
   let deletedDepth = 0;
   let insertedDepth = 0;
   for (let i = 0; i < index; i++) {
@@ -270,6 +274,123 @@ function regionAt(list: Node[], index: number): "deleted" | "inserted" | "curren
 /** Change marker keys (\change_deleted / \change_inserted / \change_unchanged). */
 function isChangeMarkerKey(key: string): boolean {
   return key === "change_deleted" || key === "change_inserted" || key === "change_unchanged";
+}
+
+/** Inline-style values that mean "not active" (reset/off) — :property(key) matches only non-default values. */
+const INACTIVE_PROPERTY_VALUES = new Set(["default", "off", "no", "inherit"]);
+
+interface PropertyArg {
+  key: string;
+  value?: string;
+}
+
+/** Parse a :property() argument: `key` (active, any non-default value) or `key=value`. */
+function parsePropertyArg(raw: string): PropertyArg {
+  let arg = raw;
+  if (arg.startsWith('"') && arg.endsWith('"')) arg = arg.substring(1, arg.length - 1);
+  if (arg.startsWith("'") && arg.endsWith("'")) arg = arg.substring(1, arg.length - 1);
+  const eq = arg.indexOf("=");
+  const key = (eq >= 0 ? arg.substring(0, eq) : arg).trim();
+  const value = eq >= 0 ? arg.substring(eq + 1).trim() : undefined;
+  if (!key) throw new Error(`:property() requires a key, e.g. :property(emph) or :property(family=roman)`);
+  if (!isInlineStyleKey(key)) {
+    throw new Error(
+      `Invalid :property() key: '${key}'. Valid inline style keys are: ${INLINE_PROPERTIES.filter(isInlineStyleKey).join(", ")}. ` +
+      `Tracked-change regions are selected with :change(current|inserted|deleted).`
+    );
+  }
+  return { key, value };
+}
+
+/** Does an active value satisfy a :property() predicate? (case-insensitive, mirroring LyX's ascii_lowercase) */
+function matchesProperty(active: string | undefined, prop: PropertyArg): boolean {
+  if (active === undefined) return false;
+  const a = active.toLowerCase();
+  if (prop.value !== undefined) return a === prop.value.toLowerCase();
+  return !INACTIVE_PROPERTY_VALUES.has(a);
+}
+
+/** Active inline-style values at a given index, from the style markers before it in its parent's children. */
+export function propertyStateAt(list: Node[], index: number): Record<string, string | undefined> {
+  const state: Record<string, string | undefined> = {};
+  for (let i = 0; i < index; i++) {
+    const c = list[i];
+    if (c.type === "property" && isInlineStyleKey(c.key)) {
+      state[c.key] = c.value;
+    }
+  }
+  return state;
+}
+
+/** Parse a :change() argument (single region — no list syntax, dev log 92 §2.4/E6). */
+export function parseChangeArg(raw: string): "current" | "inserted" | "deleted" {
+  let want = raw;
+  if (want.startsWith('"') && want.endsWith('"')) want = want.substring(1, want.length - 1);
+  if (want.startsWith("'") && want.endsWith("'")) want = want.substring(1, want.length - 1);
+  if (want !== "current" && want !== "inserted" && want !== "deleted") {
+    throw new Error(`Invalid :change() argument: ${want}. Expected current, inserted, or deleted.`);
+  }
+  return want;
+}
+
+export type ScopeState = "current" | "inserted" | "deleted";
+export type ScopePredicate = (region: ScopeState, props: Record<string, string | undefined>) => boolean;
+
+/**
+ * Build the mutation scope predicate from a selector (dev log 92 §2.4/§2.5):
+ * OR across `,` groups, AND across chained :change()/:property() within a
+ * group; a group with no state predicates is unconstrained (E1/E4). Returns
+ * undefined when the selector has no state predicates at all (see-all
+ * default — mutations see all text, dev log 90).
+ */
+export function buildScopePredicate(selectorStr: string): ScopePredicate | undefined {
+  const groups = parseSelector(selectorStr);
+  const groupPreds: ScopePredicate[] = [];
+  let hasState = false;
+  for (const group of groups) {
+    const partPreds: ScopePredicate[] = [];
+    for (const part of group) {
+      if (!part.pseudos) continue;
+      for (const p of part.pseudos) {
+        if (p.name === "change" && p.argRaw !== undefined) {
+          hasState = true;
+          const want = parseChangeArg(p.argRaw);
+          partPreds.push((region) => region === want);
+        } else if (p.name === "property" && p.argRaw !== undefined) {
+          hasState = true;
+          const prop = parsePropertyArg(p.argRaw);
+          partPreds.push((_region, props) => matchesProperty(props?.[prop.key], prop));
+        }
+      }
+    }
+    groupPreds.push((region, props) => partPreds.every((p) => p(region, props)));
+  }
+  if (!hasState) return undefined;
+  return (region, props) => groupPreds.some((g) => g(region, props));
+}
+
+/** Does a block contain any text under the given style state? (:property() on blocks.) */
+function blockContainsProperty(node: BlockNode, prop: PropertyArg): boolean {
+  let found = false;
+  const walk = (list: Node[]) => {
+    if (found) return;
+    const state: Record<string, string | undefined> = {};
+    for (const c of list) {
+      if (found) return;
+      if (c.type === "text") {
+        if (matchesProperty(state[prop.key], prop)) {
+          found = true;
+          return;
+        }
+      } else if (c.type === "property" && isInlineStyleKey(c.key)) {
+        state[c.key] = c.value;
+      } else if (c.type === "block") {
+        walk((c as BlockNode).children);
+      }
+    }
+  };
+  walk(node.children);
+  return found;
 }
 
 /** Does a block contain any text sitting in the given region? (:change() on layouts.) */
@@ -300,7 +421,12 @@ function blockContainsRegion(node: BlockNode, want: "current" | "inserted" | "de
   return found;
 }
 
-function matchNode(node: Node, part: SelectorPart, region?: "deleted" | "inserted" | "current"): boolean {
+function matchNode(
+  node: Node,
+  part: SelectorPart,
+  region?: "deleted" | "inserted" | "current",
+  propState?: Record<string, string | undefined>,
+): boolean {
   if (part.tag === "property") {
     if (node.type !== "property") return false;
     if (part.argExact && node.key !== part.argExact) return false;
@@ -368,16 +494,31 @@ function matchNode(node: Node, part: SelectorPart, region?: "deleted" | "inserte
         // equals the argument. On a block (layout), matches when the block
         // CONTAINS text in that region (e.g. layout:change(deleted) selects
         // deleted-bearing layouts).
-        let want = p.argRaw;
-        if (want.startsWith('"') && want.endsWith('"')) want = want.substring(1, want.length - 1);
-        if (want.startsWith("'") && want.endsWith("'")) want = want.substring(1, want.length - 1);
-        if (want !== "current" && want !== "inserted" && want !== "deleted") {
-          throw new Error(`Invalid :change() argument: ${want}. Expected current, inserted, or deleted.`);
-        }
+        const want = parseChangeArg(p.argRaw);
         if (node.type === "text") {
           if (region !== want) return false;
         } else if (node.type === "block") {
-          if (!blockContainsRegion(node, want)) return false;
+          // Matches when the block SITS IN the region of its parent OR contains
+          // text in that region (dev log 92 §2.1) — so insets inside a rejected
+          // run are no longer invisible.
+          const sitsInParent = region === want;
+          if (!sitsInParent && !blockContainsRegion(node, want)) return false;
+        } else {
+          return false;
+        }
+      }
+
+      if (p.name === "property" && p.argRaw !== undefined) {
+        // :property(key[=value]) — select nodes under an inline style state
+        // (dev log 92 §2.2). Text nodes match by their active value; blocks
+        // match when they SIT IN the parent's style span OR contain text
+        // under the style; property nodes never match.
+        const prop = parsePropertyArg(p.argRaw);
+        if (node.type === "text") {
+          if (!matchesProperty(propState?.[prop.key], prop)) return false;
+        } else if (node.type === "block") {
+          const sitsInParent = propState !== undefined && matchesProperty(propState[prop.key], prop);
+          if (!sitsInParent && !blockContainsProperty(node, prop)) return false;
         } else {
           return false;
         }
@@ -391,10 +532,11 @@ function matchNode(node: Node, part: SelectorPart, region?: "deleted" | "inserte
 function findDescendants(nodes: Node[], part: SelectorPart, results: Node[] = []): Node[] {
   let deletedDepth = 0;
   let insertedDepth = 0;
+  const propState: Record<string, string | undefined> = {};
   for (const node of nodes) {
     const region: "deleted" | "inserted" | "current" =
       deletedDepth > 0 ? "deleted" : insertedDepth > 0 ? "inserted" : "current";
-    if (matchNode(node, part, region)) {
+    if (matchNode(node, part, region, propState)) {
       results.push(node);
     }
     if (node.type === "block") {
@@ -404,6 +546,8 @@ function findDescendants(nodes: Node[], part: SelectorPart, results: Node[] = []
       const d = advanceChangeDepths(node.key, deletedDepth, insertedDepth);
       deletedDepth = d.deletedDepth;
       insertedDepth = d.insertedDepth;
+    } else if (node.type === "property" && isInlineStyleKey(node.key)) {
+      propState[node.key] = node.value;
     }
   }
 
@@ -489,7 +633,7 @@ function findFollowingSiblings(
   const results: Node[] = [];
   for (let i = ctx.index + 1; i < ctx.parentChildren.length; i++) {
     const sibling = ctx.parentChildren[i];
-    if (matchNode(sibling, part, regionAt(ctx.parentChildren, i))) {
+    if (matchNode(sibling, part, regionAt(ctx.parentChildren, i), propertyStateAt(ctx.parentChildren, i))) {
       results.push(sibling);
     }
     // Also search descendants of sibling blocks (like space combinator does)
@@ -512,7 +656,7 @@ function hasInterveningMatch(
 ): boolean {
   for (let i = startIndex; i < parentChildren.length; i++) {
     if (parentChildren[i] === node) return false; // reached target, no match found
-    if (matchNode(parentChildren[i], innerPart, regionAt(parentChildren, i))) return true;
+    if (matchNode(parentChildren[i], innerPart, regionAt(parentChildren, i), propertyStateAt(parentChildren, i))) return true;
     // Also check descendants of intervening blocks
     if (parentChildren[i].type === "block") {
       const descMatches = findDescendants((parentChildren[i] as BlockNode).children, innerPart);
@@ -607,7 +751,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
               for (let si = ctx.index - 1; si >= 0; si--) {
                 const prev = ctx.parentChildren[si];
                 if (prev.type === "text" || prev.type === "property") continue;
-                return matchNode(prev, innerPart, regionAt(ctx.parentChildren, si));
+                return matchNode(prev, innerPart, regionAt(ctx.parentChildren, si), propertyStateAt(ctx.parentChildren, si));
               }
               return false;
             });

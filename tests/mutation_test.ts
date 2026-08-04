@@ -2287,3 +2287,185 @@ Deno.test("DL91 - --find spanning an inset NO_MATCH names the blocker", { timeou
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
+
+// --- Dev log 92 phase B: structural scope (no new syntax; scope = selector combination) ---
+
+Deno.test("DL92 B - union scope: change(current), change(deleted) spans both regions, order-independent", { timeout: 15000 }, async () => {
+  // The two 'and' occurrences are non-adjacent (separated by the inserted zzz),
+  // so each scope-accepted match produces its own replacement.
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\change_inserted 1 1700000001\n" +
+    "zzz\n" +
+    "\\change_unchanged\n" +
+    "and\n" +
+    "\\end_layout\n";
+  for (const sel of [
+    "layout[Standard]:change(current), layout[Standard]:change(deleted)",
+    "layout[Standard]:change(deleted), layout[Standard]:change(current)",
+  ]) {
+    const tempFile = await writeTempLyx("temp_dl92b_union.lyx", body, "\\author 1 \"Alice\"\n");
+    try {
+      const result = await runCliWithConfig(
+        ["set", tempFile, sel, "X", "--find", "and"],
+        { trackChanges: true, authorName: "Alice" },
+      );
+      assertEquals(result.modified_nodes, 1, `${sel}: layout replaced`);
+      const text = allText(firstLayoutChildren(await Deno.readTextFile(tempFile)));
+      assertEquals((text.match(/X/g) || []).length, 2, `${sel}: both current + rejected 'and' replaced`);
+      assertEquals((text.match(/and/g) || []).length, 2, `${sel}: both erased 'and's preserved as rejected text`);
+      assertStringIncludes(text, "zzz", "inserted text untouched by the union scope");
+    } finally {
+      try { await Deno.remove(tempFile); } catch { /* ignore */ }
+    }
+  }
+});
+
+Deno.test("DL92 B - union scope excludes the omitted region (inserted) from --find", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "and\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\change_inserted 1 1700000001\n" +
+    "zzz\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl92b_excl.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]:change(current), layout[Standard]:change(deleted)", "X", "--find", "zzz"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.code, "NO_MATCH", "inserted text is outside the union scope");
+    assertStringIncludes(await Deno.readTextFile(tempFile), "zzz", "file untouched");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL92 B - an unscoped OR arm widens the scope to see-all (E4)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\change_inserted 1 1700000001\n" +
+    "zzz\n" +
+    "\\change_unchanged\n" +
+    "and\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl92b_e4.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]:change(deleted), layout[Standard]", "X", "--find", "and"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, "see-all scope still replaces the layout");
+    const text = allText(firstLayoutChildren(await Deno.readTextFile(tempFile)));
+    assertEquals((text.match(/X/g) || []).length, 2, "both current + rejected 'and' replaced (see-all)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL92 B - :property() scope restricts --find to the styled text", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "plain foo\n" +
+    "\\emph on\n" +
+    "emph foo\n" +
+    "\\emph default\n" +
+    "plain foo\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl92b_prop.lyx", body);
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]:property(emph)", "X", "--find", "foo"],
+      { trackChanges: false, authorName: "me" },
+    );
+    assertEquals(result.modified_nodes, 1, "property-scoped find replaces in the layout");
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "emph X", "only the emphasized foo replaced");
+    assertEquals((text.match(/plain foo/g) || []).length, 2, "both plain foo occurrences untouched");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL92 B - chained :property(emph):change(deleted) requires both axes (E9)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\emph on\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\emph default\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl92b_chain.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]:property(emph):change(deleted)", "X", "--find", "and"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, "conjunction scope replaces in the layout");
+    const text = allText(firstLayoutChildren(await Deno.readTextFile(tempFile)));
+    assertEquals((text.match(/X/g) || []).length, 1, "only the emph+deleted 'and' replaced");
+    assertEquals((text.match(/and/g) || []).length, 2, "both deleted 'and's preserved as rejected text");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL92 B - the rejected-text warning is suppressed under any explicit scope (E7)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "and\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl92b_warn.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]:change(deleted)", "X", "--find", "and"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    const warnings = result.warnings ?? [];
+    assertEquals(
+      warnings.some((w) => w.includes("matched inside \\change_deleted")),
+      false,
+      "no rejected-text warning under an explicit scope",
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL92 B - split-after under the union scope works in any listed region (E5)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "current and\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "rejected\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl92b_split.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]:change(current), layout[Standard]:change(deleted)", "split-after", "and", "--text", " Y"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.matched_nodes, 1, "split in a listed region is allowed");
+    const text = allText(firstLayoutChildren(await Deno.readTextFile(tempFile)));
+    assertStringIncludes(text, "and Y", "payload inserted at the split point");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});

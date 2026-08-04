@@ -1,6 +1,6 @@
 import { parse } from "./parser.ts";
 import { serialize } from "./serializer.ts";
-import { query } from "./query.ts";
+import { query, buildScopePredicate, propertyStateAt, type ScopePredicate } from "./query.ts";
 import { getSchemaForClass, INSET_LAYOUTS, INSETS, INLINE_PROPERTIES } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
@@ -68,36 +68,27 @@ function nodeInChangeRegion(list: Node[], index: number): "deleted" | "inserted"
   return "current";
 }
 
-/**
- * Extract a :change(current|inserted|deleted) region scope from a selector, if
- * present. The last :change() in the selector wins. Returns undefined when the
- * selector has no region scope (default: mutations see all text — dev log 90).
- */
-function selectorRegionFilter(selector: string): "current" | "inserted" | "deleted" | undefined {
-  const matches = [...selector.matchAll(/:\s*change\s*\(\s*(current|inserted|deleted)\s*\)/g)];
-  if (matches.length === 0) return undefined;
-  return matches[matches.length - 1][1] as "current" | "inserted" | "deleted";
-}
-
 /** Region a split-after segment sits in (its owning children list). */
 function segmentRegion(seg: { owner?: Node[]; childIndex: number }): "deleted" | "inserted" | "current" {
   if (!seg.owner) return "current";
   return nodeInChangeRegion(seg.owner, seg.childIndex);
 }
 
-/** Is the whole span [ms, me) of a segment list inside the given region? */
-function matchSpanInRegion(
+/** Is the whole span [ms, me) of a segment list inside the mutation scope? (dev log 92 §2.5 E5) */
+function matchSpanInScope(
   segments: { owner?: Node[]; childIndex: number; text: string }[],
   ms: number,
   me: number,
-  region: string,
+  scope: ScopePredicate,
 ): boolean {
   let offset = 0;
   for (const seg of segments) {
     const segStart = offset;
     const segEnd = offset + seg.text.length;
     if (segEnd > ms && segStart < me) {
-      if (segmentRegion(seg) !== region) return false;
+      const region = segmentRegion(seg);
+      const props = seg.owner ? propertyStateAt(seg.owner, seg.childIndex) : {};
+      if (!scope(region, props)) return false;
     }
     offset = segEnd;
   }
@@ -189,7 +180,11 @@ Chainable pseudo-classes: must follow a tag
   :first, :last, :nth-child(an+b/even/odd),
   :contains("text"),
   :not(selector), :adjacent(selector),
-  :until(selector) bounds a ~ range to stop before the next matching sibling`,
+  :until(selector) bounds a ~ range to stop before the next matching sibling
+  :change(current|inserted|deleted)   nodes by tracked-change region
+  :property(key[=value])              nodes under an inline style state
+  :change()/:property() in a selector also scope set --find / split-after
+  (union via ',', conjunction via ':' chaining)`,
 
   read: `lq read - Output matching nodes and text content.
 
@@ -263,7 +258,8 @@ Options to change the default behaviour:
                             nodes' text, instead of replacing the entire text content.
                             Matches ALL text by default, including \change_deleted
                             (rejected) text; scope with :change(current|inserted|deleted)
-                            to target a specific region.
+                            and/or :property(...) in the selector (union via ',',
+                            conjunction via ':' chaining).
   --replace-all             Replace ALL children of the target block, not just text nodes.
                             Mutually exclusive with --find.`,
 
@@ -1501,10 +1497,11 @@ function foldNegativeDepth(args: string[]): string[] {
 
     const newValue = flags._.join(" ");
 
-    // Region scope from a :change(...) selector (dev log 90 §5.5): restricts
-    // --find to the scoped region, disambiguating a phrase present in both
-    // current and rejected text. Undefined = see all text by default.
-    const regionFilter = selectorRegionFilter(selector);
+    // Mutation scope from the selector's state predicates (dev log 92 §2.4):
+    // OR across `,` groups, AND across chained :change()/:property() within a
+    // group; a group with no state predicates is unconstrained. Undefined =
+    // see all text by default (dev log 90).
+    const scope = buildScopePredicate(selector);
 
     // Track total substring matches for stderr notification
     let totalFindMatches = 0;
@@ -1593,7 +1590,7 @@ function foldNegativeDepth(args: string[]): string[] {
           // Cross-node surgical replace: concatenates text children
           // and matches findStr across punctuation-induced text-node boundaries.
           const { newChildren, matchCount: nodeFindCount, deletedHitCount: nodeDeletedHits, crossedInsetCount: nodeCrossedInset } = applyCrossNodeReplace(
-            node.children, findStr, newValue, trackChanges, tcAid, tcTs, regionFilter,
+            node.children, findStr, newValue, trackChanges, tcAid, tcTs, scope,
           );
           // Flatten any nested markers produced by editing inside existing
           // tracked changes (safety net — the rebuild emits flat markers).
@@ -1651,7 +1648,7 @@ function foldNegativeDepth(args: string[]): string[] {
             if (!processedParents.has(parentCtx.list)) {
               processedParents.add(parentCtx.list);
               const { newChildren, matchCount, deletedHitCount, crossedInsetCount } = applyCrossNodeReplace(
-                parentCtx.list, findStr, newValue, trackChanges, tcAid, tcTs, regionFilter,
+                parentCtx.list, findStr, newValue, trackChanges, tcAid, tcTs, scope,
               );
               parentCtx.list.splice(
                 0,
@@ -2088,9 +2085,10 @@ function foldNegativeDepth(args: string[]): string[] {
       let splitRegion: "deleted" | "inserted" | "current" = "current";
       let splitRegionInfo: { key: "change_deleted" | "change_inserted"; author: number; ts: string; node: PropertyNode } | null = null;
       let splitRegionContinues = false;
-      // Region scope from a :change(...) selector (dev log 90 §5.4): resolves
-      // SPLIT_AMBIGUOUS by restricting the match to the scoped region.
-      const splitRegionFilter = selectorRegionFilter(selector);
+      // Mutation scope from the selector's state predicates (dev log 92
+      // §2.4/E5): resolves SPLIT_AMBIGUOUS by restricting the split point to
+      // the scope; undefined = see all text by default.
+      const splitScope = buildScopePredicate(selector);
       if (position === "split-after" && targetParentBlock) {
         // Build concatenated text, recursing into nested layouts so the
         // documented two-pass footnote workflow works (test_report_38 F3): a
@@ -2112,7 +2110,7 @@ function foldNegativeDepth(args: string[]): string[] {
           let pos = 0;
           while ((pos = fullText.indexOf(splitMatch!, pos)) !== -1) {
             const me = pos + splitMatch!.length;
-            if (!splitRegionFilter || matchSpanInRegion(segments, pos, me, splitRegionFilter)) {
+            if (!splitScope || matchSpanInScope(segments, pos, me, splitScope)) {
               totalMatches++;
               if (matchStart === -1) matchStart = pos;
             }

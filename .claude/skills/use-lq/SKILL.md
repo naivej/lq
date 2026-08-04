@@ -46,7 +46,9 @@ The query engine supports traversing the CST using CSS-like selector:
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
   - `:until(selector)` bounds a `~` sibling range — rejects nodes that have a sibling matching the inner selector between themselves and the anchor. Example: `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` gives all Standard paragraphs in the Introduction section. **Caution:** `:contains` is recursive (matches body/tables too), so a common heading word explodes the range — anchor on unique heading text and run `--count` first (e.g. `layout[Section]:contains('Introduction'):first`).
-  - `:change(current|inserted|deleted)` matches nodes by the tracked-change region they sit in. Text nodes match by their own region; layouts/insets match if they contain text in that region, recursively; property nodes never match. Also scopes `set --find` / `split-after` to that region.
+  - `:change(current|inserted|deleted)` matches nodes by the tracked-change region they sit in. Text nodes match by their own region; layouts/insets match if they sit in that region of their parent OR contain text in it, recursively (so `inset:change(deleted)` finds insets inside a rejected run); property nodes never match. Also scopes `set --find` / `split-after`.
+  - `:property(key[=value])` matches nodes under an inline style state: `text:property(emph)` (emphasis active), `text:property(family=roman)` (roman-family text). Text nodes match by their active value (case-insensitive; `key` = any non-default value, `key=value` = a specific value); layouts/insets match if they sit in the parent's style span OR contain styled text; property nodes never match. Change keys are excluded — use `:change()` for regions. Also scopes `set --find` / `split-after`.
+  - **Scoping**: the selector's `:change()`/`:property()` predicates scope `set --find` / `split-after` — a match must be fully inside the selector's region/style combination: `,` OR-groups give a union (e.g. `text:change(current), text:change(deleted)` = current+deleted but not inserted — a diff view/edit), `:` chaining requires every predicate. An unscoped arm makes the scope see-all.
   - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 
 ## Context-Aware Strict Validation
@@ -102,7 +104,7 @@ The query engine supports traversing the CST using CSS-like selector:
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
   - Default behaviour: replaces text content within the targeted nodes while preserving insets as current content. Inline properties around the replaced text are dropped when tracking is off (no dead markup).
   - `--replace-all`: Wipe all children and rebuild from scratch.
-  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced.
+  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced. Scope to a tracked-change region (`:change(...)`) or inline style (`:property(...)`) via the selector; combine regions with `,` (union) and predicates with `:` chaining.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq undo <file> <selector> [<substring>]`
@@ -133,7 +135,7 @@ With `--track-changes on` (the default), mutations record a reviewable edit inst
 
 **Selecting tracked changes:** `:contains(...)` matches text inside `\change_deleted`.
 
-**Mutating tracked changes:** `--find` and `split-after` match `\change_deleted` as well. Editing rejected text inserts the replacement as a new tracked change adjacent to the deletion (never nested); the deleted text is preserved.
+**Mutating tracked changes:** `--find` and `split-after` match `\change_deleted` as well. Editing rejected text inserts the replacement as a new tracked change adjacent to the deletion (never nested); the deleted text is preserved. Scope a find to specific regions/styles with the selector's `:change(...)`/`:property(...)` predicates (union via `,`, conjunction via `:` chaining) — e.g. `text:change(deleted), text:change(inserted)` for a diff-only view/edit.
 
 **Viewing tracked changes:** `dump` and `read` (default) annotate text inside tracked blocks with `changeStatus` (`deleted`/`inserted`); `read --text-only` marks them inline as `\change_deleted{...}` / `\change_inserted{...}`.
 

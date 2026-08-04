@@ -132,3 +132,14 @@ export const INLINE_PROPERTIES: readonly string[] = [
   "lyxadded", "lyxdeleted", "lyxobjdeleted", "lyxdisplayobjdeleted",
   "lyxudisplayobjdeleted",
 ];
+
+/** Tracked-change / legacy marker keys — the change axis is served by :change(), not :property() (dev log 92 §2.2). */
+export const CHANGE_AXIS_KEYS: ReadonlySet<string> = new Set([
+  "change_inserted", "change_deleted", "change_unchanged",
+  "lyxadded", "lyxdeleted", "lyxobjdeleted", "lyxdisplayobjdeleted", "lyxudisplayobjdeleted",
+]);
+
+/** Is a property key an inline STYLE key (not a tracked-change marker)? */
+export function isInlineStyleKey(key: string): boolean {
+  return INLINE_PROPERTIES.includes(key) && !CHANGE_AXIS_KEYS.has(key);
+}

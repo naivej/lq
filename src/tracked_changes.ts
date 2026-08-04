@@ -10,6 +10,8 @@
  */
 import { Node, BlockNode, DocumentNode, PropertyNode } from "./ast.ts";
 import { advanceChangeDepths, concatenateTextNodes, mapPosToSegment, type TextSegment } from "./text_utils.ts";
+import { isInlineStyleKey } from "./registry.ts";
+import type { ScopePredicate } from "./query.ts";
 
 /** Marker keys: \change_deleted / \change_inserted open a tracked region. */
 export function isChangeOpener(key: string): boolean {
@@ -441,25 +443,29 @@ function segmentsCrossInset(children: Node[], segA: TextSegment, segB: TextSegme
 }
 
 /**
- * Is the whole buffer range [ms, me) inside a single region of the given
- * type? Used to restrict --find to a :change(current|inserted|deleted) scope
- * (dev log 90 §5.5): the selector's region filter disambiguates a phrase that
- * exists in both current and rejected text.
+ * Is the whole buffer range [ms, me) inside the mutation scope? The scope is
+ * the selector's state-predicate combination (dev log 92 §2.4/E2): every
+ * overlapping segment's (region, active property values) must satisfy the
+ * predicate. Undefined scope = see all text by default (dev log 90).
  */
-function matchInRegion(
+function matchInScope(
   segments: TextSegment[],
-  segRegions: { deleted: boolean; inserted: boolean; author: number }[],
+  segRegions: { deleted: boolean; inserted: boolean; author: number; props: Record<string, string | undefined> }[],
   ms: number,
   me: number,
-  region: "current" | "inserted" | "deleted",
+  scope: ScopePredicate,
 ): boolean {
   let offset = 0;
   for (let j = 0; j < segments.length; j++) {
     const segStart = offset;
     const segEnd = offset + segments[j].text.length;
     if (segEnd > ms && segStart < me) {
-      const r = segRegions[j].deleted ? "deleted" : segRegions[j].inserted ? "inserted" : "current";
-      if (r !== region) return false;
+      const region: "current" | "inserted" | "deleted" = segRegions[j].deleted
+        ? "deleted"
+        : segRegions[j].inserted
+        ? "inserted"
+        : "current";
+      if (!scope(region, segRegions[j].props)) return false;
     }
     offset = segEnd;
   }
@@ -548,11 +554,13 @@ function propertyStrictlyInsideMatch(
  *   model — never nested).
  *
  * Matches that cross a structural boundary (inset between text nodes) are
- * silently skipped. When `regionFilter` is set (a :change(inserted|deleted|current)
- * selector), only matches fully inside that region are accepted — the selector's
- * region scope disambiguates a phrase present in both current and rejected text
- * (dev log 90 §5.5), and the deleted-hit warning is suppressed (explicit scoping
- * needs no warning). deletedHitCount reports how many occurrences touched
+ * silently skipped. When `scope` is set (a :change()/:property() selector
+ * combination — dev log 92 §2.4), only matches fully inside the scope are
+ * accepted: a :change() region scope disambiguates a phrase present in both
+ * current and rejected text (dev log 90 §5.5), and a :property() scope
+ * restricts to an inline style; the deleted-hit warning is suppressed under
+ * any explicit scope (dev log 92 E7). An undefined scope = see all text by
+ * default (dev log 90); deletedHitCount reports how many occurrences touched
  * \change_deleted text, so the caller can warn.
  */
 export function applyCrossNodeReplace(
@@ -562,7 +570,7 @@ export function applyCrossNodeReplace(
   tracked: boolean,
   authorId: number,
   ts: string,
-  regionFilter?: "current" | "inserted" | "deleted",
+  scope?: ScopePredicate,
 ): { newChildren: Node[]; matchCount: number; deletedHitCount: number; crossedInsetCount: number } {
   const { segments, fullText } = concatenateTextNodes(children, { includeDeleted: true });
   if (segments.length === 0 || fullText.length === 0) {
@@ -578,14 +586,21 @@ export function applyCrossNodeReplace(
   }
   if (matchStarts.length === 0) return { newChildren: [...children], matchCount: 0, deletedHitCount: 0, crossedInsetCount: 0 };
 
-  // Precompute each segment's original region state, so matched runs can be
-  // treated per-region (same-author inserted → drop; deleted → absorb) and
-  // matches touching rejected text can be counted for the warning.
-  const segRegions: { deleted: boolean; inserted: boolean; author: number }[] = [];
+  // Precompute each segment's original region + inline-style state, so matched
+  // runs can be treated per-region (same-author inserted → drop; deleted →
+  // absorb), scope matches per-segment (dev log 92), and matches touching
+  // rejected text can be counted for the warning.
+  const segRegions: {
+    deleted: boolean;
+    inserted: boolean;
+    author: number;
+    props: Record<string, string | undefined>;
+  }[] = [];
   {
     let deletedDepth = 0;
     let insertedDepth = 0;
     let insertedAuthor = 0;
+    const props: Record<string, string | undefined> = {};
     let seg = 0;
     for (let i = 0; i < children.length; i++) {
       const c = children[i];
@@ -594,8 +609,10 @@ export function applyCrossNodeReplace(
         deletedDepth = depths.deletedDepth;
         insertedDepth = depths.insertedDepth;
         if (c.key === "change_inserted") insertedAuthor = parseChangeMarker(c.value).authorId;
+      } else if (c.type === "property" && isInlineStyleKey(c.key)) {
+        props[c.key] = c.value;
       } else if (c.type === "text" && seg < segments.length && segments[seg].childIndex === i) {
-        segRegions.push({ deleted: deletedDepth > 0, inserted: insertedDepth > 0, author: insertedAuthor });
+        segRegions.push({ deleted: deletedDepth > 0, inserted: insertedDepth > 0, author: insertedAuthor, props: { ...props } });
         seg++;
       }
     }
@@ -619,10 +636,11 @@ export function applyCrossNodeReplace(
       crossedInsetCount++;
       continue;
     }
-    // Region filter from a :change(...) selector: only matches fully inside
-    // the scoped region are accepted (dev log 90 §5.5).
-    if (regionFilter && !matchInRegion(segments, segRegions, ms, me, regionFilter)) continue;
-    if (!regionFilter && rangeTouchesDeleted(segments, segRegions, ms, me)) deletedHitCount++;
+    // Scope from the selector's state predicates (dev log 92 §2.4): only
+    // matches fully inside the scope are accepted; an undefined scope sees
+    // all text by default (dev log 90 §5.5).
+    if (scope && !matchInScope(segments, segRegions, ms, me, scope)) continue;
+    if (!scope && rangeTouchesDeleted(segments, segRegions, ms, me)) deletedHitCount++;
     for (let p = ms; p < me; p++) isMatched[p] = true;
     validCount++;
   }
