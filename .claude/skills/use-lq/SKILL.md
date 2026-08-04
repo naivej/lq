@@ -46,8 +46,8 @@ The query engine supports traversing the CST using CSS-like selector:
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
   - `:until(selector)` bounds a `~` sibling range — rejects nodes that have a sibling matching the inner selector between themselves and the anchor. Example: `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` gives all Standard paragraphs in the Introduction section. **Caution:** `:contains` is recursive (matches body/tables too), so a common heading word explodes the range — anchor on unique heading text and run `--count` first (e.g. `layout[Section]:contains('Introduction'):first`).
-  - `:change(current|inserted|deleted)` matches nodes by the tracked-change region they sit in. Text nodes match by their own region; layouts/insets match if they sit in that region of their parent OR contain text in it, recursively (so `inset:change(deleted)` finds insets inside a rejected run); property nodes never match. Also scopes `set --find` / `split-after`.
-  - `:property(key[=value])` matches nodes under an inline style state: `text:property(emph)` (emphasis active), `text:property(family=roman)` (roman-family text). Text nodes match by their active value (case-insensitive; `key` = any non-default value, `key=value` = a specific value); layouts/insets match if they sit in the parent's style span OR contain styled text; property nodes never match. Change keys are excluded — use `:change()` for regions. Also scopes `set --find` / `split-after`.
+  - `:change(current|inserted|deleted)` matches nodes by the tracked-change region they sit in. Text nodes match by their effective region; layouts/insets match if they sit in that region of their parent OR contain text in it, recursively (so `inset:change(deleted)` and its nested `Plain Layout` prose are reachable inside a rejected run); property nodes never match. State is inherited through nested layouts/insets, while inset metadata remains opaque. Also scopes `set --find` / `split-after`.
+  - `:property(key[=value])` matches nodes under an inline style state: `text:property(emph)` (emphasis active), `text:property(family=roman)` (roman-family text). Text nodes match by their effective value (case-insensitive; `key` = any non-default value, `key=value` = a specific value); layouts/insets match if they sit in the parent's style span OR contain styled text, including nested layout prose. State is inherited through nested layouts/insets, but Foot status and CommandInset parameter lines remain opaque. Property nodes never match. Change keys are excluded — use `:change()` for regions. Also scopes `set --find` / `split-after`.
   - **Scoping**: the selector's `:change()`/`:property()` predicates scope `set --find` / `split-after` — a match must be fully inside the selector's region/style combination: `,` OR-groups give a union (e.g. `text:change(current), text:change(deleted)` = current+deleted but not inserted — a diff view/edit), `:` chaining requires every predicate. An unscoped arm makes the scope see-all.
   - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
 
@@ -71,7 +71,7 @@ The query engine supports traversing the CST using CSS-like selector:
     - Setting a non-`none` mode makes `lq init` run a fast reachability probe and warn if LyXServer can't be reached (no socket found, or LyX is not accepting commands) — the warning doesn't abort init; enable LyXServer in LyX Preferences and restart LyX.
   - `--track-changes <on|off>`: Enable or disable tracked changes for all mutation commands (default on).
   - `--author-name <name>`: Set the author recorded on new tracked changes (default `"lq user"`).
-  - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`.
+  - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`. `<n>` must be a complete non-negative integer; malformed numeric prefixes are rejected.
 
 ### Query
 
@@ -115,7 +115,7 @@ The query engine supports traversing the CST using CSS-like selector:
   - Positions:
     - `before`/`after`: insert a layout as a **sibling** of the target.
     - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
-    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. Only proceeds if the match appears **exactly once** in the matched text. For prose with citations, insert a text + citation-inset payload in one pass with `--raw-file`; for complex payloads, prefer two passes (skeleton first, then populate).
+    - `split-after <text>`: split a text node right after the exact, case-sensitive substring and insert new content at that point. All text is visible by default, including `\change_deleted`; scope with `:change(...)` or `:property(...)`. Recursive `split-after` reaches prose in nested layouts inside insets but never inset metadata. Only proceeds if the match appears **exactly once** in the matched text. For prose with citations, insert a text + citation-inset payload in one pass with `--raw-file`; for complex payloads, prefer two passes (skeleton first, then populate).
   - Helpers (must provide exactly one generation strategy):
     - `--layout <name> --text <content>`: Insert a layout block with the given name and text (e.g., --layout 'Standard' --text 'Hello world'). --text requires --layout, except with 'split-after' where bare --text inserts inline text.
     - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
@@ -136,6 +136,8 @@ With `--track-changes on` (the default), mutations record a reviewable edit inst
 **Selecting tracked changes:** `:contains(...)` matches text inside `\change_deleted`.
 
 **Mutating tracked changes:** `--find` and `split-after` match `\change_deleted` as well. Editing rejected text inserts the replacement as a new tracked change adjacent to the deletion (never nested); the deleted text is preserved. Scope a find to specific regions/styles with the selector's `:change(...)`/`:property(...)` predicates (union via `,`, conjunction via `:` chaining) — e.g. `text:change(deleted), text:change(inserted)` for a diff-only view/edit.
+
+State-scoped edits also reach prose in nested layouts inside an atomically tracked inset. The enclosing change/style state is inherited, while inset metadata such as `status`, `LatexCommand`, and citation parameters is not matchable or editable as prose.
 
 **Viewing tracked changes:** `dump` and `read` (default) annotate text inside tracked blocks with `changeStatus` (`deleted`/`inserted`); `read --text-only` marks them inline as `\change_deleted{...}` / `\change_inserted{...}`.
 

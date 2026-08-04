@@ -455,7 +455,19 @@ Deno.test("DL92 - :change() block matches an inset sitting inside a deleted regi
   const insets = query(ast, "inset:change(deleted)");
   assertEquals(insets.length, 1);
   assertEquals((insets[0] as { tag?: string }).tag, "inset");
-  // layout:change(deleted) unchanged — still matches via "contains text in region"
+  const nestedText = query(ast, "text:change(deleted)");
+  assertEquals(nestedText.some(n => n.type === "text" && n.text === "foot body"), true);
+  const nestedLayouts = query(ast, "layout[Plain Layout]:change(deleted)");
+  assertEquals(nestedLayouts.length, 1);
+  // Both the outer paragraph and nested Plain Layout carry deleted text.
   const layouts = query(ast, "layout:change(deleted)");
-  assertEquals(layouts.length, 1);
+  assertEquals(layouts.length, 2);
+});
+
+Deno.test("Report 42 F2 - inherited style state reaches nested inset prose", () => {
+  const ast = parse(INSET_STYLE_BODY);
+  const nestedText = query(ast, "text:property(emph)");
+  assertEquals(nestedText.some(n => n.type === "text" && n.text === "foot content"), true);
+  const nestedLayouts = query(ast, "layout[Plain Layout]:property(emph)");
+  assertEquals(nestedLayouts.length, 1);
 });

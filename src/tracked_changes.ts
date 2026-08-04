@@ -9,7 +9,18 @@
  * cross-node substring replacement. See dev logs 74–79 for the design.
  */
 import { Node, BlockNode, DocumentNode, PropertyNode } from "./ast.ts";
-import { advanceChangeDepths, concatenateTextNodes, mapPosToSegment, type TextSegment } from "./text_utils.ts";
+import {
+  advanceChangeDepths,
+  advanceTraversalState,
+  concatenateTextNodes,
+  createTraversalState,
+  enterTraversalState,
+  mapPosToSegment,
+  traversalChange,
+  traversalRegion,
+  type TextSegment,
+  type TraversalState,
+} from "./text_utils.ts";
 import { isInlineStyleKey } from "./registry.ts";
 import type { ScopePredicate } from "./query.ts";
 
@@ -571,8 +582,12 @@ export function applyCrossNodeReplace(
   authorId: number,
   ts: string,
   scope?: ScopePredicate,
+  inheritedState?: TraversalState,
 ): { newChildren: Node[]; matchCount: number; deletedHitCount: number; crossedInsetCount: number } {
-  const { segments, fullText } = concatenateTextNodes(children, { includeDeleted: true });
+  const { segments, fullText } = concatenateTextNodes(children, {
+    includeDeleted: true,
+    inheritedState,
+  });
   if (segments.length === 0 || fullText.length === 0) {
     return { newChildren: [...children], matchCount: 0, deletedHitCount: 0, crossedInsetCount: 0 };
   }
@@ -597,22 +612,22 @@ export function applyCrossNodeReplace(
     props: Record<string, string | undefined>;
   }[] = [];
   {
-    let deletedDepth = 0;
-    let insertedDepth = 0;
-    let insertedAuthor = 0;
-    const props: Record<string, string | undefined> = {};
+    const state = enterTraversalState(inheritedState ?? createTraversalState());
     let seg = 0;
     for (let i = 0; i < children.length; i++) {
       const c = children[i];
       if (c.type === "property" && (isChangeOpener(c.key) || isChangeCloser(c.key))) {
-        const depths = advanceChangeDepths(c.key, deletedDepth, insertedDepth);
-        deletedDepth = depths.deletedDepth;
-        insertedDepth = depths.insertedDepth;
-        if (c.key === "change_inserted") insertedAuthor = parseChangeMarker(c.value).authorId;
+        advanceTraversalState(state, c.key, c.value);
       } else if (c.type === "property" && isInlineStyleKey(c.key)) {
-        props[c.key] = c.value;
+        advanceTraversalState(state, c.key, c.value);
       } else if (c.type === "text" && seg < segments.length && segments[seg].childIndex === i) {
-        segRegions.push({ deleted: deletedDepth > 0, inserted: insertedDepth > 0, author: insertedAuthor, props: { ...props } });
+        const change = traversalChange(state);
+        segRegions.push({
+          deleted: traversalRegion(state) === "deleted",
+          inserted: traversalRegion(state) === "inserted",
+          author: change.author,
+          props: { ...state.properties },
+        });
         seg++;
       }
     }
@@ -681,11 +696,11 @@ export function applyCrossNodeReplace(
   // match that started inside an emphasized region).
   let pendingProps: Node[] = [];
   // Original region state derived from the change markers while walking.
-  let openDeletedDepth = 0;
-  let openInsertedDepth = 0;
-  let openAuthor = 0;
-  let openTs = "";
-  const openState = (): OutState => (openDeletedDepth > 0 ? "d" : openInsertedDepth > 0 ? "i" : "u");
+  const openTraversalState = enterTraversalState(inheritedState ?? createTraversalState());
+  const openState = (): OutState => {
+    const region = traversalRegion(openTraversalState);
+    return region === "deleted" ? "d" : region === "inserted" ? "i" : "u";
+  };
 
   const flushProps = () => {
     for (const p of pendingProps) atoms.push({ kind: "prop", node: p });
@@ -731,7 +746,8 @@ export function applyCrossNodeReplace(
           }
         }
         if (!needsStandardPath && inPlaceText !== null) {
-          atoms.push({ kind: "text", text: inPlaceText, state: openState(), author: openAuthor, ts: openTs });
+          const change = traversalChange(openTraversalState);
+          atoms.push({ kind: "text", text: inPlaceText, state: openState(), author: change.author, ts: change.ts });
           concatPos += segText.length;
           segIdx++;
           continue;
@@ -791,8 +807,8 @@ export function applyCrossNodeReplace(
             kind: "text",
             text: segText.substring(charIdx, runEnd),
             state: openState(),
-            author: openAuthor,
-            ts: openTs,
+            author: traversalChange(openTraversalState).author,
+            ts: traversalChange(openTraversalState).ts,
           });
           charIdx = runEnd;
         }
@@ -807,14 +823,7 @@ export function applyCrossNodeReplace(
         // Change markers are derived during serialization — only update the
         // walk's region state here. Markers strictly inside a match are
         // absorbed (the erased range re-serializes as one delete region).
-        const depths = advanceChangeDepths(child.key, openDeletedDepth, openInsertedDepth);
-        openDeletedDepth = depths.deletedDepth;
-        openInsertedDepth = depths.insertedDepth;
-        if (child.key === "change_inserted" || child.key === "change_deleted") {
-          const m = parseChangeMarker(child.value);
-          openAuthor = m.authorId;
-          openTs = m.ts;
-        }
+        advanceTraversalState(openTraversalState, child.key, child.value);
         continue;
       }
 

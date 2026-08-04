@@ -1,12 +1,18 @@
 import { parse } from "./parser.ts";
 import { serialize } from "./serializer.ts";
-import { query, buildScopePredicate, propertyStateAt, type ScopePredicate } from "./query.ts";
+import { query, buildScopePredicate, buildTraversalStateIndex, type ScopePredicate } from "./query.ts";
 import { getSchemaForClass, INSET_LAYOUTS, INSETS, INLINE_PROPERTIES } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode, TextNode } from "./ast.ts";
 import { validateInsetType, KNOWN_COMMAND_INSET_TYPES } from "./registry.ts";
-import { advanceChangeDepths, concatenateTextNodes, mapPosToSegment } from "./text_utils.ts";
+import {
+  advanceChangeDepths,
+  concatenateTextNodes,
+  mapPosToSegment,
+  traversalRegion,
+  type TextSegment,
+} from "./text_utils.ts";
 import { getCachedAst, setCachedAst, hashText, hashFile, setMaxCacheEntries } from "./cache.ts";
 import { clearSnapshot, collectSnapshots, commitMutation, loadSnapshot, nodeAtPath } from "./undo.ts";
 import {
@@ -68,15 +74,14 @@ function nodeInChangeRegion(list: Node[], index: number): "deleted" | "inserted"
   return "current";
 }
 
-/** Region a split-after segment sits in (its owning children list). */
-function segmentRegion(seg: { owner?: Node[]; childIndex: number }): "deleted" | "inserted" | "current" {
-  if (!seg.owner) return "current";
-  return nodeInChangeRegion(seg.owner, seg.childIndex);
+/** Region a split-after segment sits in, including enclosing inset state. */
+function segmentRegion(seg: TextSegment): "deleted" | "inserted" | "current" {
+  return traversalRegion(seg.state);
 }
 
 /** Is the whole span [ms, me) of a segment list inside the mutation scope? (dev log 92 §2.5 E5) */
 function matchSpanInScope(
-  segments: { owner?: Node[]; childIndex: number; text: string }[],
+  segments: TextSegment[],
   ms: number,
   me: number,
   scope: ScopePredicate,
@@ -87,7 +92,7 @@ function matchSpanInScope(
     const segEnd = offset + seg.text.length;
     if (segEnd > ms && segStart < me) {
       const region = segmentRegion(seg);
-      const props = seg.owner ? propertyStateAt(seg.owner, seg.childIndex) : {};
+      const props = seg.state.properties;
       if (!scope(region, props)) return false;
     }
     offset = segEnd;
@@ -295,7 +300,7 @@ Options:
   --author-name <name>     Set the author name used in tracked changes.
                            Default: "lq user".
   --max-cache-entries <n>  Set the maximum number of file caches kept in ~/.lq/cache/.
-                           Default: 50.`,
+                           Default: 50. Must be a complete non-negative integer.`,
 
   schema: `lq schema - Return all semantically valid layouts across 6 categories:
   documentLayouts      Styles valid for the document class (e.g. Section, Standard).
@@ -326,8 +331,9 @@ Arguments:
               'split-after <text>' Split the target's text right after the exact,
                                    case-sensitive <text> substring and insert new
                                    content at the split point. Only proceeds if <text>
-                                   appears exactly once in the target. Text inside
-                                   \\change_deleted blocks is skipped.
+                                   appears exactly once in the target. All text is visible
+                                   by default, including \\change_deleted; scope with
+                                   :change(current|inserted|deleted) or :property(...).
 
 Options (provide exactly one generation helper):
   --layout <name> --text <content>  Insert a layout block with the given name and text.
@@ -783,6 +789,60 @@ function countOccurrences(text: string, findStr: string): number {
   return count;
 }
 
+function buildTrackedDirectTextReplacement(
+  text: string,
+  findStr: string | undefined,
+  newValue: string,
+  authorId: number,
+  ts: string,
+): { nodes: Node[]; matchCount: number } {
+  if (findStr === undefined) {
+    return {
+      nodes: [
+        ...wrapInChangeMarkers([{ type: "text", text }], "deleted", authorId, ts),
+        ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", authorId, ts),
+      ],
+      matchCount: 0,
+    };
+  }
+
+  const nodes: Node[] = [];
+  let cursor = 0;
+  let matchCount = 0;
+  while (true) {
+    const matchStart = text.indexOf(findStr, cursor);
+    if (matchStart === -1) break;
+    if (matchStart > cursor) nodes.push({ type: "text", text: text.substring(cursor, matchStart) });
+    nodes.push(...wrapInChangeMarkers(
+      [{ type: "text", text: text.substring(matchStart, matchStart + findStr.length) }],
+      "deleted",
+      authorId,
+      ts,
+    ));
+    nodes.push(...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", authorId, ts));
+    cursor = matchStart + findStr.length;
+    matchCount++;
+  }
+
+  if (matchCount === 0) return { nodes: [{ type: "text", text }], matchCount: 0 };
+  if (cursor < text.length) nodes.push({ type: "text", text: text.substring(cursor) });
+  return { nodes, matchCount };
+}
+
+function foldNegativeCacheEntryValue(args: string[]): string[] {
+  const folded: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const next = args[i + 1];
+    if (args[i] === "--max-cache-entries" && next !== undefined && next.startsWith("-")) {
+      folded.push(`--max-cache-entries=${next}`);
+      i++;
+    } else {
+      folded.push(args[i]);
+    }
+  }
+  return folded;
+}
+
 // --- LyXServer refresh helpers ---
 
 /**
@@ -889,7 +949,10 @@ export async function runCli(args: string[]) {
   const cleanArgs = args.filter(a => a !== "--help" && a !== "-h");
 
   if (commandArg === "init") {
-    const flags = parseArgs(cleanArgs.slice(1), { string: ["layouts-dir", "refresh", "track-changes", "max-cache-entries", "author-name"] });
+    const flags = parseArgs(
+      foldNegativeCacheEntryValue(cleanArgs.slice(1)),
+      { string: ["layouts-dir", "refresh", "track-changes", "max-cache-entries", "author-name"] },
+    );
     assertNoUnknownFlags(flags, INIT_ONLY_FLAGS, "init");
     const hasFlags = flags["layouts-dir"] !== undefined ||
                      flags["refresh"] !== undefined ||
@@ -915,8 +978,11 @@ export async function runCli(args: string[]) {
     // Validate --max-cache-entries value
     let maxCacheEntries: number | undefined;
     if (maxCacheEntriesStr !== undefined) {
-      const n = parseInt(maxCacheEntriesStr, 10);
-      if (isNaN(n) || n < 0) {
+      if (!/^\d+$/.test(maxCacheEntriesStr)) {
+        printError("INVALID_FLAG", `--max-cache-entries must be a non-negative integer, got: '${maxCacheEntriesStr}'`);
+      }
+      const n = Number(maxCacheEntriesStr);
+      if (!Number.isSafeInteger(n)) {
         printError("INVALID_FLAG", `--max-cache-entries must be a non-negative integer, got: '${maxCacheEntriesStr}'`);
       }
       maxCacheEntries = n;
@@ -1455,6 +1521,8 @@ function foldNegativeDepth(args: string[]): string[] {
     return;
   }
 
+  const traversalStateIndex = buildTraversalStateIndex(ast.children);
+
   // Common guard: Prevent mutating core document structures directly
   const unsafeNodes = nodes.filter(n => (n.type === "block" && (n.tag === "body" || n.tag === "header" || n.tag === "document")));
   if (unsafeNodes.length > 0 && ["set", "delete", "insert"].includes(command)) {
@@ -1590,7 +1658,14 @@ function foldNegativeDepth(args: string[]): string[] {
           // Cross-node surgical replace: concatenates text children
           // and matches findStr across punctuation-induced text-node boundaries.
           const { newChildren, matchCount: nodeFindCount, deletedHitCount: nodeDeletedHits, crossedInsetCount: nodeCrossedInset } = applyCrossNodeReplace(
-            node.children, findStr, newValue, trackChanges, tcAid, tcTs, scope,
+            node.children,
+            findStr,
+            newValue,
+            trackChanges,
+            tcAid,
+            tcTs,
+            scope,
+            traversalStateIndex.get(node),
           );
           // Flatten any nested markers produced by editing inside existing
           // tracked changes (safety net — the rebuild emits flat markers).
@@ -1638,17 +1713,28 @@ function foldNegativeDepth(args: string[]): string[] {
           }
         }
       } else if (node.type === "text") {
+        const parentCtx = textParentIndex.get(node);
+        const nodeState = traversalStateIndex.get(node);
+        const nodeRegion = nodeState
+          ? traversalRegion(nodeState)
+          : (parentCtx ? nodeInChangeRegion(parentCtx.list, parentCtx.index) : "current");
         if (findStr !== undefined) {
           // Direct text node surgical replace. A text node inside a change
           // region must route through the marker-aware rebuild (dev log 90
           // 1b): a plain replace would embed the replacement inside the
           // surrounding \change_deleted and be rejected with it.
-          const parentCtx = textParentIndex.get(node);
-          if (parentCtx && nodeInChangeRegion(parentCtx.list, parentCtx.index) !== "current") {
+          if (parentCtx && nodeRegion !== "current") {
             if (!processedParents.has(parentCtx.list)) {
               processedParents.add(parentCtx.list);
               const { newChildren, matchCount, deletedHitCount, crossedInsetCount } = applyCrossNodeReplace(
-                parentCtx.list, findStr, newValue, trackChanges, tcAid, tcTs, scope,
+                parentCtx.list,
+                findStr,
+                newValue,
+                trackChanges,
+                tcAid,
+                tcTs,
+                scope,
+                nodeState,
               );
               parentCtx.list.splice(
                 0,
@@ -1666,13 +1752,63 @@ function foldNegativeDepth(args: string[]): string[] {
           } else {
             const count = countOccurrences(node.text, findStr);
             if (count > 0) {
-              node.text = node.text.replaceAll(findStr, newValue);
-              totalFindMatches += count;
-              findNodesWithHits++;
+              if (trackChanges && parentCtx) {
+                const currentIndex = parentCtx.list.indexOf(node);
+                if (currentIndex !== -1) {
+                  const replacement = buildTrackedDirectTextReplacement(
+                    node.text,
+                    findStr,
+                    newValue,
+                    tcAid,
+                    tcTs,
+                  );
+                  parentCtx.list.splice(currentIndex, 1, ...replacement.nodes);
+                  totalFindMatches += replacement.matchCount;
+                  findNodesWithHits++;
+                  addFindCount(node, replacement.matchCount);
+                }
+              } else {
+                node.text = node.text.replaceAll(findStr, newValue);
+                totalFindMatches += count;
+                findNodesWithHits++;
+                addFindCount(node, count);
+              }
             }
           }
         } else {
-          node.text = newValue;
+          if (trackChanges && parentCtx && nodeRegion === "current") {
+            const currentIndex = parentCtx.list.indexOf(node);
+            if (currentIndex !== -1) {
+              const replacement = buildTrackedDirectTextReplacement(node.text, undefined, newValue, tcAid, tcTs);
+              parentCtx.list.splice(currentIndex, 1, ...replacement.nodes);
+            }
+          } else if (trackChanges && parentCtx && nodeRegion !== "current") {
+            const currentIndex = parentCtx.list.indexOf(node);
+            if (currentIndex !== -1) {
+              if (node.text.length === 0) {
+                const replacement = buildTrackedDirectTextReplacement(node.text, undefined, newValue, tcAid, tcTs);
+                parentCtx.list.splice(currentIndex, 1, ...replacement.nodes);
+              } else {
+                const replacement = applyCrossNodeReplace(
+                  [node],
+                  node.text,
+                  newValue,
+                  true,
+                  tcAid,
+                  tcTs,
+                  scope,
+                  nodeState,
+                );
+                parentCtx.list.splice(
+                  currentIndex,
+                  1,
+                  ...flattenNestedChanges(replacement.newChildren),
+                );
+              }
+            }
+          } else {
+            node.text = newValue;
+          }
         }
       }
     }
@@ -2102,6 +2238,7 @@ function foldNegativeDepth(args: string[]): string[] {
           recurseLayouts: true,
           topLevelIsLayout: targetParentBlock.tag !== "inset",
           includeDeleted: true,
+          inheritedState: traversalStateIndex.get(targetParentBlock),
         });
 
         let totalMatches = 0;
@@ -2140,8 +2277,9 @@ function foldNegativeDepth(args: string[]): string[] {
         // but the split point is always within one node. With recursion the
         // text node may live in a nested layout, so splice into the segment's
         // OWNING children list (test_report_38 F3).
-        const splitChildIdx = segments[splitPoint.segIdx].childIndex;
-        splitParentList = segments[splitPoint.segIdx].owner ?? targetParentBlock.children;
+        const splitSegment = segments[splitPoint.segIdx];
+        const splitChildIdx = splitSegment.childIndex;
+        splitParentList = splitSegment.owner ?? targetParentBlock.children;
         const splitText = (splitParentList[splitChildIdx] as TextNode).text;
         const before = splitText.substring(0, splitPoint.offset);
         const splitAfterText = splitText.substring(splitPoint.offset);
@@ -2157,7 +2295,7 @@ function foldNegativeDepth(args: string[]): string[] {
         // nest the inserted block: same-author inserted merges; otherwise the
         // block lands as an adjacent flat block and the region reopens after
         // it if it continues (dev log 90 §5.4).
-        splitRegion = nodeInChangeRegion(splitParentList, splitTextIdx);
+        splitRegion = traversalRegion(splitSegment.state);
         splitRegionInfo = splitRegion !== "current"
           ? openRegionInfo(splitParentList, splitTextIdx)
           : null;

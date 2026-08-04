@@ -1,5 +1,123 @@
 import type { Node, BlockNode } from "./ast.ts";
 
+export type TextRegion = "deleted" | "inserted" | "current";
+
+export interface TraversalState {
+  deletedDepth: number;
+  insertedDepth: number;
+  deletedAuthor: number;
+  deletedTs: string;
+  insertedAuthor: number;
+  insertedTs: string;
+  outerDeletedDepth: number;
+  outerInsertedDepth: number;
+  outerDeletedAuthor: number;
+  outerDeletedTs: string;
+  outerInsertedAuthor: number;
+  outerInsertedTs: string;
+  properties: Record<string, string | undefined>;
+}
+
+export function createTraversalState(): TraversalState {
+  return {
+    deletedDepth: 0,
+    insertedDepth: 0,
+    deletedAuthor: 0,
+    deletedTs: "",
+    insertedAuthor: 0,
+    insertedTs: "",
+    outerDeletedDepth: 0,
+    outerInsertedDepth: 0,
+    outerDeletedAuthor: 0,
+    outerDeletedTs: "",
+    outerInsertedAuthor: 0,
+    outerInsertedTs: "",
+    properties: {},
+  };
+}
+
+export function cloneTraversalState(state: TraversalState): TraversalState {
+  return {
+    ...state,
+    properties: { ...state.properties },
+  };
+}
+
+export function traversalRegion(state: TraversalState): TextRegion {
+  if (state.deletedDepth > 0) return "deleted";
+  if (state.insertedDepth > 0) return "inserted";
+  if (state.outerDeletedDepth > 0) return "deleted";
+  if (state.outerInsertedDepth > 0) return "inserted";
+  return "current";
+}
+
+export function traversalChange(state: TraversalState): { author: number; ts: string } {
+  if (state.deletedDepth > 0) return { author: state.deletedAuthor, ts: state.deletedTs };
+  if (state.insertedDepth > 0) return { author: state.insertedAuthor, ts: state.insertedTs };
+  if (state.outerDeletedDepth > 0) return { author: state.outerDeletedAuthor, ts: state.outerDeletedTs };
+  if (state.outerInsertedDepth > 0) return { author: state.outerInsertedAuthor, ts: state.outerInsertedTs };
+  return { author: 0, ts: "" };
+}
+
+/** Enter a nested structural child list without losing its enclosing state. */
+export function enterTraversalState(parent: TraversalState): TraversalState {
+  const child = createTraversalState();
+  const region = traversalRegion(parent);
+  const change = traversalChange(parent);
+  if (region === "deleted") {
+    child.outerDeletedDepth = 1;
+    child.outerDeletedAuthor = change.author;
+    child.outerDeletedTs = change.ts;
+  } else if (region === "inserted") {
+    child.outerInsertedDepth = 1;
+    child.outerInsertedAuthor = change.author;
+    child.outerInsertedTs = change.ts;
+  }
+  child.properties = { ...parent.properties };
+  return child;
+}
+
+/** Apply one LyX property marker to an inherited recursive traversal state. */
+export function advanceTraversalState(
+  state: TraversalState,
+  key: string,
+  value?: string,
+): void {
+  if (key === "change_deleted" || key === "change_inserted" || key === "change_unchanged") {
+    const previousDeletedDepth = state.deletedDepth;
+    const previousInsertedDepth = state.insertedDepth;
+    const depths = advanceChangeDepths(key, previousDeletedDepth, previousInsertedDepth);
+    state.deletedDepth = depths.deletedDepth;
+    state.insertedDepth = depths.insertedDepth;
+
+    if (key === "change_deleted") {
+      const parts = value?.trim().split(/\s+/) ?? [];
+      state.deletedAuthor = parseInt(parts[0] ?? "", 10) || 0;
+      state.deletedTs = parts[1] ?? "0";
+      state.insertedAuthor = 0;
+      state.insertedTs = "";
+    } else if (key === "change_inserted") {
+      const parts = value?.trim().split(/\s+/) ?? [];
+      state.insertedAuthor = parseInt(parts[0] ?? "", 10) || 0;
+      state.insertedTs = parts[1] ?? "0";
+      state.deletedAuthor = 0;
+      state.deletedTs = "";
+    } else {
+      if (previousDeletedDepth > 0 && state.deletedDepth === 0) {
+        state.deletedAuthor = 0;
+        state.deletedTs = "";
+      }
+      if (previousInsertedDepth > 0 && state.insertedDepth === 0) {
+        state.insertedAuthor = 0;
+        state.insertedTs = "";
+      }
+    }
+    return;
+  }
+
+  state.properties[key] = value;
+}
+
 export interface TextSegment {
   /** Index of this text node in the children array that owns it */
   childIndex: number;
@@ -10,6 +128,8 @@ export interface TextSegment {
    *  text actually lives in (a match may sit in a nested layout, e.g. inside a
    *  Foot inset's Plain Layout — test_report_38 F3). */
   owner?: Node[];
+  /** Effective change/style state at this text node, including enclosing insets. */
+  state: TraversalState;
 }
 
 /**
@@ -34,8 +154,9 @@ export function advanceChangeDepths(
 }
 
 /**
- * Build a concatenated view of text children, skipping text inside
- * \change_deleted blocks. Change tracking markers (change_deleted,
+ * Build a concatenated view of text children. Callers can exclude text inside
+ * \change_deleted blocks with the default `includeDeleted: false`; selector
+ * and mutation callers opt into the see-all view. Change tracking markers (change_deleted,
  * change_inserted, change_unchanged) are transparent — they don't
  * break concatenation. Only structural children (insets, nested
  * layouts) act as implicit boundaries (detected via childIndex gaps).
@@ -44,53 +165,55 @@ export function advanceChangeDepths(
  * blocks (descending through `inset` blocks like `Foot` to reach them), so
  * `split-after` can target text inside a footnote (test_report_38 F3). Text is
  * collected only under a layout container — inset metadata (a Foot `status`
- * line, a CommandInset `name "…"` line) is not matchable. Each segment then
- * carries its owning children list (`owner`).
+ * line, a CommandInset `name "…"` line) is not matchable. Enclosing change
+ * and style state is inherited through those structural blocks. Each segment
+ * carries its owning children list (`owner`) and effective state.
  */
 export function concatenateTextNodes(
   children: Node[],
-  opts?: { recurseLayouts?: boolean; topLevelIsLayout?: boolean; includeDeleted?: boolean },
+  opts?: {
+    recurseLayouts?: boolean;
+    topLevelIsLayout?: boolean;
+    includeDeleted?: boolean;
+    inheritedState?: TraversalState;
+  },
 ): { segments: TextSegment[]; fullText: string } {
   const segments: TextSegment[] = [];
   const recurse = opts?.recurseLayouts ?? false;
   const topLevelIsLayout = opts?.topLevelIsLayout ?? true;
   const includeDeleted = opts?.includeDeleted ?? false;
 
-  function walk(list: Node[], collectText: boolean): void {
-    // Change markers are per-layout (per paragraph), so each nested level
-    // starts with a fresh depth context.
-    let deletedDepth = 0;
+  function walk(list: Node[], collectText: boolean, inheritedState: TraversalState): void {
+    const state = enterTraversalState(inheritedState);
     for (let i = 0; i < list.length; i++) {
       const child = list[i];
       if (child.type === "property") {
-        const k = child.key;
-        if (k === "change_deleted" || k === "change_inserted" || k === "change_unchanged") {
-          deletedDepth = advanceChangeDepths(k, deletedDepth, 0).deletedDepth;
-        }
+        advanceTraversalState(state, child.key, child.value);
       } else if (child.type === "text") {
-        // includeDeleted: selectors (e.g. :contains) see ALL text — a phrase
-        // inside \change_deleted still locates its node (dev log 87 D7).
-        // Mutations (--find / split-after) keep skipping deleted text.
-        if (collectText && (includeDeleted || deletedDepth === 0)) {
+        // Selectors and mutation callers pass includeDeleted=true so a phrase
+        // inside \\change_deleted remains reachable; callers that need a
+        // current-only view can leave the option false.
+        if (collectText && (includeDeleted || traversalRegion(state) !== "deleted")) {
+          const segmentState = cloneTraversalState(state);
           if (recurse) {
-            segments.push({ childIndex: i, text: child.text, owner: list });
+            segments.push({ childIndex: i, text: child.text, owner: list, state: segmentState });
           } else {
-            segments.push({ childIndex: i, text: child.text });
+            segments.push({ childIndex: i, text: child.text, state: segmentState });
           }
         }
       } else if (child.type === "block" && recurse) {
         const b = child as BlockNode;
         if (b.tag === "layout") {
-          walk(b.children, true); // collect text under nested layouts
+          walk(b.children, true, state); // collect text under nested layouts
         } else if (b.tag === "inset") {
           // Descend through insets to reach their nested layouts, but do NOT
           // collect inset metadata text (e.g. a CommandInset label line).
-          walk(b.children, false);
+          walk(b.children, false, state);
         }
       }
     }
   }
-  walk(children, topLevelIsLayout);
+  walk(children, topLevelIsLayout, opts?.inheritedState ?? createTraversalState());
 
   const fullText = segments.map(s => s.text).join("");
   return { segments, fullText };

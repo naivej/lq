@@ -12,6 +12,7 @@
 import { assertEquals, assert, assertStringIncludes } from "@std/assert";
 import * as path from "@std/path";
 import { parse } from "../src/parser.ts";
+import { query } from "../src/query.ts";
 import { serialize } from "../src/serializer.ts";
 import { BlockNode, Node, PropertyNode, TextNode } from "../src/ast.ts";
 import { advanceChangeDepths } from "../src/text_utils.ts";
@@ -808,8 +809,193 @@ Deno.test("F3 - split-after on CommandInset label stays opaque (SPLIT_NO_MATCH)"
   }
 });
 
+Deno.test("Report 42 F2 - scoped split-after reaches deleted Foot prose", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "\\begin_inset Foot\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "Details about me and more\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\\change_unchanged\n" +
+    "current text\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_report42_f2_nested_split.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      [
+        "insert",
+        tempFile,
+        "inset[Foot]:change(deleted)",
+        "split-after",
+        "Details about me",
+        "--text",
+        " X",
+      ],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.matched_nodes, 1, JSON.stringify(result));
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "Details about me");
+    assertStringIncludes(text, " X");
+    assertStringIncludes(text, "and more");
+    assert(text.indexOf("status collapsed") < text.indexOf("\\change_inserted"));
+    const parsed = parse(text);
+    const nestedDeleted = query(parsed, "text:change(deleted)");
+    assertEquals(
+      nestedDeleted.some(n => n.type === "text" && n.text.trim() === "and more"),
+      true,
+      "trailing nested prose must retain the enclosing deleted state",
+    );
+    const nestedLayout = query(parsed, "layout[Plain Layout]")[0] as BlockNode;
+    assertEquals(maxMarkerDepth(nestedLayout.children), 1, "nested markers must remain flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("Report 42 F2 - property-scoped split-after reaches styled Foot prose", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\emph on\n" +
+    "\\begin_inset Foot\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "foot content\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\\emph default\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_report42_f2_nested_property_split.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      [
+        "insert",
+        tempFile,
+        "inset[Foot]:property(emph)",
+        "split-after",
+        "foot content",
+        "--text",
+        " Y",
+      ],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.matched_nodes, 1, JSON.stringify(result));
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "foot content");
+    assertStringIncludes(text, " Y");
+    assertStringIncludes(text, "\\change_inserted");
+    assert(text.indexOf("\\emph on") < text.indexOf("\\begin_inset Foot"));
+    assert(text.indexOf("\\emph default") > text.indexOf("\\end_inset"));
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("Report 42 F2 - nested deleted text --find stays tracked", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "\\begin_inset Foot\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "Details about me\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\\change_unchanged\n" +
+    "current text\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_report42_f2_nested_find.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "text:change(deleted)", "TAIL", "--find", "Details about me"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, JSON.stringify(result));
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "Details about me");
+    assertStringIncludes(text, "TAIL");
+    assertStringIncludes(text, "\\change_inserted");
+    const nestedLayout = query(parse(text), "layout[Plain Layout]")[0] as BlockNode;
+    assertEquals(maxMarkerDepth(nestedLayout.children), 1, "nested markers must remain flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 
 // --- Dev log 87: Step 3 fixes (test_report_38 F5-F7) ---
+Deno.test("Report 42 F2 - nested styled text --find stays inside the style scope", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\emph on\n" +
+    "\\begin_inset Foot\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "foot content\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\\emph default\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_report42_f2_nested_property_find.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "text:property(emph)", "TAIL", "--find", "foot content"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, JSON.stringify(result));
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "foot content");
+    assertStringIncludes(text, "TAIL");
+    assertStringIncludes(text, "\\change_inserted");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+
+Deno.test("Report 42 F1 - direct nested full set stays tracked", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "\\begin_inset Foot\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "old nested text\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\\change_unchanged\n" +
+    "current text\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_report42_f1_nested_full.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "text:change(deleted)", "NEW nested text"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, JSON.stringify(result));
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "old nested text");
+    assertStringIncludes(text, "NEW nested text");
+    assertStringIncludes(text, "\\change_inserted");
+    const nestedLayout = query(parse(text), "layout[Plain Layout]")[0] as BlockNode;
+    assertEquals(maxMarkerDepth(nestedLayout.children), 1, "nested markers must remain flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
 
 Deno.test("DL87 F5 - replay undo names author mismatch when the change is another author's", { timeout: 15000 }, async () => {
   // Alice (id 1) has a pending insertion containing 'QUICK'; Bob runs the undo.
@@ -2224,6 +2410,79 @@ Deno.test("DL90 - text:change(deleted) + set --find is tracked, not swallowed", 
     assertStringIncludes(text, "X", "replacement present");
     assertStringIncludes(text, " current text", "current text untouched");
     assertEquals(maxMarkerDepth(firstLayoutChildren(text)), 1, "flat, never nested");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("Report 42 F1 - direct current text --find preserves tracking and warning breakdown", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "current phrase\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_report42_f1_direct_current.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "text:change(current)", "TAIL", "--find", "current phrase"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_deleted");
+    assertStringIncludes(text, "current phrase");
+    assertStringIncludes(text, "\\change_inserted");
+    assertStringIncludes(text, "TAIL");
+    assert(
+      (result.warnings ?? []).some(w => w.includes("text (1 occurrence)")),
+      `expected a text occurrence breakdown, got: ${JSON.stringify(result.warnings)}`,
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("Report 42 F1 - direct styled text and full set remain reviewable", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\emph on\n" +
+    "emphasized phrase\n" +
+    "\\emph default\n" +
+    "\\end_layout\n";
+  const surgicalFile = await writeTempLyx("temp_report42_f1_direct_styled.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const surgical = await runCliWithConfig(
+      ["set", surgicalFile, "text:property(emph)", "TAIL", "--find", "phrase"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(surgical.modified_nodes, 1);
+    const text = await Deno.readTextFile(surgicalFile);
+    assert(text.indexOf("\\emph on") < text.indexOf("\\change_deleted"));
+    assert(text.indexOf("\\change_inserted") < text.indexOf("\\emph default"));
+    assertStringIncludes(text, "phrase");
+    assertStringIncludes(text, "TAIL");
+  } finally {
+    try { await Deno.remove(surgicalFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("Report 42 F1 - direct current text full set remains reviewable", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\emph on\n" +
+    "emphasized phrase\n" +
+    "\\emph default\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_report42_f1_direct_full.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "text:property(emph)", "REPLACED"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1, JSON.stringify(result));
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_deleted");
+    assertStringIncludes(text, "\\change_inserted");
+    assertStringIncludes(text, "REPLACED");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }

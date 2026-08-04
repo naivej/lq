@@ -54,6 +54,15 @@ Deno.test("CLI - per-command help (insert)", { timeout: 10000 }, async () => {
   assertStringIncludes(stdout, "split-after");
   assertStringIncludes(stdout, "--layout");
   assertStringIncludes(stdout, "--raw-file");
+  assertStringIncludes(stdout, "All text is visible");
+  assertStringIncludes(stdout, ":change(current|inserted|deleted)");
+  assertEquals(stdout.includes("Text inside \\change_deleted blocks is skipped."), false);
+});
+
+Deno.test("CLI - per-command help (init) documents strict cache count", { timeout: 10000 }, async () => {
+  const { stdout } = await runCliRaw(["init", "--help"]);
+  assertStringIncludes(stdout, "--max-cache-entries");
+  assertStringIncludes(stdout, "complete non-negative integer");
 });
 
 // ---------------------------------------------------------------------------
@@ -175,6 +184,38 @@ Deno.test("CLI - init reject invalid track-changes", { timeout: 10000 }, async (
   const result = await runCliTest(["init", "--track-changes", "invalid"]);
   assertEquals(result.code, "INVALID_FLAG");
   assertStringIncludes(result.message!, "track-changes");
+});
+
+Deno.test("CLI - init rejects malformed max-cache-entries values", { timeout: 10000 }, async () => {
+  for (const value of ["7x", "1.5", "1e2", "-1"]) {
+    const result = await runCliTest(["init", "--max-cache-entries", value]);
+    assertEquals(result.code, "INVALID_FLAG", value);
+    assertStringIncludes(result.message!, "max-cache-entries");
+    assertStringIncludes(result.message!, value);
+  }
+
+  const equalsForm = await runCliTest(["init", "--max-cache-entries=-1"]);
+  assertEquals(equalsForm.code, "INVALID_FLAG");
+  assertStringIncludes(equalsForm.message!, "max-cache-entries");
+  assertStringIncludes(equalsForm.message!, "-1");
+});
+
+Deno.test("CLI - init accepts exact max-cache-entries integers", { timeout: 10000 }, async () => {
+  const tmpHome = await Deno.makeTempDir({ prefix: "lq_cache_entries_home" });
+  const layoutsDir = await Deno.makeTempDir({ prefix: "lq_cache_entries_layouts" });
+  try {
+    for (const value of ["0", "7"]) {
+      await runCliWithEnv(
+        ["init", "--layouts-dir", layoutsDir, "--max-cache-entries", value],
+        { HOME: tmpHome, USERPROFILE: tmpHome },
+      );
+      const config = JSON.parse(await Deno.readTextFile(`${tmpHome}/.lq/config.json`));
+      assertEquals(config.maxCacheEntries, Number(value));
+    }
+  } finally {
+    try { await Deno.remove(tmpHome, { recursive: true }); } catch { /* ignore */ }
+    try { await Deno.remove(layoutsDir, { recursive: true }); } catch { /* ignore */ }
+  }
 });
 
 Deno.test("CLI - init reject nonexistent layouts-dir", { timeout: 10000 }, async () => {

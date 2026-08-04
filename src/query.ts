@@ -1,5 +1,14 @@
 import { DocumentNode, Node, BlockNode } from "./ast.ts";
-import { advanceChangeDepths, concatenateTextNodes } from "./text_utils.ts";
+import {
+  advanceChangeDepths,
+  advanceTraversalState,
+  cloneTraversalState,
+  concatenateTextNodes,
+  createTraversalState,
+  enterTraversalState,
+  traversalRegion,
+  type TraversalState,
+} from "./text_utils.ts";
 import { INLINE_PROPERTIES, isInlineStyleKey } from "./registry.ts";
 
 export interface PseudoClass {
@@ -271,6 +280,31 @@ export function regionAt(list: Node[], index: number): "deleted" | "inserted" | 
   return deletedDepth > 0 ? "deleted" : insertedDepth > 0 ? "inserted" : "current";
 }
 
+export function buildTraversalStateIndex(rootChildren: Node[]): Map<Node, TraversalState> {
+  const index = new Map<Node, TraversalState>();
+
+  function walk(list: Node[], inheritedState: TraversalState, collectText: boolean): void {
+    const state = enterTraversalState(inheritedState);
+    for (const node of list) {
+      if (node.type !== "text" || collectText) {
+        index.set(node, cloneTraversalState(state));
+      }
+      if (node.type === "block") {
+        const childCollectText = node.tag === "layout"
+          ? true
+          : node.tag === "inset"
+          ? false
+          : collectText;
+        walk(node.children, state, childCollectText);
+      }
+      if (node.type === "property") advanceTraversalState(state, node.key, node.value);
+    }
+  }
+
+  walk(rootChildren, createTraversalState(), false);
+  return index;
+}
+
 /** Change marker keys (\change_deleted / \change_inserted / \change_unchanged). */
 function isChangeMarkerKey(key: string): boolean {
   return key === "change_deleted" || key === "change_inserted" || key === "change_unchanged";
@@ -370,20 +404,23 @@ export function buildScopePredicate(selectorStr: string): ScopePredicate | undef
 }
 
 /** Does a block contain any text under the given style state? (:property() on blocks.) */
-function blockContainsProperty(node: BlockNode, prop: PropertyArg): boolean {
+function blockContainsProperty(
+  node: BlockNode,
+  prop: PropertyArg,
+  stateIndex: Map<Node, TraversalState>,
+): boolean {
   let found = false;
   const walk = (list: Node[]) => {
     if (found) return;
-    const state: Record<string, string | undefined> = {};
     for (const c of list) {
       if (found) return;
       if (c.type === "text") {
-        if (matchesProperty(state[prop.key], prop)) {
+        const state = stateIndex.get(c);
+        if (!state) continue;
+        if (matchesProperty(state.properties[prop.key], prop)) {
           found = true;
           return;
         }
-      } else if (c.type === "property" && isInlineStyleKey(c.key)) {
-        state[c.key] = c.value;
       } else if (c.type === "block") {
         walk((c as BlockNode).children);
       }
@@ -394,24 +431,24 @@ function blockContainsProperty(node: BlockNode, prop: PropertyArg): boolean {
 }
 
 /** Does a block contain any text sitting in the given region? (:change() on layouts.) */
-function blockContainsRegion(node: BlockNode, want: "current" | "inserted" | "deleted"): boolean {
+function blockContainsRegion(
+  node: BlockNode,
+  want: "current" | "inserted" | "deleted",
+  stateIndex: Map<Node, TraversalState>,
+): boolean {
   let found = false;
   const walk = (list: Node[]) => {
     if (found) return;
-    let deletedDepth = 0;
-    let insertedDepth = 0;
     for (const c of list) {
       if (found) return;
       if (c.type === "text") {
-        const region = deletedDepth > 0 ? "deleted" : insertedDepth > 0 ? "inserted" : "current";
+        const state = stateIndex.get(c);
+        if (!state) continue;
+        const region = traversalRegion(state);
         if (region === want) {
           found = true;
           return;
         }
-      } else if (c.type === "property" && isChangeMarkerKey(c.key)) {
-        const d = advanceChangeDepths(c.key, deletedDepth, insertedDepth);
-        deletedDepth = d.deletedDepth;
-        insertedDepth = d.insertedDepth;
       } else if (c.type === "block") {
         walk((c as BlockNode).children);
       }
@@ -426,6 +463,7 @@ function matchNode(
   part: SelectorPart,
   region?: "deleted" | "inserted" | "current",
   propState?: Record<string, string | undefined>,
+  stateIndex?: Map<Node, TraversalState>,
 ): boolean {
   if (part.tag === "property") {
     if (node.type !== "property") return false;
@@ -481,7 +519,7 @@ function matchNode(
         // in the inner selector (e.g. :not(:contains('TODO'))).
         const innerPart = parseSelectorPart(p.argRaw, true);
         if (node.type === "block") {
-          const matches = findDescendants(node.children, innerPart);
+          const matches = findDescendants(node.children, innerPart, [], stateIndex);
           if (matches.length > 0) return false;
         }
         // For non-block nodes, :not() always passes (there are no descendants to check).
@@ -502,7 +540,7 @@ function matchNode(
           // text in that region (dev log 92 §2.1) — so insets inside a rejected
           // run are no longer invisible.
           const sitsInParent = region === want;
-          if (!sitsInParent && !blockContainsRegion(node, want)) return false;
+          if (!sitsInParent && !blockContainsRegion(node, want, stateIndex ?? new Map())) return false;
         } else {
           return false;
         }
@@ -518,7 +556,7 @@ function matchNode(
           if (!matchesProperty(propState?.[prop.key], prop)) return false;
         } else if (node.type === "block") {
           const sitsInParent = propState !== undefined && matchesProperty(propState[prop.key], prop);
-          if (!sitsInParent && !blockContainsProperty(node, prop)) return false;
+          if (!sitsInParent && !blockContainsProperty(node, prop, stateIndex ?? new Map())) return false;
         } else {
           return false;
         }
@@ -529,25 +567,27 @@ function matchNode(
   return true;
 }
 
-function findDescendants(nodes: Node[], part: SelectorPart, results: Node[] = []): Node[] {
-  let deletedDepth = 0;
-  let insertedDepth = 0;
-  const propState: Record<string, string | undefined> = {};
+function findDescendants(
+  nodes: Node[],
+  part: SelectorPart,
+  results: Node[] = [],
+  stateIndex?: Map<Node, TraversalState>,
+): Node[] {
   for (const node of nodes) {
-    const region: "deleted" | "inserted" | "current" =
-      deletedDepth > 0 ? "deleted" : insertedDepth > 0 ? "inserted" : "current";
-    if (matchNode(node, part, region, propState)) {
+    const state = stateIndex?.get(node) ?? createTraversalState();
+    if (
+      node.type === "text" &&
+      stateIndex &&
+      !stateIndex.has(node) &&
+      part.pseudos?.some(p => p.name === "change" || p.name === "property")
+    ) {
+      continue;
+    }
+    if (matchNode(node, part, traversalRegion(state), state.properties, stateIndex)) {
       results.push(node);
     }
     if (node.type === "block") {
-      findDescendants(node.children, part, results);
-    }
-    if (node.type === "property" && isChangeMarkerKey(node.key)) {
-      const d = advanceChangeDepths(node.key, deletedDepth, insertedDepth);
-      deletedDepth = d.deletedDepth;
-      insertedDepth = d.insertedDepth;
-    } else if (node.type === "property" && isInlineStyleKey(node.key)) {
-      propState[node.key] = node.value;
+      findDescendants(node.children, part, results, stateIndex);
     }
   }
 
@@ -622,6 +662,7 @@ function findFollowingSiblings(
   rootChildren: Node[],
   part: SelectorPart,
   parentIndex?: Map<Node, { parentChildren: Node[]; index: number }>,
+  stateIndex?: Map<Node, TraversalState>,
 ): Node[] {
   let ctx = parentIndex?.get(anchor);
   if (!ctx) {
@@ -633,12 +674,13 @@ function findFollowingSiblings(
   const results: Node[] = [];
   for (let i = ctx.index + 1; i < ctx.parentChildren.length; i++) {
     const sibling = ctx.parentChildren[i];
-    if (matchNode(sibling, part, regionAt(ctx.parentChildren, i), propertyStateAt(ctx.parentChildren, i))) {
+    const state = stateIndex?.get(sibling) ?? createTraversalState();
+    if (matchNode(sibling, part, traversalRegion(state), state.properties, stateIndex)) {
       results.push(sibling);
     }
     // Also search descendants of sibling blocks (like space combinator does)
     if (sibling.type === "block") {
-      findDescendants(sibling.children, part, results);
+      findDescendants(sibling.children, part, results, stateIndex);
     }
   }
   return results;
@@ -653,13 +695,15 @@ function hasInterveningMatch(
   parentChildren: Node[],
   startIndex: number,
   innerPart: SelectorPart,
+  stateIndex?: Map<Node, TraversalState>,
 ): boolean {
   for (let i = startIndex; i < parentChildren.length; i++) {
     if (parentChildren[i] === node) return false; // reached target, no match found
-    if (matchNode(parentChildren[i], innerPart, regionAt(parentChildren, i), propertyStateAt(parentChildren, i))) return true;
+    const state = stateIndex?.get(parentChildren[i]) ?? createTraversalState();
+    if (matchNode(parentChildren[i], innerPart, traversalRegion(state), state.properties, stateIndex)) return true;
     // Also check descendants of intervening blocks
     if (parentChildren[i].type === "block") {
-      const descMatches = findDescendants((parentChildren[i] as BlockNode).children, innerPart);
+      const descMatches = findDescendants((parentChildren[i] as BlockNode).children, innerPart, [], stateIndex);
       if (descMatches.length > 0) return true;
     }
   }
@@ -669,6 +713,7 @@ function hasInterveningMatch(
 export function query(ast: DocumentNode, selectorStr: string): Node[] {
   const groups = parseSelector(selectorStr);
   const rootChildren = ast.type === "document" ? ast.children : (ast.type === "block" ? ast.children : []);
+  const stateIndex = buildTraversalStateIndex(rootChildren);
   
   // Pre-build parent index for O(1) sibling lookups when any sibling-related
   // feature is used (~ combinator, :adjacent(), :until()).
@@ -696,16 +741,16 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
       if (part.combinator === "sibling") {
         // ~ combinator: search following siblings of each current anchor
         for (const cn of currentNodes) {
-          nextNodes = nextNodes.concat(findFollowingSiblings(cn, rootChildren, part, parentIndex));
+          nextNodes = nextNodes.concat(findFollowingSiblings(cn, rootChildren, part, parentIndex, stateIndex));
         }
         // Save current nodes as anchors for potential :until() filtering
         siblingAnchors = currentNodes;
       } else if (i === 0) {
-        nextNodes = findDescendants(currentNodes, part);
+        nextNodes = findDescendants(currentNodes, part, [], stateIndex);
       } else {
         for (const cn of currentNodes) {
           if (cn.type === "block") {
-            nextNodes = nextNodes.concat(findDescendants(cn.children, part));
+            nextNodes = nextNodes.concat(findDescendants(cn.children, part, [], stateIndex));
           }
         }
       }
@@ -751,7 +796,8 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
               for (let si = ctx.index - 1; si >= 0; si--) {
                 const prev = ctx.parentChildren[si];
                 if (prev.type === "text" || prev.type === "property") continue;
-                return matchNode(prev, innerPart, regionAt(ctx.parentChildren, si), propertyStateAt(ctx.parentChildren, si));
+                const state = stateIndex.get(prev) ?? createTraversalState();
+                return matchNode(prev, innerPart, traversalRegion(state), state.properties, stateIndex);
               }
               return false;
             });
@@ -772,7 +818,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
                   if (anchorCtx.parentChildren !== nCtx.parentChildren) continue;
                   if (anchorCtx.index < nCtx.index) {
                     // Check for intervening match
-                    return !hasInterveningMatch(n, nCtx.parentChildren, anchorCtx.index + 1, innerPart);
+                    return !hasInterveningMatch(n, nCtx.parentChildren, anchorCtx.index + 1, innerPart, stateIndex);
                   }
                 }
                 return true; // no anchor found, keep node
