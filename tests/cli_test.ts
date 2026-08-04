@@ -186,6 +186,31 @@ Deno.test("CLI - init reject invalid track-changes", { timeout: 10000 }, async (
   assertStringIncludes(result.message!, "track-changes");
 });
 
+Deno.test("CLI - init rejects empty and whitespace-only author names", { timeout: 10000 }, async () => {
+  const tmpHome = await Deno.makeTempDir({ prefix: "lq_author_name_home" });
+  const layoutsDir = await Deno.makeTempDir({ prefix: "lq_author_name_layouts" });
+  try {
+    for (const value of ["", "   ", "\t"]) {
+      const result = await runCliWithEnv(
+        ["init", "--layouts-dir", layoutsDir, "--author-name", value],
+        { HOME: tmpHome, USERPROFILE: tmpHome },
+      );
+      assertEquals(result.code, "INVALID_FLAG", value);
+      assertStringIncludes(result.message!, "author-name");
+
+      let configExists = false;
+      try {
+        await Deno.stat(`${tmpHome}/.lq/config.json`);
+        configExists = true;
+      } catch { /* expected: invalid input must not create config */ }
+      assertEquals(configExists, false, value);
+    }
+  } finally {
+    try { await Deno.remove(tmpHome, { recursive: true }); } catch { /* ignore */ }
+    try { await Deno.remove(layoutsDir, { recursive: true }); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("CLI - init rejects malformed max-cache-entries values", { timeout: 10000 }, async () => {
   for (const value of ["7x", "1.5", "1e2", "-1"]) {
     const result = await runCliTest(["init", "--max-cache-entries", value]);

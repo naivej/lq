@@ -1061,7 +1061,7 @@ export async function runCli(args: string[]) {
     }
 
     if (authorNameFlag !== undefined) {
-      if (authorNameFlag.length === 0) {
+      if (authorNameFlag.trim().length === 0) {
         printError("INVALID_FLAG", "--author-name must be a non-empty string.");
       }
       config.authorName = authorNameFlag;
