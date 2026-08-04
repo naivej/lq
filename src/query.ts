@@ -198,41 +198,11 @@ export function parseSelector(selector: string): SelectorPart[][] {
       const groupParts = splitSelectorByWhitespace(tildeGroups[gi].trim());
       for (let pi = 0; pi < groupParts.length; pi++) {
         const part = groupParts[pi];
-        const tagMatch = part.match(/^([a-zA-Z0-9_-]+)?(?:\[(.*?)\])?/);
-        if (!tagMatch) throw new Error(`Invalid selector part: ${part}`);
-        
-        const tag = tagMatch[1];
-        const rawArg = tagMatch[2];
-
-        // Text nodes carry no [args] — hard-error instead of silently matching
-        // all text nodes (dev log 91 F1-b; same rule as parseSelectorPart).
-        if (tag === "text" && rawArg) {
-          throw new Error(
-            `Invalid selector: text nodes have no [args] ('${rawArg}' selects layout/inset/property identity). ` +
-            `Select text by content (text:contains('...')) or by tracked-change region (text:change(current|inserted|deleted)).`
-          );
-        }
-
-        let argExact: string | undefined = undefined;
-        if (rawArg) {
-          const attrMatch = rawArg.match(/^(?:[a-zA-Z0-9_-]+=['"]?([^'"]+)['"]?|['"]?([^'"]+)['"]?)$/);
-          if (attrMatch) {
-            argExact = attrMatch[1] !== undefined ? attrMatch[1] : attrMatch[2];
-          } else {
-            argExact = rawArg;
-          }
-        }
-
-        const pseudoString = part.substring(tagMatch[0].length);
-        const pseudos = parsePseudoClasses(pseudoString);
-
-        if (pseudos.length > 0 && !tag) {
-          throw new Error(
-            "Pseudo-classes must follow a tag. Use layout, inset, or property before pseudo-classes."
-          );
-        }
-
-        const sp: SelectorPart = { tag, argExact, pseudos };
+        const parsedPart = parseSelectorPart(part);
+        const sp: SelectorPart = {
+          ...parsedPart,
+          pseudos: parsedPart.pseudos ?? [],
+        };
         // First part of each ~ group after the first gets sibling combinator
         if (gi > 0 && pi === 0) sp.combinator = "sibling";
         allParts.push(sp);

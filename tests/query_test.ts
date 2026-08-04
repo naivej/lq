@@ -7,6 +7,7 @@ Deno.test("Selector Parsing", () => {
   const parsed1 = parseSelector("layout[Section]");
   assertEquals(parsed1[0][0].tag, "layout");
   assertEquals(parsed1[0][0].argExact, "Section");
+  assertEquals(parsed1[0][0].pseudos, []);
 
   const parsed2 = parseSelector("layout[name='Section'] inset[Formula]:first");
   assertEquals(parsed2[0][0].tag, "layout");
@@ -274,6 +275,14 @@ Deno.test("DL90 - :change() rejects invalid or missing arguments", () => {
 
 Deno.test("DL91 - text[arg] hard-errors instead of silently matching all", () => {
   const ast = parse(TRACKED_QUERY_BODY);
+  let directErr = "";
+  try { parseSelector("text[foo]"); } catch (e) { directErr = (e as Error).message; }
+  assertEquals(directErr.includes("text nodes have no [args]"), true, directErr);
+
+  let nestedErr = "";
+  try { parseSelector("layout:not(text[foo])"); } catch (e) { nestedErr = (e as Error).message; }
+  assertEquals(nestedErr.includes("Invalid selector inside :not()"), true, nestedErr);
+
   for (const sel of ["text[changeStatus=inserted]", "text[foo]"]) {
     let err = "";
     try { query(ast, sel); } catch (e) { err = (e as Error).message; }
