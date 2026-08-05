@@ -811,6 +811,20 @@ Deno.test("DL99 - --find on a visible layout does not leak into a note", { timeo
   try {
     const result = await runCliTest(["set", tempFile, "layout[Standard]:first", "X", "--find", "PRIVATE SECRET"]);
     assertEquals(result.code, "NO_MATCH");
+    // DL99 §3.5: the error names the note so the agent can opt in.
+    assertStringIncludes(result.message!, "exists only inside a private note");
+    assertStringIncludes(result.message!, ":note");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL99 - --find NO_MATCH without a note-only phrase carries no note hint", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl99_find_nohint.lyx", DL99_NOTE_BODY, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["set", tempFile, "layout[Standard]:first", "X", "--find", "NOWHERE AT ALL"]);
+    assertEquals(result.code, "NO_MATCH");
+    assertEquals((result.message ?? "").includes("exists only inside a private note"), false);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -821,6 +835,8 @@ Deno.test("DL99 - split-after on a visible layout does not leak into a note (tra
   try {
     const result = await runCliTest(["insert", tempFile, "layout[Standard]:first", "split-after", "PRIVATE SECRET", "--text", "Y"]);
     assertEquals(result.code, "SPLIT_NO_MATCH");
+    // DL99 §3.5: the error names the note so the agent can opt in.
+    assertStringIncludes(result.message!, "exists only inside a private note");
     const text = await Deno.readTextFile(tempFile);
     assertEquals(text.includes("\\nY"), false, "must not insert into the note");
   } finally {

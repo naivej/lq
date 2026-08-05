@@ -28,6 +28,18 @@ To effectively use the query engine, Users need to understand how LyX syntax map
 
 The query engine supports traversing the CST using CSS-like selector:
 
+### One rule, two axes: visible vs private notes
+
+Private notes (`Note Note` / `Note Comment`) are for the researcher and are **invisible to `lq` by default** — content matching sees the *visible document* unless you explicitly opt into notes. Every surface lives on exactly one axis:
+
+| Axis | Surfaces | Default |
+|---|---|---|
+| **Content** — matching / extracting text | `:contains`, bare `text`, `--find`, `split-after`, `--text-only` | **visible-only**: private-note prose is excluded unless the selector is note-scoped |
+| **State** — matching change regions / styles | `:change`, `:property` | **visibility-blind**: always see note prose (a deleted note's text is still `:change(deleted)`) |
+| **Structure** — locating nodes / lossless views | `layout`/`inset`/`property` tags, `:first`/`:last`/`:nth-child`/`:not`/`:adjacent`/`:until`, `~`, `read`/`dump` CST, `--toc` | **lossless**: note nodes stay present; the TOC never surfaces note headings or note text |
+
+**Default (content axis):** a phrase or text node inside a private note is invisible. To opt in, make the selector **note-scoped** — a `:note` part (`layout:note:contains('X')`, `text:note`) or an explicit `inset[Note …]` path (`inset[Note Note] layout[Plain Layout]`). Note-scope is per `,` group, so `text, text:note` is "visible text + note text". `Note Greyedout` is visible output and is never excluded.
+
 - **Tag[args]** — substitute a concrete value from `lq schema <file>` (the names below are categories, not literal queries)
 
   - `layout[Section]` — a document layout from `documentLayouts`
@@ -35,7 +47,6 @@ The query engine supports traversing the CST using CSS-like selector:
   - `inset[CommandInset citation]` — a CommandInset subtype from `commandInsetSubtypes`
   - `property[family]` — an inline property key from `inlineProperties`
   - `text` — text nodes (the actual text content; `text` has no `[args]` — `text[...]` is rejected)
-  - Note: **private notes are invisible by default.** Content matching (`:contains`, bare `text`, `--find`, `split-after`) operates on *visible* text: prose inside `Note Note` / `Note Comment` insets is excluded unless the selector is note-scoped (a `:note` part or an explicit `inset[Note …]` path). State predicates `:change()` / `:property()` always see note prose (a deleted note's text is still `:change(deleted)`). `Note Greyedout` is visible output and is never excluded. See `:note([type])` below.
 - **Combinators**
 
   - Space for descendant. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.

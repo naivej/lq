@@ -195,9 +195,14 @@ Chainable pseudo-classes: must follow a tag
                                       Note Comment); opts into note prose
   :change()/:property() in a selector also scope set --find / split-after
   (union via ',', conjunction via ':' chaining)
-  Private notes are invisible to content matching (:contains, bare text,
-  --find, split-after) by default; add :note or an explicit inset[Note ...]
-  path to target note prose. :change()/:property() always see note prose.`,
+  One rule, two axes (private notes: Note Note / Note Comment are invisible
+  to content matching by default):
+    Content  (:contains, bare text, --find, split-after, --text-only):
+             visible-only by default — note prose excluded unless note-scoped
+             (:note part or an explicit inset[Note ...] path, per ',' group).
+    State    (:change, :property): always see note prose.
+    Structure(tags, ~, CST views, --toc): lossless; the TOC never surfaces
+             note headings or note text. Greyedout is visible output.`,
 
   read: `lq read - Output matching nodes and text content.
 
@@ -809,6 +814,30 @@ function extractHeadingText(node: Node): string {
     return out;
   }
   return "";
+}
+
+/**
+ * DL99: does `phrase` appear anywhere in the document's INVISIBLE content —
+ * prose inside a private note (Note Note / Note Comment)? Used by the NO_MATCH
+ * error paths of --find and split-after to hint that the phrase exists only in
+ * a private note and the selector needs `:note` (dev log 99 §3.5).
+ */
+function phraseInInvisibleContent(ast: DocumentNode, phrase: string): boolean {
+  let found = false;
+  const walk = (children: Node[], inNote: boolean) => {
+    if (found) return;
+    for (const c of children) {
+      if (found) return;
+      if (c.type === "text") {
+        if (inNote && c.text.includes(phrase)) { found = true; return; }
+      } else if (c.type === "block") {
+        const b = c as BlockNode;
+        walk(b.children, inNote || isInvisibleInset(b));
+      }
+    }
+  };
+  walk(ast.children, false);
+  return found;
 }
 
 function countOccurrences(text: string, findStr: string): number {
@@ -1823,6 +1852,11 @@ function foldNegativeDepth(args: string[]): string[] {
         if (totalCrossedInset > 0) {
           noMatchMsg += ` The phrase spans an inset (citation/footnote) — matches cannot cross an inset; split the phrase or use full 'set' to replace the whole text.`;
         }
+        // DL99: the phrase may exist only inside a private note (invisible to
+        // content matching by default) — name it so the agent can opt in.
+        if (!selectorNoteScope(selector) && phraseInInvisibleContent(ast, findStr)) {
+          noMatchMsg += ` The phrase exists only inside a private note (Note/Comment) — add ':note' to the selector to target note prose.`;
+        }
         printError("NO_MATCH", noMatchMsg);
       }
       const plural = totalFindMatches === 1 ? "" : "s";
@@ -2270,7 +2304,13 @@ function foldNegativeDepth(args: string[]): string[] {
         }
 
         if (totalMatches === 0) {
-          printError("SPLIT_NO_MATCH", `split-after: substring '${splitMatch}' not found in matched block.`);
+          let splitNoMatchMsg = `split-after: substring '${splitMatch}' not found in matched block.`;
+          // DL99: the phrase may exist only inside a private note (invisible
+          // to content matching by default) — name it so the agent can opt in.
+          if (!splitNoteScope && phraseInInvisibleContent(ast, splitMatch!)) {
+            splitNoMatchMsg += ` It exists only inside a private note (Note/Comment) — add ':note' to the selector to target note prose.`;
+          }
+          printError("SPLIT_NO_MATCH", splitNoMatchMsg);
         }
         if (totalMatches > 1) {
           printError("SPLIT_AMBIGUOUS", `split-after: substring '${splitMatch}' appears ${totalMatches} times in matched block (including rejected \\change_deleted text). Scope with :change(current|inserted|deleted), or use a more specific selector or a longer match string.`);
