@@ -38,7 +38,7 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
 | **State** — matching change regions / styles | `:change`, `:property` | **visibility-blind**: always see note prose (a deleted note's text is still `:change(deleted)`) |
 | **Structure** — locating nodes / lossless views | `layout`/`inset`/`property` tags, `:first`/`:last`/`:nth-child`/`:not`/`:adjacent`/`:until`, `~`, `read`/`dump` CST, `--toc` | **lossless**: note nodes stay present; the TOC never surfaces note headings or note text |
 
-**Default (content axis):** a phrase or text node inside a private note is invisible. To opt in, make the selector **note-scoped** — a `:note` part (`layout:note:contains('X')`, `text:note`) or an explicit `inset[Note …]` path (`inset[Note Note] layout[Plain Layout]`). Note-scope is per `,` group, so `text, text:note` is "visible text + note text". `Note Greyedout` is visible output and is never excluded.
+**Default (content axis):** a phrase or text node inside a private note is invisible. To opt in, make the selector **note-scoped** — a `:note` part (`layout:note:contains('X')`, `text:note`) or an explicit `inset[Note …]` path (`inset[Note Note] layout[Plain Layout]`). Note-scope is per `,` group, so `text, text:note` is "visible text + note text". `Note Greyedout` is visible output and is never excluded. GUI-only `status open/collapsed` lines (the inset's expand/collapse state) are never matched as `text`.
 
 - **Tag[args]** — substitute a concrete value from `lq schema <file>` (the names below are categories, not literal queries)
 
@@ -46,7 +46,7 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
   - `inset[Formula]` — an inset type from `insets`
   - `inset[CommandInset citation]` — a CommandInset subtype from `commandInsetSubtypes`
   - `property[family]` — an inline property key from `inlineProperties`
-  - `text` — text nodes (the actual text content; `text` has no `[args]` — `text[...]` is rejected)
+  - `text` — text nodes (the actual text content; `text` has no `[args]` — `text[...]` is rejected). GUI-only `status open/collapsed` lines inside insets are never matched as `text`.
 - **Combinators**
 
   - Space for descendant. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.

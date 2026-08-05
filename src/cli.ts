@@ -177,7 +177,9 @@ Tag[args]: substitute a value from 'lq schema <file>' (these are categories, not
   inset[Formula]               an inset type from insets
   inset[CommandInset citation] a CommandInset subtype from commandInsetSubtypes
   property[family]             an inline property key from inlineProperties
-  text                         text nodes (no [args])
+  text                         text nodes (no [args]); GUI-only status
+                               open/collapsed lines inside insets are never
+                               matched as text
   
 Combinators:
   Space for descendant  e.g. layout[Section] inset[Formula]
@@ -200,6 +202,7 @@ Chainable pseudo-classes: must follow a tag
     Content  (:contains, bare text, --find, split-after, --text-only):
              visible-only by default — note prose excluded unless note-scoped
              (:note part or an explicit inset[Note ...] path, per ',' group).
+             GUI-only status open/collapsed lines are never matched as text.
     State    (:change, :property): always see note prose.
     Structure(tags, ~, CST views, --toc): lossless; the TOC never surfaces
              note headings or note text. Greyedout is visible output.`,
