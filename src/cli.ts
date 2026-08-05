@@ -222,7 +222,11 @@ Options:
               Each matched node gets a tag[args] prefix (e.g. layout[Standard]),
               with double newline between nodes.
               Insets appear as inline markers (e.g. inset[Foot])
-              Tracked changes appear as '\change_deleted{...}' and '\change_inserted{...}' inline markers.`,
+              Tracked changes appear as '\change_deleted{...}' and '\change_inserted{...}' inline markers.
+
+Output is several times larger than the .lyx file (quotes, tags, indentation;
+100KB+ gets truncated by the terminal). Check the file size first (ls -l) and
+zoom in with a narrower selector for large documents.`,
 
   dump: `lq dump - Output the document structure.
 
@@ -244,7 +248,11 @@ Options:
                 0 = root node only; 1 = direct children; N = descend N levels.
                 Omit --depth for full depth.
               - With --toc: absolute LyX TocLevel up to any integer
-                Typically --depth 1 = Sections in the document.`,
+                Typically --depth 1 = Sections in the document.
+
+Output is several times larger than the .lyx file (quotes, tags, indentation;
+100KB+ gets truncated by the terminal). Check the file size first (ls -l) and
+zoom in with a narrower selector for large documents.`,
 
   bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
 
@@ -275,14 +283,18 @@ properties around the replaced text stay inside the change region when tracking
 is on (reject restores formatting) and are dropped when tracking is off (no dead
 markup).
 Options to change the default behaviour:
-  --find <substring>        Replace all occurrences of <substring> within the matched
+  --find <substring>        Replace all case-sensitive occurrences of <substring> within the matched
                             nodes' text, instead of replacing the entire text content.
                             Matches ALL text by default, including \change_deleted
                             (rejected) text; scope with :change(current|inserted|deleted)
                             and/or :property(...) in the selector (union via ',',
                             conjunction via ':' chaining).
   --replace-all             Replace ALL children of the target block, not just text nodes.
-                            Mutually exclusive with --find.`,
+                            Mutually exclusive with --find.
+
+For tracked edits, target the child layout inside an inset (e.g.
+'inset[Foot] layout[Plain Layout]'), not the inset node itself — tracking
+markers cannot wrap inset metadata.`,
 
   delete: `lq delete - Delete targeted nodes or mark them deleted when tracking is enabled.
 
@@ -1574,7 +1586,8 @@ function foldNegativeDepth(args: string[]): string[] {
   // stderr. The mutation still proceeds — this is a warning, not a blocker.
   if (["set", "delete", "insert"].includes(command) && nodes.length > 1) {
     const warnMsg = `Selector matches ${nodes.length} nodes. ` +
-      `Run 'lq read ${filePath} "${selector}"' to inspect them before mutating.`;
+      `If this is not intended, run 'lq read ${filePath} "${selector}"' ` +
+      `to inspect them before mutating.`;
     pushWarning(warnMsg);
   }
 

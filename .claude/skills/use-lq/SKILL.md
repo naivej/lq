@@ -55,7 +55,7 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
 - **Chainable Pseudo-classes** — node predicates: each is a true/false filter that keeps only nodes matching its condition. Must follow a tag (e.g. `layout:contains("text")`, `inset:first`); chain several to narrow further.
 
   - `:first`, `:last`, `:nth-child(an+b/even/odd)`,
-  - `:contains("text")` searches recursively and case-sensitively node children for text.
+  - `:contains("text")` searches recursively and case-sensitively node children for text. The phrase may be quoted with either `'...'` or `"..."`; prefer `"..."` when the phrase itself contains an apostrophe (e.g. `:contains("rock 'n' roll")`).
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
   - `:until(selector)` bounds a `~` sibling range — rejects nodes that have a sibling matching the inner selector between themselves and the anchor. Example: `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` gives all Standard paragraphs in the Introduction section. **Caution:** `:contains` is recursive (matches body/tables too), so a common heading word explodes the range — anchor on unique heading text and run `--count` first (e.g. `layout[Section]:contains('Introduction'):first`).
@@ -136,7 +136,7 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
   - Default behaviour: replaces text content within the targeted nodes while preserving insets as current content. Inline properties around the replaced text are dropped when tracking is off (no dead markup).
   - `--replace-all`: Wipe all children and rebuild from scratch.
-  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced. Scope to a tracked-change region (`:change(...)`) or inline style (`:property(...)`) via the selector; combine regions with `,` (union) and predicates with `:` chaining.
+  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical, case-sensitive substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced. Scope to a tracked-change region (`:change(...)`) or inline style (`:property(...)`) via the selector; combine regions with `,` (union) and predicates with `:` chaining.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq undo <file> <selector> [<substring>]`
@@ -171,6 +171,8 @@ With `--track-changes on` (the default), mutations record a reviewable edit inst
 
 State-scoped edits also reach prose in nested layouts inside an atomically tracked inset. The enclosing change/style state is inherited, while inset metadata such as `status`, `LatexCommand`, and citation parameters is not matchable or editable as prose.
 
+**For tracked edits, target the child layout inside an inset** (e.g. `inset[Foot] layout[Plain Layout]`), not the inset node itself — tracked markers cannot wrap inset metadata, so mutating an inset directly is rejected with `TRACKING_ERROR`.
+
 **Viewing tracked changes:** `dump` and `read` (default) annotate text inside tracked blocks with `changeStatus` (`deleted`/`inserted`); `read --text-only` marks them inline as `\change_deleted{...}` / `\change_inserted{...}`.
 
 # Best Practices
@@ -183,6 +185,8 @@ State-scoped edits also reach prose in nested layouts inside an atomically track
 4. **Connect LyXServer in save-reload mode**: see [`LyX_CLI.md`](LyX_CLI.md).
 
 ## Smart query
+
+Start by checking the `.lyx` file size (`ls -l file.lyx`): `read`/`dump` JSON output is **several times larger** than the file (quotes, tags, and indentation on every line; a large table alone can be 100KB+), and 100KB+ output gets truncated by the terminal. For large files, zoom in *before* dumping — the patterns below are the first move, not the recovery.
 
 Navigate large documents strategically with a zoom-in approach with scoped queries:
 
