@@ -1,3 +1,5 @@
+import { fromFileUrl } from "@std/path";
+
 /**
  * Shared test helpers for lq CLI tests.
  * No Deno.test() calls here — this module is safe to import from any test file.
@@ -13,10 +15,15 @@
  * so lq auto-detects from the system (needed for schema/mutation validation).
  */
 
+const MAIN = fromFileUrl(new URL("../main.ts", import.meta.url));
+
 /** Shape of JSON responses from lq CLI commands. */
 export interface CliResult {
   code?: string;
   message?: string;
+  scope?: "local" | "global";
+  configPath?: string;
+  action?: "read" | "created" | "updated";
   matched_nodes?: number;
   modified_nodes?: number;
   deleted_nodes?: number;
@@ -87,7 +94,7 @@ async function testEnv(): Promise<Record<string, string>> {
 export async function runCliTest(args: string[]): Promise<CliResult> {
   const env = await testEnv();
   const command = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", "main.ts", ...args],
+    args: ["run", "-A", MAIN, ...args],
     stdout: "piped",
     stderr: "piped",
     env: { ...Deno.env.toObject(), ...env },
@@ -109,7 +116,7 @@ export async function runCliTest(args: string[]): Promise<CliResult> {
 export async function runCliRaw(args: string[]): Promise<{ stdout: string; stderr: string; code: number }> {
   const env = await testEnv();
   const command = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", "main.ts", ...args],
+    args: ["run", "-A", MAIN, ...args],
     stdout: "piped",
     stderr: "piped",
     env: { ...Deno.env.toObject(), ...env },
@@ -126,13 +133,18 @@ export async function runCliRaw(args: string[]): Promise<{ stdout: string; stder
  * Run lq CLI with custom environment variables (e.g. fake HOME for init tests).
  * Still uses safe test defaults unless explicitly overridden.
  */
-export async function runCliWithEnv(args: string[], env: Record<string, string>): Promise<CliResult> {
+export async function runCliWithEnv(
+  args: string[],
+  env: Record<string, string>,
+  cwd: string = Deno.cwd(),
+): Promise<CliResult> {
   const baseEnv = await testEnv();
   const command = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", "main.ts", ...args],
+    args: ["run", "-A", MAIN, ...args],
     stdout: "piped",
     stderr: "piped",
     env: { ...Deno.env.toObject(), ...baseEnv, ...env },
+    cwd,
   });
   const { stdout } = await command.output();
   const outputStr = new TextDecoder().decode(stdout).trim();
@@ -154,6 +166,7 @@ export async function runCliWithEnv(args: string[], env: Record<string, string>)
 export async function runCliWithConfig(
   args: string[],
   overrides: Partial<{ refresh: string; trackChanges: boolean; layoutsDir: string; authorName: string }>,
+  cwd: string = Deno.cwd(),
 ): Promise<CliResult> {
   const tmp = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";
   const key = JSON.stringify(overrides);
@@ -184,10 +197,11 @@ export async function runCliWithConfig(
 
   const env = { HOME: home, USERPROFILE: home };
   const command = new Deno.Command(Deno.execPath(), {
-    args: ["run", "-A", "main.ts", ...args],
+    args: ["run", "-A", MAIN, ...args],
     stdout: "piped",
     stderr: "piped",
     env: { ...Deno.env.toObject(), ...env },
+    cwd,
   });
   const { stdout } = await command.output();
   const outputStr = new TextDecoder().decode(stdout).trim();

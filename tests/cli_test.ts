@@ -82,6 +82,9 @@ Deno.test("CLI - per-command help (insert)", { timeout: 10000 }, async () => {
 
 Deno.test("CLI - per-command help (init) documents strict cache count", { timeout: 10000 }, async () => {
   const { stdout } = await runCliRaw(["init", "--help"]);
+  assertStringIncludes(stdout, "--global");
+  assertStringIncludes(stdout, "local");
+  assertStringIncludes(stdout, "configPath");
   assertStringIncludes(stdout, "--max-cache-entries");
   assertStringIncludes(stdout, "complete non-negative integer");
 });
@@ -252,7 +255,7 @@ Deno.test("CLI - init accepts exact max-cache-entries integers", { timeout: 1000
   try {
     for (const value of ["0", "7"]) {
       await runCliWithEnv(
-        ["init", "--layouts-dir", layoutsDir, "--max-cache-entries", value],
+        ["init", "--global", "--layouts-dir", layoutsDir, "--max-cache-entries", value],
         { HOME: tmpHome, USERPROFILE: tmpHome },
       );
       const config = JSON.parse(await Deno.readTextFile(`${tmpHome}/.lq/config.json`));
@@ -273,7 +276,8 @@ Deno.test("CLI - init reject nonexistent layouts-dir", { timeout: 10000 }, async
 // 11. init success (with fake HOME to avoid corrupting user config)
 // ---------------------------------------------------------------------------
 Deno.test("CLI - init success with fake home", { timeout: 10000 }, async () => {
-  // Use a temp directory as HOME so init writes config there, not ~/.lq/
+  // Use a temp directory as CWD so local init writes outside the repository.
+  const projectDir = await Deno.makeTempDir({ prefix: "lq_test_project" });
   const tmpHome = await Deno.makeTempDir({ prefix: "lq_test_home" });
   // Need a valid layouts dir — use the fixture directory (it's a real dir)
   const layoutsDir = await Deno.makeTempDir({ prefix: "lq_test_layouts" });
@@ -281,16 +285,18 @@ Deno.test("CLI - init success with fake home", { timeout: 10000 }, async () => {
     await runCliWithEnv(
       ["init", "--layouts-dir", layoutsDir],
       { HOME: tmpHome, USERPROFILE: tmpHome },
+      projectDir,
     );
 
     // Verify config was written
-    const configPath = `${tmpHome}/.lq/config.json`;
+    const configPath = `${projectDir}/.lq/config.json`;
     const configText = await Deno.readTextFile(configPath);
     const config = JSON.parse(configText);
     assertEquals(config.layoutsDir, layoutsDir);
     assertEquals(config.refresh, "none");
     assertEquals(config.trackChanges, true);
   } finally {
+    try { await Deno.remove(projectDir, { recursive: true }); } catch { /* ignore */ }
     try { await Deno.remove(tmpHome, { recursive: true }); } catch { /* ignore */ }
     try { await Deno.remove(layoutsDir, { recursive: true }); } catch { /* ignore */ }
   }
@@ -641,10 +647,10 @@ Deno.test("CLI - init --refresh save-reload succeeds", { timeout: 10000 }, async
   const layoutsDir = await Deno.makeTempDir({ prefix: "lq_test_refresh_layouts" });
   try {
     const result = await runCliWithEnv(
-      ["init", "--layouts-dir", layoutsDir, "--refresh", "save-reload"],
+      ["init", "--global", "--layouts-dir", layoutsDir, "--refresh", "save-reload"],
       { HOME: tmpHome, USERPROFILE: tmpHome },
     );
-    assertEquals(result.refresh, "save-reload");
+    assertEquals((result.data as Record<string, unknown>).refresh, "save-reload");
   } finally {
     try { await Deno.remove(tmpHome, { recursive: true }); } catch { /* ignore */ }
     try { await Deno.remove(layoutsDir, { recursive: true }); } catch { /* ignore */ }

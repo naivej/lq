@@ -9,7 +9,7 @@ allowed-tools: Bash(lq *)
 
 At its core, `lq` operates on a simple lifecycle:
 
-1. **Parse**: Reads a `.lyx` file and converts it into a structured Concrete Syntax Tree (CST). The parse is cached by file-content SHA-256 hash in `~/.lq/cache/` — subsequent reads of the same file deserialize the CST from cache instead of re-parsing. After mutations, the cache is updated with the new CST (write-through), so even back-to-back edits hit the cache after the first parse.
+1. **Parse**: Reads a `.lyx` file and converts it into a structured Concrete Syntax Tree (CST). The parse is cached by file-content SHA-256 hash in the selected state scope's `cache/` directory — subsequent reads of the same file deserialize the CST from cache instead of re-parsing. After mutations, the cache is updated with the new CST (write-through), so even back-to-back edits hit the cache after the first parse.
 2. **Query**: Uses a CSS-like selector engine to find specific nodes in the CST.
 3. **Mutate**: Applies changes (insert, set, delete) to the matched nodes.
 4. **Serialize**: Converts the modified CST back into a perfectly formatted `.lyx` file.
@@ -59,10 +59,28 @@ The query engine supports traversing the CST using CSS-like selector:
 
 ### Config
 
-- `lq init [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>] [--max-cache-entries <n>] [--author-name <name>]`
-  - Without flags
-    - Initializes the user configuration file `~/.lq/config.json` with default options.
-    - Or prints the current configuration if it exists.
+- State selection is per invocation. Starting at the current working directory,
+  `lq` finds the nearest ancestor containing a `.lq` directory. That directory
+  supplies local config, cache, and undo state. If none is found, `lq` uses the
+  global `<host-native-home>/.lq` state. The global home directory is not
+  treated as a local project marker.
+- `lq init [--global] [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>] [--max-cache-entries <n>] [--author-name <name>]`
+  - `lq init` selects the nearest local `.lq`; if none exists, it creates
+    `<current-working-directory>/.lq` and initializes its config.
+  - `lq init --global` selects only the global target. Every other init option
+    works the same way for local and global configuration.
+  - Without options, prints the selected config if it exists; otherwise creates
+    it with built-in defaults and auto-detected layouts.
+  - New config precedence is built-in defaults, then explicit options. Existing
+    config precedence is existing values, then explicit options; omitted values
+    persist, including `layoutsDir`.
+  - Successful init responses include `scope`, `configPath`, `action` (`read`,
+    `created`, or `updated`), and the configuration under `data`.
+  - Local and global config, cache, and undo state are strictly isolated. A
+    local cache miss or undo lookup never falls back to global state.
+  - Local init and commands using an existing local `.lq` do not require a home
+    environment variable. Global fallback and `--global` require a resolvable
+    home directory.
   - `--layouts-dir <path>`: If not provided, auto-detects the highest installed LyX version's layouts directory.
   - `--refresh <mode>` configures automatic LyX buffer refresh in opened `.lyx` files after mutations:
     - `none` (default): No refresh. LyX detects external changes via its own polling and prompts the user to reload.
@@ -71,7 +89,7 @@ The query engine supports traversing the CST using CSS-like selector:
     - Setting a non-`none` mode makes `lq init` run a fast reachability probe and warn if LyXServer can't be reached (no socket found, or LyX is not accepting commands) — the warning doesn't abort init; enable LyXServer in LyX Preferences and restart LyX.
   - `--track-changes <on|off>`: Enable or disable tracked changes for all mutation commands (default on).
   - `--author-name <name>`: Set the author recorded on new tracked changes (default `"lq user"`).
-  - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in `~/.lq/cache/`. `<n>` must be a complete non-negative integer; malformed numeric prefixes are rejected.
+  - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in the selected state's `cache/` directory. `<n>` must be a complete non-negative integer; malformed numeric prefixes are rejected.
 
 ### Query
 
@@ -108,7 +126,7 @@ The query engine supports traversing the CST using CSS-like selector:
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq undo <file> <selector> [<substring>]`
-  - 1-level **Snapshot restore** (default, no substring): consume the snapshot stored at `~/.lq/undo/` to revert the last (tracked or plain) mutation, even when the mutation deleted the matched nodes.
+  - 1-level **Snapshot restore** (default, no substring): consume the snapshot stored in the selected local or global state's `undo/` directory to revert the last (tracked or plain) mutation, even when the mutation deleted the matched nodes.
   - Unlimited-level **Replay undo**: removes only the tracked-change block containing `<substring>` and made by the current author. A paired `set` edit is not restored as one unit; use snapshot restore for that. Can be reverted by snapshot restore.
 - `lq insert <file> <selector> <position> [helper]`
   - Insert new blocks or properties relative to a selector.

@@ -51,7 +51,7 @@ When `lq` mutates document structure with the `insert` command, it enforces sema
 - **Malformed `--raw-file` syntax** is rejected (doesn't parse as valid LyX).
 - **Unknown inset types in `--raw-file`** produce a warning in the JSON response's `warnings` field but don't block the insertion. This uses a hardcoded registry of known LyX engine inset types (sourced from LyX's `InsetCode.h`; There is no inset at the textclass level) and matches LyX's own permissive read path.
 
-**Checks that require `.layout` files** (enabled when `~/.lq/config.json` has a `layoutsDir`, silently skipped otherwise):
+**Checks that require `.layout` files** (enabled when the config has a `layoutsDir`, silently skipped otherwise):
 
 - **Layout name**: Unrecognized layout names are rejected with the list of valid alternatives.
 - **Context boundaries**: Document layouts (e.g., `Section`) cannot be inserted inside insets (e.g., `Foot`); only `Plain Layout` is allowed within insets. Insets must be inside a layout, not at the body level.

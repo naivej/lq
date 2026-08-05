@@ -2,7 +2,7 @@ import { Node, BlockNode, DocumentNode } from "./ast.ts";
 import { serialize } from "./serializer.ts";
 import { hashText, setCachedAst } from "./cache.ts";
 import { getHeader } from "./tracked_changes.ts";
-import { getUserHomeDir } from "./paths.ts";
+import { StatePaths } from "./paths.ts";
 import * as path from "@std/path";
 
 export interface SnapshotEntry {
@@ -22,16 +22,8 @@ export interface SnapshotFile {
   entries: SnapshotEntry[];
 }
 
-function getUndoDir(): string | null {
-  const homeDir = getUserHomeDir();
-  if (!homeDir) return null;
-  return path.join(homeDir, ".lq", "undo");
-}
-
-function getSnapshotPath(hash: string): string | null {
-  const dir = getUndoDir();
-  if (!dir) return null;
-  return path.join(dir, hash + ".json");
+function getSnapshotPath(hash: string, statePaths: StatePaths): string {
+  return path.join(statePaths.undo, hash + ".json");
 }
 
 /**
@@ -44,10 +36,10 @@ export async function saveSnapshot(
   filePath: string,
   entries: SnapshotEntry[],
   postHash: string,
+  statePaths: StatePaths,
 ): Promise<void> {
   try {
-    const dir = getUndoDir();
-    if (!dir) return;
+    const dir = statePaths.undo;
     await Deno.mkdir(dir, { recursive: true });
 
     // 1-level enforcement: prune old snapshots for the same filePath
@@ -67,8 +59,7 @@ export async function saveSnapshot(
     }
 
     const snapshot: SnapshotFile = { filePath, entries };
-    const snapshotPath = getSnapshotPath(postHash);
-    if (!snapshotPath) return;
+    const snapshotPath = getSnapshotPath(postHash, statePaths);
 
     // Atomic write: temp file + rename
     const tmpPath = snapshotPath + ".tmp";
@@ -85,10 +76,9 @@ export async function saveSnapshot(
  * the path-based entry format (the caller must report that snapshot restore is
  * unavailable rather than silently changing undo modes).
  */
-export async function loadSnapshot(fileHash: string): Promise<SnapshotFile | null> {
+export async function loadSnapshot(fileHash: string, statePaths: StatePaths): Promise<SnapshotFile | null> {
   try {
-    const snapshotPath = getSnapshotPath(fileHash);
-    if (!snapshotPath) return null;
+    const snapshotPath = getSnapshotPath(fileHash, statePaths);
     const json = await Deno.readTextFile(snapshotPath);
     const snapshot = JSON.parse(json) as SnapshotFile;
     if (!snapshot || !Array.isArray(snapshot.entries)) return null;
@@ -105,10 +95,9 @@ export async function loadSnapshot(fileHash: string): Promise<SnapshotFile | nul
  * Delete a snapshot by its post-mutation content hash.
  * No-op if the snapshot doesn't exist or on any error.
  */
-export async function clearSnapshot(fileHash: string): Promise<void> {
+export async function clearSnapshot(fileHash: string, statePaths: StatePaths): Promise<void> {
   try {
-    const snapshotPath = getSnapshotPath(fileHash);
-    if (!snapshotPath) return;
+    const snapshotPath = getSnapshotPath(fileHash, statePaths);
     await Deno.remove(snapshotPath);
   } catch {
     // Already gone or permissions — non-fatal
@@ -181,10 +170,15 @@ export function collectSnapshots(ast: DocumentNode, nodes: Node[], mode: "self" 
  * Persist a mutation: serialize, save the pre-mutation snapshot keyed by the
  * post-mutation content hash, write the file, update the parse cache.
  */
-export async function commitMutation(filePath: string, ast: DocumentNode, preSnapshots: SnapshotEntry[]): Promise<void> {
+export async function commitMutation(
+  filePath: string,
+  ast: DocumentNode,
+  preSnapshots: SnapshotEntry[],
+  statePaths: StatePaths,
+): Promise<void> {
   const newFileText = serialize(ast);
   const postHash = await hashText(newFileText);
-  await saveSnapshot(path.resolve(filePath), preSnapshots, postHash);
+  await saveSnapshot(path.resolve(filePath), preSnapshots, postHash, statePaths);
   await Deno.writeTextFile(filePath, newFileText);
-  try { await setCachedAst(postHash, ast); } catch { /* non-fatal */ }
+  try { await setCachedAst(postHash, ast, statePaths); } catch { /* non-fatal */ }
 }

@@ -1,5 +1,5 @@
 import { DocumentNode } from "./ast.ts";
-import { getUserHomeDir } from "./paths.ts";
+import { StatePaths } from "./paths.ts";
 import * as path from "@std/path";
 
 let maxCacheEntries = 50;
@@ -27,28 +27,19 @@ export async function hashText(text: string): Promise<string> {
     .join("");
 }
 
-function getCacheDir(): string | null {
-  const homeDir = getUserHomeDir();
-  if (!homeDir) return null;
-  return path.join(homeDir, ".lq", "cache");
-}
-
-function getCachePath(hash: string): string | null {
-  const dir = getCacheDir();
-  if (!dir) return null;
-  return path.join(dir, hash + ".cst");
+function getCachePath(hash: string, statePaths: StatePaths): string {
+  return path.join(statePaths.cache, hash + ".cst");
 }
 
 /** Try to load a cached CST for the given file. Returns null on miss, error, or cache disabled. */
-export async function getCachedAst(filePath: string): Promise<DocumentNode | null> {
+export async function getCachedAst(filePath: string, statePaths: StatePaths): Promise<DocumentNode | null> {
   if (maxCacheEntries === 0) return null;
   try {
     // The cache key is the file-content hash, so a real external modification
     // always misses (different hash → different file). Staleness guards are
     // unnecessary by construction (dev log 81).
     const hash = await hashFile(filePath);
-    const cachePath = getCachePath(hash);
-    if (!cachePath) return null;
+    const cachePath = getCachePath(hash, statePaths);
     const json = await Deno.readTextFile(cachePath);
     const ast = JSON.parse(json) as DocumentNode;
     // Validate the shape — old {mtime, ast} envelope files fail this and
@@ -61,14 +52,13 @@ export async function getCachedAst(filePath: string): Promise<DocumentNode | nul
 }
 
 /** Store a CST in the cache under the given content hash. No-op when cache is disabled. */
-export async function setCachedAst(hash: string, ast: DocumentNode): Promise<void> {
+export async function setCachedAst(hash: string, ast: DocumentNode, statePaths: StatePaths): Promise<void> {
   if (maxCacheEntries === 0) return;
   try {
-    const cachePath = getCachePath(hash);
-    if (!cachePath) return;
+    const cachePath = getCachePath(hash, statePaths);
 
     // Ensure cache directory exists
-    const dir = getCacheDir()!;
+    const dir = statePaths.cache;
     await Deno.mkdir(dir, { recursive: true });
 
     // Atomic write: temp file + rename

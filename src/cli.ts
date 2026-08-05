@@ -15,7 +15,7 @@ import {
 } from "./text_utils.ts";
 import { getCachedAst, setCachedAst, hashText, hashFile, setMaxCacheEntries } from "./cache.ts";
 import { clearSnapshot, collectSnapshots, commitMutation, loadSnapshot, nodeAtPath } from "./undo.ts";
-import { getUserHomeDir } from "./paths.ts";
+import { resolveInitStatePaths, resolveStatePaths, StatePaths } from "./paths.ts";
 import {
   annotateChanges,
   annotateChangesInPlace,
@@ -155,7 +155,7 @@ Usage:
   lq <command> [options] [arguments]
 
 Commands:
-  init      Initialize the user configuration file.
+  init      Initialize or view project-local configuration.
   schema    Return a list of all semantically valid layouts.
   dump      Output the document structure.
   read      Output matching nodes and text content.
@@ -278,14 +278,27 @@ Arguments:
   <file>      The path to the .lyx file.
   <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.`,
 
-  init: `lq init - Initialize or view the user configuration file.
+  init: `lq init - Initialize or view project-local or global configuration.
 
 Usage:
-  lq init              Print current configuration if exists, 
-                       otherwise initialize '~/.lq/config.json' with the default options.
-  lq init [options]    Update configuration with the given options.
+  lq init              Read the nearest local config, or create
+                       '<cwd>/.lq/config.json' when no local marker exists.
+  lq init --global     Read or update the global '~/.lq/config.json'.
+  lq init [options]    Create or update the selected config with the given options.
+
+State scope:
+  Commands use the nearest ancestor containing '.lq' as local state.
+  If no local marker exists, commands use the global '~/.lq' state.
+  Local config, cache, and undo are isolated from global state.
+  '--global' changes only the init target; all other options apply to either scope.
+
+Config precedence:
+  New config: built-in defaults, then explicit options.
+  Existing config: existing values, then explicit options; omitted values persist.
+  A no-option init with an existing config only reads it.
 
 Options:
+  --global                  Select the global '~/.lq' target for init.
   --layouts-dir <path>     Set the LyX layouts directory.
                            Default: auto-detect the highest installed version.
   --refresh <mode>         Configure automatic refresh after mutations.
@@ -300,8 +313,12 @@ Options:
                                          insert wraps new content in \\change_inserted.
   --author-name <name>     Set the author name used in tracked changes.
                            Default: "lq user".
-  --max-cache-entries <n>  Set the maximum number of file caches kept in ~/.lq/cache/.
-                           Default: 50. Must be a complete non-negative integer.`,
+  --max-cache-entries <n>  Set the maximum number of file caches kept in the
+                           selected state's cache directory. Default: 50.
+                           Must be a complete non-negative integer.
+
+Successful init responses include 'scope', 'configPath', 'action' (read,
+created, or updated), and the configuration under 'data'.`,
 
   schema: `lq schema - Return all semantically valid layouts across 6 categories:
   documentLayouts      Styles valid for the document class (e.g. Section, Standard).
@@ -359,9 +376,10 @@ Options (provide exactly one generation helper):
 Two modes, distinguished by the presence of a substring argument:
 
   lq undo <file> <selector>              Snapshot restore (1-level, any mutation).
-                                         Consume the snapshot stored at '~/.lq/undo/' to
-                                         revert the last (tracked or plain) mutation, even
-                                         when the mutation deleted the matched nodes.
+                                         Consume the snapshot stored in the selected
+                                         local or global state to revert the last
+                                         (tracked or plain) mutation, even when the
+                                         mutation deleted the matched nodes.
 
   lq undo <file> <selector> <substring>  Replay undo (unlimited levels).
                                          Removes only the tracked-change block
@@ -385,21 +403,26 @@ interface UserConfig {
   authorName?: string;
 }
 
-async function loadUserConfig(): Promise<UserConfig> {
+async function loadUserConfig(statePaths: StatePaths): Promise<UserConfig> {
   try {
-    const homeDir = getUserHomeDir();
-    if (homeDir) {
-      const configPath = path.join(homeDir, ".lq", "config.json");
-      const stat = await Deno.stat(configPath);
-      if (stat.isFile) {
-        const text = await Deno.readTextFile(configPath);
-        return JSON.parse(text);
-      }
+    const stat = await Deno.stat(statePaths.config);
+    if (stat.isFile) {
+      const text = await Deno.readTextFile(statePaths.config);
+      return JSON.parse(text);
     }
   } catch (_e) {
     // Ignore config loading errors
   }
   return {};
+}
+
+async function configFileExists(statePaths: StatePaths): Promise<boolean> {
+  try {
+    const stat = await Deno.stat(statePaths.config);
+    return stat.isFile;
+  } catch {
+    return false;
+  }
 }
 
 // Helper to get default layouts dir based on OS.
@@ -532,7 +555,7 @@ function printError(code: string, message: string, details: Record<string, unkno
 // Flags that only 'init' accepts. When a mutation command receives one, the
 // error names the exact corrective command instead of a generic "unknown flag"
 // (dev log 87 D3 / test_report_38 F7).
-const INIT_ONLY_FLAGS = ["layouts-dir", "refresh", "track-changes", "max-cache-entries", "author-name"];
+const INIT_ONLY_FLAGS = ["global", "layouts-dir", "refresh", "track-changes", "max-cache-entries", "author-name"];
 
 /**
  * Hard-error on flags Deno's parseArgs accepted silently (it captures unknown
@@ -954,7 +977,10 @@ export async function runCli(args: string[]) {
   if (commandArg === "init") {
     const flags = parseArgs(
       foldNegativeCacheEntryValue(cleanArgs.slice(1)),
-      { string: ["layouts-dir", "refresh", "track-changes", "max-cache-entries", "author-name"] },
+      {
+        boolean: ["global"],
+        string: ["layouts-dir", "refresh", "track-changes", "max-cache-entries", "author-name"],
+      },
     );
     assertNoUnknownFlags(flags, INIT_ONLY_FLAGS, "init");
     const hasFlags = flags["layouts-dir"] !== undefined ||
@@ -962,7 +988,8 @@ export async function runCli(args: string[]) {
                      flags["track-changes"] !== undefined ||
                      flags["max-cache-entries"] !== undefined ||
                      flags["author-name"] !== undefined;
-    let dir = flags["layouts-dir"];
+            const useGlobal = flags["global"] === true;
+            const dirFlag = flags["layouts-dir"] as string | undefined;
     const refresh = flags["refresh"] as string | undefined;
     const trackChangesFlag = flags["track-changes"] as string | undefined;
     const maxCacheEntriesStr = flags["max-cache-entries"] as string | undefined;
@@ -991,25 +1018,32 @@ export async function runCli(args: string[]) {
       maxCacheEntries = n;
     }
 
-    // If no flags and config exists, print it and exit
-    if (!hasFlags) {
-      const existing = await loadUserConfig();
-      const homeDir = getUserHomeDir();
-      if (homeDir) {
-        const configPath = path.join(homeDir, ".lq", "config.json");
-        try {
-          const stat = await Deno.stat(configPath);
-          if (stat.isFile) {
-            printJson({ data: existing });
-            return;
-          }
-        } catch { /* config doesn't exist, proceed to create */ }
-      }
+    if (authorNameFlag !== undefined && authorNameFlag.trim().length === 0) {
+      printError("INVALID_FLAG", "--author-name must be a non-empty string.");
     }
 
-    if (!dir) {
-      dir = await getDefaultLayoutsDir();
+    const statePaths = await resolveInitStatePaths(useGlobal);
+    if (!statePaths) {
+      printError(
+        "NO_HOME",
+        "Could not determine a home directory for global state. Set HOME or USERPROFILE, or run 'lq init' from a project directory for local state.",
+      );
     }
+    const configExists = await configFileExists(statePaths);
+    const existing = await loadUserConfig(statePaths);
+
+    // If no flags and config exists, print it and exit
+    if (!hasFlags && configExists) {
+      printJson({
+        scope: statePaths.scope,
+        configPath: statePaths.config,
+        action: "read",
+        data: existing,
+      });
+      return;
+    }
+
+    const dir = dirFlag ?? existing.layoutsDir ?? await getDefaultLayoutsDir();
 
     try {
       const stat = await Deno.stat(dir);
@@ -1020,62 +1054,15 @@ export async function runCli(args: string[]) {
       printError("DIR_NOT_FOUND", `Could not find layouts directory at '${dir}'. Please provide it manually via --layouts-dir.`);
     }
 
-    const homeDir = getUserHomeDir();
-    if (!homeDir) {
-      printError("NO_HOME", "Could not determine home directory to save config.");
-    }
-
-    const configDir = path.join(homeDir, ".lq");
-    const configPath = path.join(configDir, "config.json");
-
-    // Build config object
-    const config: UserConfig = { layoutsDir: dir };
-    if (refresh !== undefined) {
-      config.refresh = refresh as "none" | "reload" | "save-reload";
-    } else {
-      const existing = await loadUserConfig();
-      if (existing.refresh) {
-        config.refresh = existing.refresh;
-      } else {
-        config.refresh = "none";
-      }
-    }
-
-    if (trackChangesFlag !== undefined) {
-      config.trackChanges = trackChangesFlag === "on";
-    } else {
-      const existing = await loadUserConfig();
-      if (existing.trackChanges !== undefined) {
-        config.trackChanges = existing.trackChanges;
-      } else {
-        config.trackChanges = true;
-      }
-    }
-
-    if (maxCacheEntries !== undefined) {
-      config.maxCacheEntries = maxCacheEntries;
-    } else {
-      const existing = await loadUserConfig();
-      if (existing.maxCacheEntries !== undefined) {
-        config.maxCacheEntries = existing.maxCacheEntries;
-      } else {
-        config.maxCacheEntries = 50;
-      }
-    }
-
-    if (authorNameFlag !== undefined) {
-      if (authorNameFlag.trim().length === 0) {
-        printError("INVALID_FLAG", "--author-name must be a non-empty string.");
-      }
-      config.authorName = authorNameFlag;
-    } else {
-      const existing = await loadUserConfig();
-      if (existing.authorName) {
-        config.authorName = existing.authorName;
-      } else {
-        config.authorName = "lq user";
-      }
-    }
+    const config: UserConfig = {
+      layoutsDir: dir,
+      refresh: refresh as "none" | "reload" | "save-reload" ?? existing.refresh ?? "none",
+      trackChanges: trackChangesFlag !== undefined
+        ? trackChangesFlag === "on"
+        : existing.trackChanges ?? true,
+      maxCacheEntries: maxCacheEntries ?? existing.maxCacheEntries ?? 50,
+      authorName: authorNameFlag ?? existing.authorName ?? "lq user",
+    };
 
     // If refresh is enabled, verify LyXServer is reachable. Dispatch-based
     // probe (test_report_38 F10) — truthful for both "no socket found" and
@@ -1092,15 +1079,13 @@ export async function runCli(args: string[]) {
     }
 
     try {
-      await Deno.mkdir(configDir, { recursive: true });
-      await Deno.writeTextFile(configPath, JSON.stringify(config, null, 2));
+      await Deno.mkdir(statePaths.root, { recursive: true });
+      await Deno.writeTextFile(statePaths.config, JSON.stringify(config, null, 2));
       printJson({
-        message: `Configuration saved to ${configPath}`,
-        layoutsDir: dir,
-        refresh: config.refresh,
-        trackChanges: config.trackChanges,
-        maxCacheEntries: config.maxCacheEntries,
-        authorName: config.authorName,
+        scope: statePaths.scope,
+        configPath: statePaths.config,
+        action: configExists ? "updated" : "created",
+        data: config,
       });
     } catch (e: Error | unknown) {
       printError("WRITE_ERROR", `Failed to write config file: ${(e as Error).message}`);
@@ -1131,8 +1116,16 @@ export async function runCli(args: string[]) {
     printError("INVALID_EXTENSION", `Target file '${filePath}' must have a .lyx extension. Select the LyX document to edit.`);
   }
 
+  const statePaths = await resolveStatePaths();
+  if (!statePaths) {
+    printError(
+      "NO_HOME",
+      "Could not determine a home directory for global state. Set HOME or USERPROFILE, or create a local .lq directory and run the command from that project.",
+    );
+  }
+
   // Load user config (shared by all commands: cache sizing, refresh, track-changes)
-  const userConfig = await loadUserConfig();
+  const userConfig = await loadUserConfig(statePaths);
   setMaxCacheEntries(userConfig.maxCacheEntries ?? 50);
 
   // --- Refresh pre-step (save-reload only) ---
@@ -1188,14 +1181,14 @@ export async function runCli(args: string[]) {
   try {
     // Try cache first — deserializing JSON is orders of magnitude faster
     // than line-by-line parsing for large files.
-    const cached = await getCachedAst(filePath);
+    const cached = await getCachedAst(filePath, statePaths);
     if (cached) {
       ast = cached;
     } else {
       ast = parse(text);
       // Populate cache on miss (non-fatal)
       try {
-        await setCachedAst(await hashText(text), ast);
+        await setCachedAst(await hashText(text), ast, statePaths);
       } catch { /* cache failures are non-fatal */ }
     }
   } catch (e: Error | unknown) {
@@ -1406,7 +1399,7 @@ function foldNegativeDepth(args: string[]): string[] {
   }
 
   if (command === "schema") {
-    const config = await loadUserConfig();
+    const config = await loadUserConfig(statePaths);
     const layoutsDir = config.layoutsDir || await getDefaultLayoutsDir();
     if (!layoutsDir) {
       printError("NO_CONFIG", "No layouts directory found. Run 'lq init' to auto-detect and save your LyX layouts path.");
@@ -1841,7 +1834,7 @@ function foldNegativeDepth(args: string[]): string[] {
     if (trackChanges) {
       ensureTrackingChangesInHeader(ast);
     }
-    await commitMutation(filePath, ast, preSnapshots);
+    await commitMutation(filePath, ast, preSnapshots, statePaths);
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
     // --find only modified the nodes that contained occurrences; report those,
@@ -1914,7 +1907,7 @@ function foldNegativeDepth(args: string[]): string[] {
       };
 
       markAsDeleted(ast.children, true); // document body = paragraph context
-      await commitMutation(filePath, ast, deletePreSnapshots);
+      await commitMutation(filePath, ast, deletePreSnapshots, statePaths);
       await refreshPostStep(filePath, refreshMode);
       const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
       printJson({ tracked_deleted_nodes: nodes.length, changes });
@@ -1936,7 +1929,7 @@ function foldNegativeDepth(args: string[]): string[] {
 
     filterNodes(ast.children);
 
-    await commitMutation(filePath, ast, deletePreSnapshots);
+    await commitMutation(filePath, ast, deletePreSnapshots, statePaths);
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));
     printJson({ deleted_nodes: nodes.length, changes });
@@ -2015,7 +2008,7 @@ function foldNegativeDepth(args: string[]): string[] {
       }
     } else if (flags.layout) {
       // Validate the layout against the schema (loaded from config)
-      const config = await loadUserConfig();
+      const config = await loadUserConfig(statePaths);
       if (config.layoutsDir) {
          const textclassNode = query(ast, "textclass")[0];
          if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
@@ -2155,7 +2148,7 @@ function foldNegativeDepth(args: string[]): string[] {
     // Pre-fetch schema from config once (avoid per-node I/O and CST traversal)
     let schema: Awaited<ReturnType<typeof getSchemaForClass>> | null = null;
     let textclassValue: string | null = null;
-    const config = await loadUserConfig();
+    const config = await loadUserConfig(statePaths);
     if (config.layoutsDir) {
       const textclassNode = query(ast, "textclass")[0];
       if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
@@ -2510,7 +2503,7 @@ function foldNegativeDepth(args: string[]): string[] {
       insertedCount++;
     }
 
-    await commitMutation(filePath, ast, insertPreSnapshots);
+    await commitMutation(filePath, ast, insertPreSnapshots, statePaths);
     await refreshPostStep(filePath, refreshMode);
     const changes = nodes.map(n => ({ position, label: nodeLabel(n), text: briefText(n) }));
     printJson({ matched_nodes: insertedCount, inserted_blocks: insertedBlocks, changes });
@@ -2527,7 +2520,7 @@ function foldNegativeDepth(args: string[]): string[] {
     if (substring === undefined) {
       let snapshotFailure = "No snapshot found for the current file content.";
       const currentHash = await hashFile(filePath);
-      const snapshot = await loadSnapshot(currentHash);
+      const snapshot = await loadSnapshot(currentHash, statePaths);
       if (snapshot) {
         let restoredCount = 0;
         let missingCount = 0;
@@ -2556,8 +2549,8 @@ function foldNegativeDepth(args: string[]): string[] {
           }
           const newFileText = serialize(ast);
           await Deno.writeTextFile(filePath, newFileText);
-          try { await setCachedAst(await hashText(newFileText), ast); } catch { /* non-fatal */ }
-          await clearSnapshot(currentHash);
+          try { await setCachedAst(await hashText(newFileText), ast, statePaths); } catch { /* non-fatal */ }
+          await clearSnapshot(currentHash, statePaths);
           await refreshPostStep(filePath, refreshMode);
           printJson({ undone_changes: restoredCount, method: "snapshot" });
           return;
@@ -2756,7 +2749,7 @@ function foldNegativeDepth(args: string[]): string[] {
     }
     // Write file and save snapshot so the replay itself can be undone
     if (undoneCount > 0) {
-      await commitMutation(filePath, ast, replayPreSnapshots);
+      await commitMutation(filePath, ast, replayPreSnapshots, statePaths);
       await refreshPostStep(filePath, refreshMode);
     }
     printJson({ undone_changes: undoneCount, changes, method: "replay" });
