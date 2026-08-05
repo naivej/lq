@@ -6,13 +6,14 @@ import {
   concatenateTextNodes,
   createTraversalState,
   enterTraversalState,
+  isInvisibleInset,
   traversalRegion,
   type TraversalState,
 } from "./text_utils.ts";
 import { INLINE_PROPERTIES, isInlineStyleKey } from "./registry.ts";
 
 export interface PseudoClass {
-  name: "first" | "last" | "contains" | "nth-child" | "not" | "adjacent" | "until" | "change" | "property";
+  name: "first" | "last" | "contains" | "nth-child" | "not" | "adjacent" | "until" | "change" | "property" | "note";
   argRaw?: string;
 }
 
@@ -37,7 +38,7 @@ function parsePseudoClasses(suffix: string): PseudoClass[] {
     const pName = pMatch[1];
     const pArg = pMatch[2] ? pMatch[2].trim() : undefined;
 
-    if (!["first", "last", "nth-child", "contains", "not", "adjacent", "until", "change", "property"].includes(pName)) {
+    if (!["first", "last", "nth-child", "contains", "not", "adjacent", "until", "change", "property", "note"].includes(pName)) {
       throw new Error(`Unsupported pseudo-class: :${pName}`);
     }
 
@@ -47,6 +48,19 @@ function parsePseudoClasses(suffix: string): PseudoClass[] {
 
     if (pName === "property" && !pArg) {
       throw new Error(`:property() requires an argument, e.g. :property(emph) or :property(family=roman)`);
+    }
+
+    if (pName === "note" && pArg !== undefined) {
+      // DL99: bare :note = any private type; :note(Note) / :note(Comment) = one.
+      let noteType = pArg;
+      if (noteType.startsWith('"') && noteType.endsWith('"')) noteType = noteType.substring(1, noteType.length - 1);
+      if (noteType.startsWith("'") && noteType.endsWith("'")) noteType = noteType.substring(1, noteType.length - 1);
+      if (noteType !== "Note" && noteType !== "Comment") {
+        throw new Error(
+          `Invalid :note() argument: '${noteType}'. Valid private note types: Note, Comment. ` +
+          `Greyedout is visible output and is not excluded.`
+        );
+      }
     }
 
     if (pName === "not" || pName === "adjacent" || pName === "until") {
@@ -213,7 +227,7 @@ export function parseSelector(selector: string): SelectorPart[][] {
   });
 }
 
-function nodeContainsText(node: Node, searchStr: string): boolean {
+function nodeContainsText(node: Node, searchStr: string, noteScope: boolean): boolean {
   if (node.type === "text") {
     return node.text.includes(searchStr);
   } else if (node.type === "block") {
@@ -223,10 +237,14 @@ function nodeContainsText(node: Node, searchStr: string): boolean {
     // split-after see only current text — dev log 87 D7).
     const { fullText } = concatenateTextNodes(node.children, { includeDeleted: true });
     if (fullText.includes(searchStr)) return true;
-    // Also recurse into sub-blocks (insets, nested layouts)
+    // Also recurse into sub-blocks (insets, nested layouts). DL99: private
+    // note insets are skipped unless the query is note-scoped — the visible
+    // document is the default view for content matching.
     for (const child of node.children) {
-      if (child.type === "block" && nodeContainsText(child, searchStr)) {
-        return true;
+      if (child.type === "block") {
+        const b = child as BlockNode;
+        if (!noteScope && isInvisibleInset(b)) continue;
+        if (nodeContainsText(b, searchStr, noteScope)) return true;
       }
     }
   }
@@ -373,6 +391,45 @@ export function buildScopePredicate(selectorStr: string): ScopePredicate | undef
   return (region, props) => groupPreds.some((g) => g(region, props));
 }
 
+/**
+ * DL99: is any `,` group of the selector note-scoped — i.e. does it contain a
+ * part with a `:note` pseudo, or an `inset` part whose arg first word is
+ * `Note` (e.g. `inset[Note Note]`, `inset[Note Comment]`, `inset[Note]`)?
+ * Note-scope is per group so `text, text:note` means "visible text + note
+ * text". Used by the query engine (content matching) and by split-after
+ * (cli.ts).
+ */
+export function selectorNoteScope(selectorStr: string): boolean {
+  const groups = parseSelector(selectorStr);
+  return groups.some((group) =>
+    group.some((part) =>
+      part.pseudos?.some((p) => p.name === "note") ||
+      (part.tag === "inset" && part.argExact?.trim().split(" ")[0] === "Note")
+    )
+  );
+}
+
+/**
+ * DL99: map of every node → true when it sits inside a private note inset
+ * (Note Note / Note Comment). The note inset itself is false — it *is* the
+ * note. One top-down tree walk; used by `:note` and the visible-only `text`
+ * rule.
+ */
+function buildInsideNoteMap(rootChildren: Node[]): Map<Node, boolean> {
+  const map = new Map<Node, boolean>();
+  function walk(children: Node[], insideNote: boolean): void {
+    for (const c of children) {
+      map.set(c, insideNote);
+      if (c.type === "block") {
+        const b = c as BlockNode;
+        walk(b.children, insideNote || isInvisibleInset(b));
+      }
+    }
+  }
+  walk(rootChildren, false);
+  return map;
+}
+
 /** Does a block contain any text under the given style state? (:property() on blocks.) */
 function blockContainsProperty(
   node: BlockNode,
@@ -434,6 +491,8 @@ function matchNode(
   region?: "deleted" | "inserted" | "current",
   propState?: Record<string, string | undefined>,
   stateIndex?: Map<Node, TraversalState>,
+  insideNoteIndex?: Map<Node, boolean>,
+  noteScope?: boolean,
 ): boolean {
   if (part.tag === "property") {
     if (node.type !== "property") return false;
@@ -460,6 +519,20 @@ function matchNode(
     }
   }
 
+  // DL99: bare `text` is a CONTENT surface — visible-only by default. A text
+  // node inside a private note matches only when the group is note-scoped
+  // (noteScope) or the part explicitly opts in with :note (which filters
+  // note-only below). Text parts carrying :change()/:property() are on the
+  // STATE axis and are unaffected by visibility (DL93).
+  if (part.tag === "text" && node.type === "text") {
+    const hasState = part.pseudos?.some((p) => p.name === "change" || p.name === "property") ?? false;
+    const hasNote = part.pseudos?.some((p) => p.name === "note") ?? false;
+    if (!hasState && !hasNote) {
+      const inside = insideNoteIndex?.get(node) ?? false;
+      if (inside && !(noteScope ?? false)) return false;
+    }
+  }
+
   if (part.pseudos) {
     for (const p of part.pseudos) {
       if (p.name === "contains" && p.argRaw !== undefined) {
@@ -475,7 +548,16 @@ function matchNode(
           // Don't return TextNodes directly for :contains to avoid double mutations.
           return false;
         } else if (node.type === "block") {
-          if (!nodeContainsText(node, val)) {
+          // DL99: a block inside a private note is invisible content — bare
+          // content matching (no :note, no group note-scope) must not return
+          // it, even when the phrase is in the node's OWN text (a note's inner
+          // Plain Layout's direct prose). Note-scoped queries (:note or an
+          // explicit inset[Note ...] group) still match.
+          if (!(noteScope ?? false)) {
+            const hasNote = part.pseudos?.some((pp) => pp.name === "note") ?? false;
+            if (!hasNote && (insideNoteIndex?.get(node) ?? false)) return false;
+          }
+          if (!nodeContainsText(node, val, noteScope ?? false)) {
             return false;
           }
         } else {
@@ -489,7 +571,7 @@ function matchNode(
         // in the inner selector (e.g. :not(:contains('TODO'))).
         const innerPart = parseSelectorPart(p.argRaw, true);
         if (node.type === "block") {
-          const matches = findDescendants(node.children, innerPart, [], stateIndex);
+          const matches = findDescendants(node.children, innerPart, [], stateIndex, insideNoteIndex, noteScope);
           if (matches.length > 0) return false;
         }
         // For non-block nodes, :not() always passes (there are no descendants to check).
@@ -531,6 +613,13 @@ function matchNode(
           return false;
         }
       }
+
+      if (p.name === "note") {
+        // DL99: matches a private note inset itself, or any node inside one.
+        const isNoteInset = node.type === "block" && isInvisibleInset(node as BlockNode);
+        const inside = insideNoteIndex?.get(node) ?? false;
+        if (!isNoteInset && !inside) return false;
+      }
     }
   }
 
@@ -542,6 +631,8 @@ function findDescendants(
   part: SelectorPart,
   results: Node[] = [],
   stateIndex?: Map<Node, TraversalState>,
+  insideNoteIndex?: Map<Node, boolean>,
+  noteScope?: boolean,
 ): Node[] {
   for (const node of nodes) {
     const state = stateIndex?.get(node) ?? createTraversalState();
@@ -553,11 +644,11 @@ function findDescendants(
     ) {
       continue;
     }
-    if (matchNode(node, part, traversalRegion(state), state.properties, stateIndex)) {
+    if (matchNode(node, part, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope)) {
       results.push(node);
     }
     if (node.type === "block") {
-      findDescendants(node.children, part, results, stateIndex);
+      findDescendants(node.children, part, results, stateIndex, insideNoteIndex, noteScope);
     }
   }
 
@@ -633,6 +724,8 @@ function findFollowingSiblings(
   part: SelectorPart,
   parentIndex?: Map<Node, { parentChildren: Node[]; index: number }>,
   stateIndex?: Map<Node, TraversalState>,
+  insideNoteIndex?: Map<Node, boolean>,
+  noteScope?: boolean,
 ): Node[] {
   let ctx = parentIndex?.get(anchor);
   if (!ctx) {
@@ -645,12 +738,12 @@ function findFollowingSiblings(
   for (let i = ctx.index + 1; i < ctx.parentChildren.length; i++) {
     const sibling = ctx.parentChildren[i];
     const state = stateIndex?.get(sibling) ?? createTraversalState();
-    if (matchNode(sibling, part, traversalRegion(state), state.properties, stateIndex)) {
+    if (matchNode(sibling, part, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope)) {
       results.push(sibling);
     }
     // Also search descendants of sibling blocks (like space combinator does)
     if (sibling.type === "block") {
-      findDescendants(sibling.children, part, results, stateIndex);
+      findDescendants(sibling.children, part, results, stateIndex, insideNoteIndex, noteScope);
     }
   }
   return results;
@@ -666,14 +759,16 @@ function hasInterveningMatch(
   startIndex: number,
   innerPart: SelectorPart,
   stateIndex?: Map<Node, TraversalState>,
+  insideNoteIndex?: Map<Node, boolean>,
+  noteScope?: boolean,
 ): boolean {
   for (let i = startIndex; i < parentChildren.length; i++) {
     if (parentChildren[i] === node) return false; // reached target, no match found
     const state = stateIndex?.get(parentChildren[i]) ?? createTraversalState();
-    if (matchNode(parentChildren[i], innerPart, traversalRegion(state), state.properties, stateIndex)) return true;
+    if (matchNode(parentChildren[i], innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope)) return true;
     // Also check descendants of intervening blocks
     if (parentChildren[i].type === "block") {
-      const descMatches = findDescendants((parentChildren[i] as BlockNode).children, innerPart, [], stateIndex);
+      const descMatches = findDescendants((parentChildren[i] as BlockNode).children, innerPart, [], stateIndex, insideNoteIndex, noteScope);
       if (descMatches.length > 0) return true;
     }
   }
@@ -684,6 +779,8 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
   const groups = parseSelector(selectorStr);
   const rootChildren = ast.type === "document" ? ast.children : (ast.type === "block" ? ast.children : []);
   const stateIndex = buildTraversalStateIndex(rootChildren);
+  // DL99: one extra tree walk for the inside-note map (content visibility).
+  const insideNoteIndex = buildInsideNoteMap(rootChildren);
   
   // Pre-build parent index for O(1) sibling lookups when any sibling-related
   // feature is used (~ combinator, :adjacent(), :until()).
@@ -703,6 +800,12 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
     // Track the anchor nodes for :until() bounding — each anchor corresponds
     // to a node matched in the previous stage (before the ~ combinator).
     let siblingAnchors: Node[] = [];
+    // DL99: per-group note scope — a group opts into note content when it has
+    // a :note pseudo or an explicit inset[Note ...] part (dev log 99 §3).
+    const noteScope = group.some((part) =>
+      part.pseudos?.some((p) => p.name === "note") ||
+      (part.tag === "inset" && part.argExact?.trim().split(" ")[0] === "Note")
+    );
 
     for (let i = 0; i < group.length; i++) {
       const part = group[i];
@@ -711,16 +814,16 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
       if (part.combinator === "sibling") {
         // ~ combinator: search following siblings of each current anchor
         for (const cn of currentNodes) {
-          nextNodes = nextNodes.concat(findFollowingSiblings(cn, rootChildren, part, parentIndex, stateIndex));
+          nextNodes = nextNodes.concat(findFollowingSiblings(cn, rootChildren, part, parentIndex, stateIndex, insideNoteIndex, noteScope));
         }
         // Save current nodes as anchors for potential :until() filtering
         siblingAnchors = currentNodes;
       } else if (i === 0) {
-        nextNodes = findDescendants(currentNodes, part, [], stateIndex);
+        nextNodes = findDescendants(currentNodes, part, [], stateIndex, insideNoteIndex, noteScope);
       } else {
         for (const cn of currentNodes) {
           if (cn.type === "block") {
-            nextNodes = nextNodes.concat(findDescendants(cn.children, part, [], stateIndex));
+            nextNodes = nextNodes.concat(findDescendants(cn.children, part, [], stateIndex, insideNoteIndex, noteScope));
           }
         }
       }
@@ -767,7 +870,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
                 const prev = ctx.parentChildren[si];
                 if (prev.type === "text" || prev.type === "property") continue;
                 const state = stateIndex.get(prev) ?? createTraversalState();
-                return matchNode(prev, innerPart, traversalRegion(state), state.properties, stateIndex);
+                return matchNode(prev, innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope);
               }
               return false;
             });
@@ -788,7 +891,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
                   if (anchorCtx.parentChildren !== nCtx.parentChildren) continue;
                   if (anchorCtx.index < nCtx.index) {
                     // Check for intervening match
-                    return !hasInterveningMatch(n, nCtx.parentChildren, anchorCtx.index + 1, innerPart, stateIndex);
+                    return !hasInterveningMatch(n, nCtx.parentChildren, anchorCtx.index + 1, innerPart, stateIndex, insideNoteIndex, noteScope);
                   }
                 }
                 return true; // no anchor found, keep node

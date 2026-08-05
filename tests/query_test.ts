@@ -480,3 +480,156 @@ Deno.test("Report 42 F2 - inherited style state reaches nested inset prose", () 
   const nestedLayouts = query(ast, "layout[Plain Layout]:property(emph)");
   assertEquals(nestedLayouts.length, 1);
 });
+
+// --- DL99 F2: notes visibility (dev log 99) ---
+
+const DL99_BODY =
+  "\\begin_layout Section\n" +
+  "Section One\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "Visible alpha.\n" +
+  "\\begin_inset Note Note\n" +
+  "status collapsed\n" +
+  "\n" +
+  "\\begin_layout Plain Layout\n" +
+  "PRIVATE SECRET note\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\end_inset\n" +
+  "\n" +
+  "Visible beta.\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "\\begin_inset Note Comment\n" +
+  "status collapsed\n" +
+  "\n" +
+  "\\begin_layout Plain Layout\n" +
+  "COMMENT SECRET\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\end_inset\n" +
+  "\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "\\begin_inset Note Greyedout\n" +
+  "status collapsed\n" +
+  "\n" +
+  "\\begin_layout Plain Layout\n" +
+  "GREY VISIBLE\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\end_inset\n" +
+  "\n" +
+  "\\end_layout\n";
+
+function dl99Ast() {
+  return parse(
+    "#LyX 2.5 created this file.\n" +
+    "\\begin_document\n\\begin_header\n\\textclass article\n\\end_header\n\\begin_body\n" +
+    DL99_BODY +
+    "\\end_body\n\\end_document\n",
+  );
+}
+
+function dl99Text(nodes: { type: string; text?: string }[]): string {
+  return nodes.filter(n => n.type === "text").map(n => n.text ?? "").join("|");
+}
+
+Deno.test("DL99 - bare :contains excludes private note prose (Note + Comment)", () => {
+  const ast = dl99Ast();
+  assertEquals(query(ast, "layout:contains('PRIVATE SECRET')").length, 0);
+  assertEquals(query(ast, "layout:contains('COMMENT SECRET')").length, 0);
+});
+
+Deno.test("DL99 - :note and explicit note path reach note prose", () => {
+  const ast = dl99Ast();
+  assertEquals(query(ast, "layout:note:contains('PRIVATE SECRET')").length, 1);
+  assertEquals(query(ast, "inset[Note Note] layout[Plain Layout]:contains('PRIVATE SECRET')").length, 1);
+  assertEquals(query(ast, "inset[Note Note] layout[Plain Layout]:contains('COMMENT SECRET')").length, 0);
+});
+
+Deno.test("DL99 - bare text excludes notes; :note and explicit path include them", () => {
+  const ast = dl99Ast();
+  const bare = dl99Text(query(ast, "text"));
+  assertEquals(bare.includes("PRIVATE SECRET"), false);
+  assertEquals(bare.includes("COMMENT SECRET"), false);
+  const noteText = dl99Text(query(ast, "text:note"));
+  assertEquals(noteText.includes("PRIVATE SECRET"), true);
+  assertEquals(noteText.includes("COMMENT SECRET"), true);
+  assertEquals(noteText.includes("GREY VISIBLE"), false);
+  // Descendant from a visible layout excludes note text; explicit note path includes it.
+  const descendant = dl99Text(query(ast, "layout[Standard] text"));
+  assertEquals(descendant.includes("PRIVATE SECRET"), false);
+  const explicit = dl99Text(query(ast, "layout[Standard] inset[Note Note] text"));
+  assertEquals(explicit.includes("PRIVATE SECRET"), true);
+});
+
+Deno.test("DL99 - ',' union is per-group (visible + note text, no overlap)", () => {
+  const ast = dl99Ast();
+  const bareCount = query(ast, "text").length;
+  const noteCount = query(ast, "text:note").length;
+  const union = query(ast, "text, text:note");
+  assertEquals(union.length, bareCount + noteCount);
+});
+
+Deno.test("DL99 - state axis still sees note prose (diff view, DL93)", () => {
+  const ast = parse(
+    "#LyX 2.5 created this file.\n\\begin_document\n\\begin_header\n\\textclass article\n\\end_header\n\\begin_body\n" +
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "deleted visible\n" +
+    "\\begin_inset Note Note\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "DELETED NOTE SECRET\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n" +
+    "\\end_body\n\\end_document\n",
+  );
+  const del = dl99Text(query(ast, "text:change(deleted)"));
+  assertEquals(del.includes("DELETED NOTE SECRET"), true);
+  const noteDel = dl99Text(query(ast, "text:note:change(deleted)"));
+  assertEquals(noteDel.includes("DELETED NOTE SECRET"), true);
+  assertEquals(noteDel.includes("deleted visible"), false);
+  const deletedLayouts = query(ast, "layout:change(deleted)");
+  assertEquals(deletedLayouts.some(n => (n as { args?: string }).args === "Plain Layout"), true);
+});
+
+Deno.test("DL99 - :not(inset[Note Note]) and :not(:note) still work", () => {
+  const ast = dl99Ast();
+  // Standards containing a Note Note are excluded (Comment + Greyedout remain).
+  assertEquals(query(ast, "layout[Standard]:not(inset[Note Note])").length, 2);
+  // :not(:note) parses and returns layouts with no note descendant.
+  assertEquals(query(ast, "layout:not(:note)").length > 0, true);
+});
+
+Deno.test("DL99 - Greyedout stays visible; :note(Greyedout) errors; :note(Comment) selects", () => {
+  const ast = dl99Ast();
+  assertEquals(query(ast, "layout[Plain Layout]:contains('GREY VISIBLE')").length, 1);
+  let err = "";
+  try { query(ast, "layout:note(Greyedout)"); } catch (e) { err = (e as Error).message; }
+  assertEquals(err.includes("Invalid :note() argument"), true);
+  assertEquals(query(ast, "layout:note(Comment)").length >= 1, true);
+});
+
+Deno.test("DL99 - ~ sibling with a note in a following sibling's descendants", () => {
+  const ast = dl99Ast();
+  const sibText = dl99Text(query(ast, "layout[Section] ~ layout[Standard] text"));
+  assertEquals(sibText.includes("PRIVATE SECRET"), false);
+  assertEquals(sibText.includes("Visible alpha"), true);
+});
+
+Deno.test("DL99 - parser: :note without tag errors; bare :note in :not() parses", () => {
+  let e1 = "";
+  try { parseSelector(":note"); } catch (e) { e1 = (e as Error).message; }
+  assertEquals(e1.includes("must follow a tag"), true);
+  parseSelector("layout:not(:note)"); // must not throw
+});

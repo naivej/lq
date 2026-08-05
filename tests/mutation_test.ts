@@ -789,6 +789,136 @@ Deno.test("DL98 F1 - --find inside \\change_deleted before an inset keeps the in
   }
 });
 
+// --- DL99 F2: notes visibility (dev log 99) — CLI-level behavior ---
+
+const DL99_NOTE_BODY =
+  "\\begin_layout Standard\n" +
+  "Visible alpha.\n" +
+  "\\begin_inset Note Note\n" +
+  "status collapsed\n" +
+  "\n" +
+  "\\begin_layout Plain Layout\n" +
+  "PRIVATE SECRET note\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\end_inset\n" +
+  "\n" +
+  "Visible beta.\n" +
+  "\\end_layout\n";
+
+Deno.test("DL99 - --find on a visible layout does not leak into a note", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl99_find.lyx", DL99_NOTE_BODY, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["set", tempFile, "layout[Standard]:first", "X", "--find", "PRIVATE SECRET"]);
+    assertEquals(result.code, "NO_MATCH");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL99 - split-after on a visible layout does not leak into a note (trap fix)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl99_split.lyx", DL99_NOTE_BODY, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["insert", tempFile, "layout[Standard]:first", "split-after", "PRIVATE SECRET", "--text", "Y"]);
+    assertEquals(result.code, "SPLIT_NO_MATCH");
+    const text = await Deno.readTextFile(tempFile);
+    assertEquals(text.includes("\\nY"), false, "must not insert into the note");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL99 - split-after on a note layout still matches note prose", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl99_split_note.lyx", DL99_NOTE_BODY, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["insert", tempFile, "inset[Note Note] layout[Plain Layout]", "split-after", "PRIVATE SECRET", "--text", "Y"]);
+    assertEquals(result.code, undefined);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "Y");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL99 - read --text-only on a visible layout collapses the note to a marker", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl99_textonly.lyx", DL99_NOTE_BODY, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["read", tempFile, "layout[Standard]:first", "--text-only"]);
+    assertStringIncludes(result.text!, "inset[Note Note]");
+    assertEquals((result.text ?? "").includes("PRIVATE SECRET"), false);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL99 - footnote split-after workflow keeps working (Foot is not a note)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "Before\n" +
+    "\\begin_inset Foot\n" +
+    "status open\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "footnote text\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\n" +
+    " after.\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl99_footnote.lyx", body, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["insert", tempFile, "layout[Standard]:first", "split-after", "footnote text", "--text", "Y"]);
+    assertEquals(result.code, undefined);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "Y");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL99 - dump --toc excludes note headings and note text inside headings", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Section\n" +
+    "Visible Heading\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\begin_layout Standard\n" +
+    "\\begin_inset Note Note\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Section\n" +
+    "Hidden Note Section\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\begin_layout Section\n" +
+    "Heading with\n" +
+    "\\begin_inset Note Note\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "LEAK NOTE TEXT\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl99_toc.lyx", body, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["dump", tempFile, "--toc"]);
+    const data = JSON.stringify(result.data);
+    assertEquals(data.includes("Hidden Note Section"), false);
+    assertEquals(data.includes("LEAK NOTE TEXT"), false);
+    assertEquals(data.includes("Visible Heading"), true);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("Cross-Node split-after", async () => {
   const tempFile = await createTempFixture("temp_cross_split.lyx", REPRO_FIXTURE);
   try {

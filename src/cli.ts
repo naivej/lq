@@ -1,6 +1,6 @@
 import { parse } from "./parser.ts";
 import { serialize } from "./serializer.ts";
-import { query, buildScopePredicate, buildTraversalStateIndex, type ScopePredicate } from "./query.ts";
+import { query, buildScopePredicate, buildTraversalStateIndex, selectorNoteScope, type ScopePredicate } from "./query.ts";
 import { getSchemaForClass, INSET_LAYOUTS, INSETS, INLINE_PROPERTIES } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
@@ -9,6 +9,7 @@ import { validateInsetType, KNOWN_COMMAND_INSET_TYPES } from "./registry.ts";
 import {
   advanceChangeDepths,
   concatenateTextNodes,
+  isInvisibleInset,
   mapPosToSegment,
   traversalRegion,
   type TextSegment,
@@ -176,6 +177,7 @@ Tag[args]: substitute a value from 'lq schema <file>' (these are categories, not
   inset[Formula]               an inset type from insets
   inset[CommandInset citation] a CommandInset subtype from commandInsetSubtypes
   property[family]             an inline property key from inlineProperties
+  text                         text nodes (no [args])
   
 Combinators:
   Space for descendant  e.g. layout[Section] inset[Formula]
@@ -189,8 +191,13 @@ Chainable pseudo-classes: must follow a tag
   :until(selector) bounds a ~ range to stop before the next matching sibling
   :change(current|inserted|deleted)   nodes by tracked-change region
   :property(key[=value])              nodes under an inline style state
+  :note([Note|Comment])               nodes inside a private note (Note Note /
+                                      Note Comment); opts into note prose
   :change()/:property() in a selector also scope set --find / split-after
-  (union via ',', conjunction via ':' chaining)`,
+  (union via ',', conjunction via ':' chaining)
+  Private notes are invisible to content matching (:contains, bare text,
+  --find, split-after) by default; add :note or an explicit inset[Note ...]
+  path to target note prose. :change()/:property() always see note prose.`,
 
   read: `lq read - Output matching nodes and text content.
 
@@ -2233,11 +2240,19 @@ function foldNegativeDepth(args: string[]): string[] {
         // (dev log 90): \change_deleted text is matchable too, so split-after
         // can target a rejected region; SPLIT_AMBIGUOUS is resolved by
         // :change() scoping.
+        // DL99: private notes are invisible content — split-after must not
+        // leak into them. Note prose is in scope only when the selector is
+        // note-scoped (:note / inset[Note ...]) or the target sits inside (or
+        // is) a private note.
+        const splitNoteScope = selectorNoteScope(selector) ||
+          isInvisibleInset(targetParentBlock) ||
+          (ctx?.ancestorChain?.some((a) => isInvisibleInset(a)) ?? false);
         const { segments, fullText } = concatenateTextNodes(targetParentBlock.children, {
           recurseLayouts: true,
           topLevelIsLayout: targetParentBlock.tag !== "inset",
           includeDeleted: true,
           inheritedState: traversalStateIndex.get(targetParentBlock),
+          skipInvisibleNotes: !splitNoteScope,
         });
 
         let totalMatches = 0;

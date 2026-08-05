@@ -2,6 +2,18 @@ import type { Node, BlockNode } from "./ast.ts";
 
 export type TextRegion = "deleted" | "inserted" | "current";
 
+/**
+ * Is this block a private (invisible-in-output) note inset — `Note Note` or
+ * `Note Comment`? `Note Greyedout` is visible output and is NOT included.
+ * Shared by the query engine and split-after so the private set lives in one
+ * place (dev log 99 — F2 notes visibility).
+ */
+export function isInvisibleInset(block: BlockNode): boolean {
+  if (block.type !== "block" || block.tag !== "inset") return false;
+  const args = (block.args ?? "").trim();
+  return args === "Note Note" || args === "Note Comment";
+}
+
 export interface TraversalState {
   deletedDepth: number;
   insertedDepth: number;
@@ -176,12 +188,18 @@ export function concatenateTextNodes(
     topLevelIsLayout?: boolean;
     includeDeleted?: boolean;
     inheritedState?: TraversalState;
+    /** DL99: when true (and recurseLayouts), do not descend into private note
+     *  insets (Note Note / Note Comment) — split-after must not leak into them
+     *  unless the target is note-scoped. Inert when recurseLayouts is false, so
+     *  the --find / :contains non-recursive paths are unaffected. */
+    skipInvisibleNotes?: boolean;
   },
 ): { segments: TextSegment[]; fullText: string } {
   const segments: TextSegment[] = [];
   const recurse = opts?.recurseLayouts ?? false;
   const topLevelIsLayout = opts?.topLevelIsLayout ?? true;
   const includeDeleted = opts?.includeDeleted ?? false;
+  const skipInvisibleNotes = opts?.skipInvisibleNotes ?? false;
 
   function walk(list: Node[], collectText: boolean, inheritedState: TraversalState): void {
     const state = enterTraversalState(inheritedState);
@@ -206,6 +224,9 @@ export function concatenateTextNodes(
         if (b.tag === "layout") {
           walk(b.children, true, state); // collect text under nested layouts
         } else if (b.tag === "inset") {
+          // DL99: private notes are invisible content — do not descend into
+          // them when skipInvisibleNotes is set (split-after leak fix).
+          if (skipInvisibleNotes && isInvisibleInset(b)) continue;
           // Descend through insets to reach their nested layouts, but do NOT
           // collect inset metadata text (e.g. a CommandInset label line).
           walk(b.children, false, state);
