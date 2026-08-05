@@ -598,6 +598,197 @@ Deno.test("Cross-Node --find (tracked)", async () => {
   }
 });
 
+// --- DL98 F1 (user proofreading report): set --find must not pull an
+// --- immediately-following inset inside the \change_deleted span. Accepting
+// --- such a change deletes the inset (refs, citations, labels, notes, quotes).
+// --- A match ending exactly at a text-node boundary before a block left the
+// --- change region open across the inset — the \change_unchanged landed after
+// --- \end_inset (applyCrossNodeReplace atom serialization; dev log 98).
+
+const DL98_REF_INSET =
+  "\\begin_inset CommandInset ref\n" +
+  "LatexCommand ref\n" +
+  'reference "sec:intro"\n' +
+  "\n" +
+  "\\end_inset\n";
+
+const DL98_HEADER = '\\author 1 "lq user"\n';
+
+Deno.test("DL98 F1 - --find before a ref inset keeps the inset current", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl98_f1_ref.lyx",
+    "\\begin_layout Standard\nSee Section\n" + DL98_REF_INSET + "\n for details.\n\\end_layout\n",
+    DL98_HEADER);
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "Section 2", "--find", "See Section"],
+      { trackChanges: true },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\begin_inset CommandInset ref");
+    assertEquals(deletedRegionContainsInset(text), false,
+      "the ref inset must stay OUTSIDE the \\change_deleted span");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL98 F1 - --find before a citation inset keeps the inset current", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl98_f1_citation.lyx",
+    "\\begin_layout Standard\nSee\n" +
+    "\\begin_inset CommandInset citation\n" +
+    "LatexCommand citet\n" +
+    'key "Einstein1905"\n' +
+    'literal "false"\n' +
+    "\n" +
+    "\\end_inset\n" +
+    "\n for details.\n\\end_layout\n",
+    DL98_HEADER);
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "Read", "--find", "See"],
+      { trackChanges: true },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\begin_inset CommandInset citation");
+    assertEquals(deletedRegionContainsInset(text), false,
+      "the citation inset must stay OUTSIDE the \\change_deleted span");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL98 F1 - --find before a label inset keeps the inset current", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl98_f1_label.lyx",
+    "\\begin_layout Standard\nintro\n" +
+    "\\begin_inset CommandInset label\n" +
+    "LatexCommand label\n" +
+    'name "sec:intro"\n' +
+    "\n" +
+    "\\end_inset\n" +
+    "\n\n\\end_layout\n",
+    DL98_HEADER);
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "introduction", "--find", "intro"],
+      { trackChanges: true },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\begin_inset CommandInset label");
+    assertEquals(deletedRegionContainsInset(text), false,
+      "the label inset must stay OUTSIDE the \\change_deleted span");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL98 F1 - --find before a Note inset keeps the inset current", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl98_f1_note.lyx",
+    "\\begin_layout Standard\nintro note\n" +
+    "\\begin_inset Note Note\n" +
+    "status collapsed\n" +
+    "\n" +
+    "\\begin_layout Plain Layout\n" +
+    "PRIVATE secret\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\end_inset\n" +
+    "\n\n\\end_layout\n",
+    DL98_HEADER);
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "introduction", "--find", "intro note"],
+      { trackChanges: true },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\begin_inset Note Note");
+    assertEquals(deletedRegionContainsInset(text), false,
+      "the Note inset must stay OUTSIDE the \\change_deleted span");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL98 F1 - --find before a closing-quote inset keeps the inset current", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl98_f1_quote.lyx",
+    "\\begin_layout Standard\nHe said\n" +
+    "\\begin_inset Quotes erd\n" +
+    "\\end_inset\n" +
+    "\n to them.\n\\end_layout\n",
+    DL98_HEADER);
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "They said", "--find", "He said"],
+      { trackChanges: true },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\begin_inset Quotes erd");
+    assertEquals(deletedRegionContainsInset(text), false,
+      "the quote inset must stay OUTSIDE the \\change_deleted span");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL98 F1 - control: --find with trailing text before an inset stays correct", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl98_f1_control.lyx",
+    "\\begin_layout Standard\nSee Section~\n" + DL98_REF_INSET + "\n for details.\n\\end_layout\n",
+    DL98_HEADER);
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "Section 2", "--find", "See Section"],
+      { trackChanges: true },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertEquals(deletedRegionContainsInset(text), false,
+      "trailing text must keep the ref inset OUTSIDE the \\change_deleted span");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL98 F1 - --find inside \\change_deleted before an inset keeps the inset in its original deleted region", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl98_f1_deleted_inset.lyx",
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "old text\n" + DL98_REF_INSET +
+    "\\change_unchanged\n" +
+    " rest\n" +
+    "\\end_layout\n",
+    '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "new", "--find", "old text"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    // Current editor (Bob, id 2) re-authors the erased run...
+    assertStringIncludes(text, "\\change_deleted 2");
+    assertStringIncludes(text, "\\change_inserted 2");
+    // ...and the inset keeps its ORIGINAL deleted region (Alice, id 1). LyX's
+    // writer emits a direct same-type transition (\change_deleted 1) with no
+    // closer between the two deleted runs — matching Paragraph::write. The
+    // last \change_unchanged is the one closing Alice's deleted region (the
+    // first closes Bob's inserted run, before both deleted runs).
+    const delBob = text.indexOf("\\change_deleted 2");
+    const delAlice = text.indexOf("\\change_deleted 1");
+    const insetPos = text.indexOf("\\begin_inset CommandInset ref");
+    const unchangedPos = text.lastIndexOf("\\change_unchanged");
+    assert(delBob !== -1 && delAlice !== -1 && insetPos !== -1 && unchangedPos !== -1,
+      "expected Bob-deleted, Alice-deleted, inset, unchanged in order");
+    assert(delBob < delAlice && delAlice < insetPos && insetPos < unchangedPos,
+      "the inset must stay inside Alice's original \\change_deleted region, after Bob's re-authored run");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("Cross-Node split-after", async () => {
   const tempFile = await createTempFixture("temp_cross_split.lyx", REPRO_FIXTURE);
   try {
@@ -1294,6 +1485,28 @@ function changeMarkers(children: Node[]): PropertyNode[] {
 
 function allText(children: Node[]): string {
   return children.filter(c => c.type === "text").map(c => (c as TextNode).text).join("");
+}
+
+/**
+ * True if any \begin_inset sits between a \change_deleted opener and the marker
+ * that ends its region (\change_unchanged or a different-type opener). Used by
+ * the DL98 F1 tests to catch set --find pulling a following inset inside the
+ * \change_deleted span (accepting such a change would delete the inset).
+ */
+function deletedRegionContainsInset(text: string): boolean {
+  const markers = [...text.matchAll(/\\change_(deleted|inserted|unchanged)\b/g)];
+  for (let i = 0; i < markers.length; i++) {
+    if (markers[i][1] !== "deleted") continue;
+    const start = markers[i].index! + markers[i][0].length;
+    for (let j = i + 1; j < markers.length; j++) {
+      const kind = markers[j][1];
+      if (kind === "unchanged" || kind === "inserted") {
+        if (text.slice(start, markers[j].index!).includes("\\begin_inset")) return true;
+        break;
+      }
+    }
+  }
+  return false;
 }
 
 // Fixture with a pending change_inserted by Alice (id 1) spanning two text

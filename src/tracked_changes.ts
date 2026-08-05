@@ -849,7 +849,23 @@ export function applyCrossNodeReplace(
         }
       }
 
-      atoms.push({ kind: child.type === "block" ? "block" : "prop", node: child } as Atom);
+      if (child.type === "block") {
+        // DL98 F1: capture the block's ORIGINAL region at its position (the
+        // walk's change markers are flat siblings, so openState() is exact).
+        // The serializer transitions to this region before emitting the block,
+        // so a match ending at a text-node boundary cannot pull the following
+        // inset inside the match's \change_deleted span (user proofreading
+        // report — accepting would have deleted refs/citations/labels/notes).
+        atoms.push({
+          kind: "block",
+          node: child,
+          state: openState(),
+          author: traversalChange(openTraversalState).author,
+          ts: traversalChange(openTraversalState).ts,
+        });
+      } else {
+        atoms.push({ kind: "prop", node: child });
+      }
     }
   }
 
@@ -863,7 +879,11 @@ export function applyCrossNodeReplace(
   const result: Node[] = [];
   let curState: OutState = "u";
   let curAuthor = -1;
-  const emitText = (text: string, state: OutState, author: number, tsv: string) => {
+  // Emit a marker transition to `state` (flat model: markers fire on state
+  // change; a different-type opener terminates the open region without a
+  // closer; a same-type different-author transition emits a direct opener —
+  // LyX's Paragraph::write writes a marker at every position transition).
+  const emitTransition = (state: OutState, author: number, tsv: string) => {
     if (state === "u") {
       if (curState !== "u") {
         result.push({ type: "property", key: "change_unchanged" });
@@ -877,6 +897,9 @@ export function applyCrossNodeReplace(
         curAuthor = author;
       }
     }
+  };
+  const emitText = (text: string, state: OutState, author: number, tsv: string) => {
+    emitTransition(state, author, tsv);
     result.push({ type: "text", text });
   };
   for (const atom of atoms) {
@@ -887,6 +910,14 @@ export function applyCrossNodeReplace(
         continue;
       }
       emitText(atom.text!, atom.state!, atom.author!, atom.ts!);
+    } else if (atom.kind === "block") {
+      // DL98 F1: transition to the block's ORIGINAL region (captured at walk
+      // time) before emitting it, so a match ending at a text-node boundary
+      // cannot pull the following inset inside the match's \change_deleted
+      // span (accepting would delete the inset — user proofreading report). A
+      // block in a pre-existing deleted region keeps its original author.
+      emitTransition(atom.state ?? "u", atom.author ?? 0, atom.ts ?? "0");
+      result.push(atom.node!);
     } else {
       result.push(atom.node!);
     }
