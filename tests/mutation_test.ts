@@ -806,6 +806,12 @@ const DL99_NOTE_BODY =
   "Visible beta.\n" +
   "\\end_layout\n";
 
+const DL99_DUPLICATE_NOTE_BODY =
+  DL99_NOTE_BODY +
+  "\\begin_layout Standard\n" +
+  "PRIVATE SECRET note\n" +
+  "\\end_layout\n";
+
 Deno.test("DL99 - --find on a visible layout does not leak into a note", { timeout: 15000 }, async () => {
   const tempFile = await writeTempLyx("temp_dl99_find.lyx", DL99_NOTE_BODY, "\\textclass article\n");
   try {
@@ -827,6 +833,23 @@ Deno.test("DL99 - --find NO_MATCH without a note-only phrase carries no note hin
     assertEquals((result.message ?? "").includes("exists only inside a private note"), false);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL99 - no-match hint requires the phrase to be private-only", { timeout: 15000 }, async () => {
+  const findFile = await writeTempLyx("temp_dl99_find_duplicate.lyx", DL99_DUPLICATE_NOTE_BODY, "\\textclass article\n");
+  const splitFile = await writeTempLyx("temp_dl99_split_duplicate.lyx", DL99_DUPLICATE_NOTE_BODY, "\\textclass article\n");
+  try {
+    const findResult = await runCliTest(["set", findFile, "layout[Standard]:first", "X", "--find", "PRIVATE SECRET"]);
+    assertEquals(findResult.code, "NO_MATCH");
+    assertEquals((findResult.message ?? "").includes("exists only inside a private note"), false);
+
+    const splitResult = await runCliTest(["insert", splitFile, "layout[Standard]:first", "split-after", "PRIVATE SECRET", "--text", "Y"]);
+    assertEquals(splitResult.code, "SPLIT_NO_MATCH");
+    assertEquals((splitResult.message ?? "").includes("exists only inside a private note"), false);
+  } finally {
+    try { await Deno.remove(findFile); } catch { /* ignore */ }
+    try { await Deno.remove(splitFile); } catch { /* ignore */ }
   }
 });
 

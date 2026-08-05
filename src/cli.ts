@@ -817,19 +817,23 @@ function extractHeadingText(node: Node): string {
 }
 
 /**
- * DL99: does `phrase` appear anywhere in the document's INVISIBLE content —
- * prose inside a private note (Note Note / Note Comment)? Used by the NO_MATCH
- * error paths of --find and split-after to hint that the phrase exists only in
- * a private note and the selector needs `:note` (dev log 99 §3.5).
+ * DL99: does `phrase` appear only in the document's INVISIBLE content — prose
+ * inside a private note (Note Note / Note Comment)? Used by the NO_MATCH error
+ * paths of --find and split-after to hint that the selector needs `:note`
+ * (dev log 99 §3.5).
  */
-function phraseInInvisibleContent(ast: DocumentNode, phrase: string): boolean {
-  let found = false;
+function phraseOnlyInInvisibleContent(ast: DocumentNode, phrase: string): boolean {
+  let foundInvisible = false;
+  let foundVisible = false;
   const walk = (children: Node[], inNote: boolean) => {
-    if (found) return;
+    if (foundInvisible && foundVisible) return;
     for (const c of children) {
-      if (found) return;
+      if (foundInvisible && foundVisible) return;
       if (c.type === "text") {
-        if (inNote && c.text.includes(phrase)) { found = true; return; }
+        if (c.text.includes(phrase)) {
+          if (inNote) foundInvisible = true;
+          else foundVisible = true;
+        }
       } else if (c.type === "block") {
         const b = c as BlockNode;
         walk(b.children, inNote || isInvisibleInset(b));
@@ -837,7 +841,7 @@ function phraseInInvisibleContent(ast: DocumentNode, phrase: string): boolean {
     }
   };
   walk(ast.children, false);
-  return found;
+  return foundInvisible && !foundVisible;
 }
 
 function countOccurrences(text: string, findStr: string): number {
@@ -1854,7 +1858,7 @@ function foldNegativeDepth(args: string[]): string[] {
         }
         // DL99: the phrase may exist only inside a private note (invisible to
         // content matching by default) — name it so the agent can opt in.
-        if (!selectorNoteScope(selector) && phraseInInvisibleContent(ast, findStr)) {
+        if (!selectorNoteScope(selector) && phraseOnlyInInvisibleContent(ast, findStr)) {
           noMatchMsg += ` The phrase exists only inside a private note (Note/Comment) — add ':note' to the selector to target note prose.`;
         }
         printError("NO_MATCH", noMatchMsg);
@@ -2307,7 +2311,7 @@ function foldNegativeDepth(args: string[]): string[] {
           let splitNoMatchMsg = `split-after: substring '${splitMatch}' not found in matched block.`;
           // DL99: the phrase may exist only inside a private note (invisible
           // to content matching by default) — name it so the agent can opt in.
-          if (!splitNoteScope && phraseInInvisibleContent(ast, splitMatch!)) {
+          if (!splitNoteScope && phraseOnlyInInvisibleContent(ast, splitMatch!)) {
             splitNoMatchMsg += ` It exists only inside a private note (Note/Comment) — add ':note' to the selector to target note prose.`;
           }
           printError("SPLIT_NO_MATCH", splitNoMatchMsg);
