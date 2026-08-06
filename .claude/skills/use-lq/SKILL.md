@@ -136,7 +136,7 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
   - Default behaviour: replaces text content within the targeted nodes while preserving insets as current content. Inline properties around the replaced text are dropped when tracking is off (no dead markup).
   - With tracking on, the replacement follows LyX's per-position overwrite model: existing rejected (`\change_deleted`) regions are **preserved** (any author's rejected text stays rejected), the current author's own pending insertions are **consumed**, and plain text plus other authors' pending insertions are re-marked as the current author's deletion.
-  - `--replace-all`: Wipe all children and rebuild from scratch.
+  - `--replace-all`: Wipe all children and rebuild from scratch. **When the node already has tracked changes, the wipe is bounded by the per-position model** — the same preservation rules as a plain tracked `set` apply (other authors' rejected text stays rejected, the current author's pending inserts are consumed, insets are kept outside the change pair). The full wipe (insets included) only applies to nodes *without* existing tracked changes.
   - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical, case-sensitive substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced. Scope to a tracked-change region (`:change(...)`) or inline style (`:property(...)`) via the selector; combine regions with `,` (union) and predicates with `:` chaining.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.

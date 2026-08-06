@@ -2341,6 +2341,51 @@ Deno.test("DL103 F4 - clean input regression: wholesale set output unchanged", {
   }
 });
 
+Deno.test("DL103 F4 - --replace-all on tracked nodes follows the preservation path (no wipe)", { timeout: 15000 }, async () => {
+  // --replace-all routes through buildTrackedFullReplace when tracked changes
+  // are present (the hasTrackedChanges(node.children) || !replaceAll gate), so
+  // the F4 rules apply: another author's rejected text is preserved and insets
+  // are NOT wiped — the "wipe all children" promise only holds for nodes
+  // without tracked changes (test report 48 O2).
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "ALICE REJECTED\n" +
+    "\\change_unchanged\n" +
+    " plain \n" +
+    "\\begin_inset Foot\n" +
+    "status open\n" +
+    "\\begin_layout Plain Layout\n" +
+    "FN TEXT\n" +
+    "\\end_layout\n" +
+    "\\end_inset\n" +
+    "\\change_inserted 1 1700000001\n" +
+    "ALICE PENDING\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl103_f4_replaceall.lyx", body, "\\author 1 \"Alice\"\n\\author 2 \"Bob\"\n");
+  try {
+    await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "BOB NEW", "--replace-all"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    const text = await Deno.readTextFile(tempFile);
+    const children = firstLayoutChildren(text);
+    const markers = changeMarkers(children);
+    // Output order: Bob's re-author pair (deleted/unchanged), then Alice's
+    // preserved region (deleted/unchanged), then Bob's insert (inserted/unchanged).
+    assertStringIncludes(markers[2].value!, "1 ", "Alice's rejected region preserved despite --replace-all");
+    const aliceRejected = allText(children.slice(children.indexOf(markers[2]) + 1, children.indexOf(markers[3])));
+    assertEquals(aliceRejected.trim(), "ALICE REJECTED", "rejected text kept verbatim");
+    assertStringIncludes(text, "begin_inset Foot", "inset survives --replace-all when tracked changes exist (F4 path, no wipe)");
+    assertStringIncludes(text, "FN TEXT", "inset content intact");
+    assertStringIncludes(text, "BOB NEW", "new value inserted");
+    assertEquals(serialize(parse(text)), text);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 // --- Dev log 84: flat change-state model on the LyX-standard replacement shape ---
 // LyX emits \change_deleted{old}\change_inserted{new} with no \change_unchanged
 // between them (one active Change per position). lq must treat an inserted
