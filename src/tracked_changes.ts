@@ -267,6 +267,14 @@ export function hasTrackedChanges(children: Node[]): boolean {
   return false;
 }
 
+/** Non-recursive variant: true only when a change opener is a DIRECT child
+ *  (dev log 103 F2). Replay undo scans only direct children of the matched
+ *  block, so this distinguishes "changes the replay can reach" from "changes
+ *  nested inside an inset/layout" for the no-op diagnostics. */
+export function hasDirectTrackedChanges(children: Node[]): boolean {
+  return children.some((c) => c.type === "property" && isChangeOpener(c.key));
+}
+
 export function wrapInChangeMarkers(
   content: Node[], type: "inserted" | "deleted", authorId: number, ts: string
 ): Node[] {

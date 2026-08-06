@@ -2136,6 +2136,211 @@ Deno.test("DL102 - tracked snapshot restore labels the header entry", { timeout:
   }
 });
 
+// --- Dev log 103: replay diagnostic message accuracy (test_report_47 F1-F3) ---
+
+Deno.test("DL103 F1 - substring replay blast-radius warning names how many nodes had reverts", { timeout: 15000 }, async () => {
+  // Selector matches 3 nodes but the substring hits only one region in one of
+  // them — the warning must say "reverted in 1 of them", not "all of them".
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "ALICE EDIT ONE\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n" +
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000001\n" +
+    "ALICE EDIT TWO\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n" +
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000002\n" +
+    "ALICE EDIT THREE\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl103_f1_blast.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]", "EDIT TWO"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.undone_changes, 1, "only the substring-matching region is undone");
+    const msg = (result.warnings || []).join(" ");
+    assertStringIncludes(msg, "Selector matches 3 nodes", "multi-node selector must still warn");
+    assertStringIncludes(msg, "reverted in 1 of them", "must name the actual node count, not 'all of them' (dev log 103 F1)");
+    assertEquals(msg.includes("all of them"), false, "must not overstate the blast radius");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL103 F2 - no-substring replay on nested tracked changes reports refine-selector, not author mismatch", { timeout: 15000 }, async () => {
+  // The change is Alice's but lives one level down, inside a Foot inset. The
+  // matched outer block has no direct change markers, so replay cannot reach
+  // it — the message must say nested/refine, not "none belong to author".
+  const body =
+    "\\begin_layout Standard\n" +
+    "Body text\n" +
+    "\\begin_inset Foot\n" +
+    "status open\n" +
+    "\\begin_layout Plain Layout\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "FOOTNOTE INSERT\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n" +
+    "\\end_inset\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl103_f2_nested.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "inset[Foot]"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.undone_changes, 0);
+    const msg = (result.warnings || []).join(" ");
+    assertStringIncludes(msg, "nested inside an inset/layout", "must identify nesting, not author mismatch");
+    assertStringIncludes(msg, "layout[Plain Layout]", "must point at the innermost-layout refinement");
+    assertEquals(msg.includes("none belong to author"), false, "must not claim an author mismatch");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL103 F3 - replay on text-only selector reports blocks-only, not 'no tracked changes'", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "ALICE EDIT\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl103_f3_text.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "text:change(inserted)"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.undone_changes, 0);
+    const msg = (result.warnings || []).join(" ");
+    assertStringIncludes(msg, "operates on layout/inset blocks", "must explain replay only processes blocks");
+    assertStringIncludes(msg, "layout[Standard]", "must suggest a block selector");
+    assertEquals(msg.includes("No tracked changes found"), false, "must not claim the matched text has no tracked changes");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- Dev log 103 F4: wholesale set matches LyX's per-position overwrite model ---
+// LyX's Paragraph::eraseChar preserves rejected (\change_deleted) text of any
+// author, re-marks a co-author's pending insert as the current author's
+// deletion, and physically consumes the current author's own pending insert.
+
+Deno.test("DL103 F4 - wholesale set preserves another author's rejected (deleted) text", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "ALICE REJECTED THIS\n" +
+    "\\change_unchanged\n" +
+    " plain original \n" +
+    "\\change_inserted 1 1700000001\n" +
+    "ALICE INSERTED THIS\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl103_f4_preserve.lyx", body, "\\author 1 \"Alice\"\n\\author 2 \"Bob\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "BOB REWRITE"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    // Bob's deleted region (re-author of plain + Alice's pending insert) comes
+    // first; Alice's rejected region is preserved verbatim as author 1; Bob's
+    // new value is inserted by author 2.
+    assert(markers.length >= 6, "expect deleted2/unchanged/deleted1/unchanged/inserted2/unchanged");
+    assertStringIncludes(markers[0].value!, "2 ", "first region is Bob's re-authored deletion");
+    const bobDeleted = allText(children.slice(children.indexOf(markers[0]) + 1, children.indexOf(markers[1])));
+    assertStringIncludes(bobDeleted, "plain original", "plain text re-authored under Bob");
+    assertStringIncludes(bobDeleted, "ALICE INSERTED THIS", "co-author's pending insert re-marked under Bob (LyX eraseChar)");
+    assertStringIncludes(markers[2].value!, "1 ", "Alice's rejected region preserved with her author id");
+    const aliceRejected = allText(children.slice(children.indexOf(markers[2]) + 1, children.indexOf(markers[3])));
+    assertEquals(aliceRejected.trim(), "ALICE REJECTED THIS", "rejected text kept verbatim");
+    assertStringIncludes(markers[4].value!, "2 ", "new value inserted under Bob");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL103 F4 - wholesale set consumes the current author's own pending insert", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nOld text\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl103_f4_consume.lyx", body);
+  try {
+    const cfg = { trackChanges: true, authorName: "Alice" };
+    await runCliWithConfig(["set", tempFile, "layout[Standard]", "EDIT_A"], cfg);
+    // Second set by the same author: the pending EDIT_A insert is consumed
+    // (LyX eraseChar physically removes the current author's own insert),
+    // leaving only deleted{Old text} + inserted{EDIT_B}.
+    await runCliWithConfig(["set", tempFile, "layout[Standard]", "EDIT_B"], cfg);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "EDIT_B", "final value inserted");
+    assertEquals(text.includes("EDIT_A"), false, "same-author pending insert is consumed, not kept");
+    assertStringIncludes(text, "\\change_deleted 1", "original text re-deleted by the same author");
+    // Round-trips losslessly.
+    assertEquals(serialize(parse(text)), text);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL103 F4 - shared-closer input: rejected region preserved with synthesized closer", { timeout: 15000 }, async () => {
+  // LyX-native adjacent shape: Alice's deleted region shares the \change_unchanged
+  // with Bob's following inserted region (one active Change per position).
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "A REJECTED\n" +
+    "\\change_inserted 2 1700000001\n" +
+    "B INSERTED\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl103_f4_shared.lyx", body, "\\author 1 \"Alice\"\n\\author 2 \"Bob\"\n\\author 3 \"Carol\"\n");
+  try {
+    await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "CAROL REWRITE"],
+      { trackChanges: true, authorName: "Carol" },
+    );
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_deleted 1", "Alice's rejected region preserved");
+    assertStringIncludes(text, "A REJECTED", "rejected text intact");
+    assertStringIncludes(text, "\\change_deleted 3", "Bob's pending insert re-marked under Carol");
+    assertStringIncludes(text, "B INSERTED", "Bob's insert text still present, now Carol's deletion");
+    assertStringIncludes(text, "CAROL REWRITE", "new value inserted");
+    // Round-trips losslessly (self-contained explicit closers are valid LyX).
+    assertEquals(serialize(parse(text)), text);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL103 F4 - clean input regression: wholesale set output unchanged", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nOriginal sentence here.\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl103_f4_clean.lyx", body);
+  try {
+    const cfg = { trackChanges: true, authorName: "Alice" };
+    await runCliWithConfig(["set", tempFile, "layout[Standard]", "New sentence"], cfg);
+    const text = await Deno.readTextFile(tempFile);
+    const children = firstLayoutChildren(text);
+    const markers = changeMarkers(children);
+    assertEquals(markers.length, 4, "clean input still emits deleted/unchanged/inserted/unchanged");
+    assertStringIncludes(markers[0].value!, "1 ", "deleted under Alice");
+    assertEquals(markers[1].key, "change_unchanged");
+    assertStringIncludes(markers[2].value!, "1 ", "inserted under Alice");
+    assertEquals(markers[3].key, "change_unchanged");
+    assertEquals(serialize(parse(text)), text);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 // --- Dev log 84: flat change-state model on the LyX-standard replacement shape ---
 // LyX emits \change_deleted{old}\change_inserted{new} with no \change_unchanged
 // between them (one active Change per position). lq must treat an inserted

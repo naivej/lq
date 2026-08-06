@@ -135,13 +135,14 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
 
 - `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
   - Default behaviour: replaces text content within the targeted nodes while preserving insets as current content. Inline properties around the replaced text are dropped when tracking is off (no dead markup).
+  - With tracking on, the replacement follows LyX's per-position overwrite model: existing rejected (`\change_deleted`) regions are **preserved** (any author's rejected text stays rejected), the current author's own pending insertions are **consumed**, and plain text plus other authors' pending insertions are re-marked as the current author's deletion.
   - `--replace-all`: Wipe all children and rebuild from scratch.
   - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical, case-sensitive substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced. Scope to a tracked-change region (`:change(...)`) or inline style (`:property(...)`) via the selector; combine regions with `,` (union) and predicates with `:` chaining.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
 - `lq undo <file> [<selector> [<substring>]]`
   - **Snapshot restore** (`lq undo <file>`, no selector): consume the snapshot stored in the selected local or global state's `undo/` directory to revert the last (tracked or plain) mutation as one unit, even when the mutation deleted matched nodes. Reports one `changes` label per restored entry (`header` for the metadata restore on tracked mutations).
-  - Unlimited-level **Replay undo** (`lq undo <file> <selector> [<substring>]`): removes the tracked-change blocks in the matched nodes made by the current author — with `<substring>`, only blocks whose text contains it. A paired `set` edit is not restored as one unit; use snapshot restore for that. Can be reverted by snapshot restore.
+  - Unlimited-level **Replay undo** (`lq undo <file> <selector> [<substring>]`): removes the tracked-change blocks in the matched nodes made by the current author — with `<substring>`, only blocks whose text contains it. Replay operates on **block** nodes (`layout`/`inset`) and scans only the matched block's direct children, so a tracked change nested inside an inset (e.g. a footnote's `Plain Layout`) needs the innermost-layout selector (e.g. `inset[Foot] layout[Plain Layout]`) to be reverted. A paired `set` edit is not restored as one unit; use snapshot restore for that. Can be reverted by snapshot restore.
 - `lq insert <file> <selector> <position> [helper]`
   - Insert new blocks or properties relative to a selector.
   - Positions:

@@ -25,6 +25,7 @@ import {
   extractAllText,
   flattenNestedChanges,
   getHeader,
+  hasDirectTrackedChanges,
   hasTrackedChanges,
   isChangeCloser,
   isChangeOpener,
@@ -634,25 +635,75 @@ function assertNoStrayFlags(restArgs: string[], commandName: string): void {
  * Build the children of a tracked full-text replace (lq set without --find /
  * --replace-all, and the flatten of a node with pending changes).
  *
- * Old content (text + inline properties, in original order) is wrapped in
- * \change_deleted; the new value is wrapped in \change_inserted. Properties
- * stay IN PLACE inside the deleted region — LyX's Paragraph::write emits font
+ * Follows LyX's per-position overwrite model (Paragraph::eraseChar; dev log
+ * 103 F4): existing \change_deleted regions are PRESERVED verbatim (LyX
+ * leaves rejected text untouched); the current author's own pending
+ * \change_inserted regions are physically consumed; a co-author's pending
+ * insert is re-marked as the current author's deletion along with the plain
+ * text. The new value is wrapped in \change_inserted. Inline properties stay
+ * IN PLACE inside the deleted region — LyX's Paragraph::write emits font
  * properties inside a change region, so rejecting the change restores the
  * original formatting (test_report_38 F8, test_report_39 F1).
  *
- * Insets stay OUTSIDE the change pair as current content (the documented
- * "preserves non-text children" contract, dev log 88 D2-b) — they survive
- * both accept and reject.
+ * Preserved deleted regions are emitted self-contained (explicit
+ * \change_unchanged, synthesized when the source region shared a closer with
+ * a different-type opener) so the output avoids the shared-closer fragility
+ * of flattenNestedChanges. Insets stay OUTSIDE the change pair as current
+ * content (the documented "preserves non-text children" contract, dev log 88
+ * D2-b) — they survive both accept and reject; an inset inside a preserved
+ * deleted region stays inside it.
  */
 function buildTrackedFullReplace(
   children: Node[], newValue: string, tcAid: number, tcTs: string,
 ): Node[] {
-  const stripped = children.filter(c =>
-    c.type !== "property" || (!isChangeOpener(c.key) && !isChangeCloser(c.key)));
-  const insets = stripped.filter(c => c.type === "block");
-  const deletedContent = stripped.filter(c => c.type !== "block");
+  const reauthor: Node[] = [];
+  const preserved: Node[] = [];
+  const insets: Node[] = [];
+  let i = 0;
+  while (i < children.length) {
+    const c = children[i];
+    if (c.type === "property" && isChangeOpener(c.key)) {
+      const { closer, nextOpener } = scanRegionEnd(children, i + 1, c.key, true);
+      if (closer === -1 && nextOpener === -1) {
+        // Malformed: no closer and no next opener — keep as-is
+        reauthor.push(c);
+        i++;
+        continue;
+      }
+      const regionEnd = closer !== -1 ? closer : nextOpener;
+      const nextStart = closer !== -1 ? closer + 1 : nextOpener;
+      if (c.key === "change_deleted") {
+        // Preserve the rejected region verbatim (any author), self-contained.
+        preserved.push(c, ...children.slice(i + 1, regionEnd));
+        preserved.push(
+          closer !== -1 ? children[closer] : { type: "property", key: "change_unchanged" },
+        );
+        i = nextStart;
+      } else if (parseChangeMarker(c.value).authorId === tcAid) {
+        // Current author's own pending insert: physically consumed (LyX
+        // eraseChar falls through to a real deletion).
+        i = nextStart;
+      } else {
+        // Co-author's pending insert: re-marked as the current author's
+        // deletion. Non-block content enters the deleted region; blocks keep
+        // the "insets outside the pair" contract.
+        for (let k = i + 1; k < regionEnd; k++) {
+          if (children[k].type === "block") insets.push(children[k]);
+          else reauthor.push(children[k]);
+        }
+        i = nextStart;
+      }
+    } else if (c.type === "block") {
+      insets.push(c);
+      i++;
+    } else {
+      reauthor.push(c);
+      i++;
+    }
+  }
   return [
-    ...(deletedContent.length > 0 ? wrapInChangeMarkers(deletedContent, "deleted", tcAid, tcTs) : []),
+    ...(reauthor.length > 0 ? wrapInChangeMarkers(reauthor, "deleted", tcAid, tcTs) : []),
+    ...preserved,
     ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
     ...insets,
   ];
@@ -2717,9 +2768,14 @@ function foldNegativeDepth(args: string[]): string[] {
     // the replay warning picks the honest message (test_report_38 F5).
     let anyContainsSubstringOtherAuthor = false;
     const undoneLabels: string[] = [];
+    // How many matched nodes actually had a change reverted. The blast-radius
+    // warning names this count so the message stays true when a substring
+    // narrows the reverts to a subset of the matched nodes (dev log 103 F1).
+    let nodesWithReverts = 0;
 
     for (const node of nodes) {
       if (node.type !== "block") continue;
+      let nodeUndoneCount = 0;
       const newChildren: Node[] = [];
       let i = 0;
       // A kept change_inserted region that ended at a different-type opener
@@ -2810,6 +2866,7 @@ function foldNegativeDepth(args: string[]): string[] {
             // change_inserted: drop everything (marker, text, terminator)
             i = nextStart;
             undoneCount++;
+            nodeUndoneCount++;
             undoneLabels.push(markerType + "{" + (enclosedText.length > 60 ? enclosedText.substring(0, 60) + "..." : enclosedText) + "}");
           } else {
             // Not our target (or another author's) — keep everything as-is
@@ -2844,6 +2901,7 @@ function foldNegativeDepth(args: string[]): string[] {
       }
 
       node.children = newChildren;
+      if (nodeUndoneCount > 0) nodesWithReverts++;
     }
 
     const changes = undoneLabels.map(l => ({ label: l }));
@@ -2862,24 +2920,48 @@ function foldNegativeDepth(args: string[]): string[] {
       }
     }
     if (substring === undefined && undoneCount === 0) {
-      // Distinguish "the matched nodes have no tracked changes at all" from
-      // "tracked changes exist but none are the current author's" (dev log
-      // 102 D4). Never suggest changing the author config (D4).
-      const hasAnyTracked = nodes.some(n => n.type === "block" && hasTrackedChanges(n.children));
-      if (!hasAnyTracked) {
-        pushWarning("No tracked changes found in the matched nodes.");
-      } else {
+      // Replay scans only DIRECT children of the matched blocks, so the
+      // "nothing here / nothing of yours" split must account for what replay
+      // can actually reach (dev log 102 D4; dev log 103 F2/F3). Never suggest
+      // changing the author config (D4).
+      const hasBlock = nodes.some(n => n.type === "block");
+      if (!hasBlock) {
+        // Selector matched only text/property nodes — replay skips them, so
+        // "no tracked changes" would be a false negative (dev log 103 F3).
         pushWarning(
-          `Tracked changes exist in the matched nodes but none belong to author '${authorName}'.`
+          "Replay undo operates on layout/inset blocks; the selector matched only text/property nodes. " +
+          `Use a block selector such as 'layout[Standard]'.`
         );
+      } else {
+        const hasAnyTracked = nodes.some(n => n.type === "block" && hasTrackedChanges(n.children));
+        if (!hasAnyTracked) {
+          pushWarning("No tracked changes found in the matched nodes.");
+        } else {
+          const hasDirectTracked = nodes.some(n => n.type === "block" && hasDirectTrackedChanges(n.children));
+          if (!hasDirectTracked) {
+            // Tracked changes exist but only nested inside an inset/layout —
+            // replay cannot reach them at the matched block's top level. The
+            // author-mismatch claim would be wrong here (dev log 103 F2).
+            pushWarning(
+              "Tracked changes exist in the matched nodes but nested inside an inset/layout. " +
+              "Refine the selector to the innermost layout (e.g. 'layout[Plain Layout]')."
+            );
+          } else {
+            pushWarning(
+              `Tracked changes exist in the matched nodes but none belong to author '${authorName}'.`
+            );
+          }
+        }
       }
     }
     // Blast radius for replay: the warning is only seen after the replay has
-    // already reverted, so it suggests the recovery path (dev log 102 D1).
+    // already reverted, so it suggests the recovery path (dev log 102 D1). It
+    // names how many nodes actually had changes reverted so the claim stays
+    // true when a substring narrows the reverts (dev log 103 F1).
     if (undoneCount > 0 && nodes.length > 1) {
       pushWarning(
-        `Selector matches ${nodes.length} nodes. ` +
-        `The current author's changes in all of them were reverted. ` +
+        `Selector matches ${nodes.length} nodes; ` +
+        `the current author's changes were reverted in ${nodesWithReverts} of them. ` +
         `To undo this undo, run 'lq undo ${filePath}'.`
       );
     }
