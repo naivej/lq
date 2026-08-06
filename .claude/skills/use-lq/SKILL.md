@@ -139,9 +139,9 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
   - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical, case-sensitive substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced. Scope to a tracked-change region (`:change(...)`) or inline style (`:property(...)`) via the selector; combine regions with `,` (union) and predicates with `:` chaining.
 - `lq delete <file> <selector>`
   - Deletes the targeted nodes.
-- `lq undo <file> <selector> [<substring>]`
-  - 1-level **Snapshot restore** (default, no substring): consume the snapshot stored in the selected local or global state's `undo/` directory to revert the last (tracked or plain) mutation, even when the mutation deleted the matched nodes.
-  - Unlimited-level **Replay undo**: removes only the tracked-change block containing `<substring>` and made by the current author. A paired `set` edit is not restored as one unit; use snapshot restore for that. Can be reverted by snapshot restore.
+- `lq undo <file> [<selector> [<substring>]]`
+  - **Snapshot restore** (`lq undo <file>`, no selector): consume the snapshot stored in the selected local or global state's `undo/` directory to revert the last (tracked or plain) mutation as one unit, even when the mutation deleted matched nodes. Reports one `changes` label per restored entry (`header` for the metadata restore on tracked mutations).
+  - Unlimited-level **Replay undo** (`lq undo <file> <selector> [<substring>]`): removes the tracked-change blocks in the matched nodes made by the current author — with `<substring>`, only blocks whose text contains it. A paired `set` edit is not restored as one unit; use snapshot restore for that. Can be reverted by snapshot restore.
 - `lq insert <file> <selector> <position> [helper]`
   - Insert new blocks or properties relative to a selector.
   - Positions:
@@ -206,7 +206,8 @@ Navigate large documents strategically with a zoom-in approach with scoped queri
 | Inspect a specific node's CST              | `lq read <file> "<precise selector>"`                                                                                              |
 | Deep-debug a node's children               | `lq dump <file> "<selector>"`                                                                                                      |
 | Find a citation key                        | `lq bib <file> --search "keyword"`                                                                                                 |
-| Revert a tracked change                    | `lq undo <file> "<selector>" "bad text"`                                                                                           |
+| Revert a tracked change                    | `lq undo <file> "<selector>" "bad text"`                                                                                      |
+| Revert the last mutation (whole)           | `lq undo <file>` (snapshot restore)                                                                                             |
 
 
 ## Safe Mutation Workflow
@@ -215,7 +216,7 @@ All mutations (`insert`, `set`, `delete`, `undo`) apply to all matched nodes of 
 
 - `insert` duplicates the payload once for each matched node.
 - `set` and `delete` could wipe out the entire document with an overly broad selector (e.g., `layout[Standard]`).
-- If more than 1 node matches, a warning is issued (except for `undo`).
+- If more than 1 node matches, a warning is issued. `undo` is the exception only for the selector-less snapshot form (`lq undo <file>`, which has no selector); replay warns like other mutations and the warning points at `lq undo <file>` to revert the replay.
 
 When modifying a document, follow this safe workflow:
 

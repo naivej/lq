@@ -518,8 +518,8 @@ Deno.test("Mutation Engine - Multi-Block Raw-File After (order preservation)", a
 // T2: undo with zero changes — UNDO_STALE error, no file write, no \author
 // pollution (dev log 78 staleness guard; dev log 60 fix 1.3 still applies)
 Deno.test("Mutation Engine - Undo with Zero Changes (UNDO_STALE)", { timeout: 10000 }, async () => {
-  // Minimal clean fixture: no snapshot, no tracked changes (my_template.lyx
-  // contains tracked changes, which would fall through to replay instead).
+  // Minimal clean fixture: no snapshot, no tracked changes. A selector-less
+  // undo must be UNDO_STALE, never a replay fallback (dev log 102).
   const tempFile = await writeTempLyx(
     "temp_undo_clean.lyx",
     "\\begin_layout Standard\nClean text\n\\end_layout\n",
@@ -527,7 +527,7 @@ Deno.test("Mutation Engine - Undo with Zero Changes (UNDO_STALE)", { timeout: 10
   try {
     const before = await Deno.readTextFile(tempFile);
     const result = await runCliWithConfig(
-      ["undo", tempFile, "layout"],
+      ["undo", tempFile],
       { trackChanges: true },
     );
     assertEquals(result.code, "UNDO_STALE");
@@ -1403,7 +1403,7 @@ Deno.test("DL87 F5 - replay undo names author mismatch when the change is anothe
     assertEquals(result.undone_changes, 0, "nothing may be undone for the wrong author");
     const msg = (result.warnings || []).join(" ");
     assertStringIncludes(msg, "another author", "warning must name the author mismatch, not 'already been undone'");
-    assertStringIncludes(msg, "lq init --author-name", "warning must point at the corrective command");
+    assertEquals(msg.includes("lq init --author-name"), false, "must not suggest changing the author config without approval (dev log 102 D4)");
     assertEquals(msg.includes("already been undone"), false, "must not claim the change is gone");
     const text = await Deno.readTextFile(tempFile);
     assertStringIncludes(text, "QUICK", "file must be untouched on disk");
@@ -1828,7 +1828,7 @@ Deno.test("DL78 Snapshot Undo - After Untracked Set (restores original)", { time
   try {
     const expected = serialize(parse(await Deno.readTextFile(tempFile)));
     await runCliTest(["set", tempFile, "layout[Standard]", "CHANGED"]);
-    const undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    const undone = await runCliTest(["undo", tempFile]);
     assertEquals(undone.method, "snapshot");
     assertEquals(undone.undone_changes, 1);
     const restored = await Deno.readTextFile(tempFile);
@@ -1845,12 +1845,12 @@ Deno.test("DL78 Snapshot Undo - After Insert (after + prepend)", { timeout: 1500
     const expected = serialize(parse(await Deno.readTextFile(tempFile)));
 
     await runCliTest(["insert", tempFile, "layout[Standard]", "after", "--layout", "Standard", "--text", "SIBLING"]);
-    let undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    let undone = await runCliTest(["undo", tempFile]);
     assertEquals(undone.undone_changes, 1);
     assertEquals(await Deno.readTextFile(tempFile), expected, "undo after 'insert after' must restore (dev log 79 N3)");
 
     await runCliTest(["insert", tempFile, "layout[Standard]", "prepend", "--footnote", "FN"]);
-    undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    undone = await runCliTest(["undo", tempFile]);
     assertEquals(undone.undone_changes, 1);
     assertEquals(await Deno.readTextFile(tempFile), expected, "undo after 'insert prepend' must restore (dev log 79 N3)");
   } finally {
@@ -1864,7 +1864,7 @@ Deno.test("DL78 Snapshot Undo - After Untracked Delete (node restored)", { timeo
   try {
     const expected = serialize(parse(await Deno.readTextFile(tempFile)));
     await runCliTest(["delete", tempFile, "layout[Standard]"]);
-    const undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    const undone = await runCliTest(["undo", tempFile]);
     assertEquals(undone.undone_changes, 1);
     assertEquals(await Deno.readTextFile(tempFile), expected, "undo after delete must bring the node back (dev log 79 N3)");
   } finally {
@@ -1879,13 +1879,13 @@ Deno.test("DL78 Snapshot Undo - 1-Level Enforcement + Consume", { timeout: 15000
     await runCliTest(["set", tempFile, "layout[Standard]", "EDIT_A"]);
     await runCliTest(["set", tempFile, "layout[Standard]", "EDIT_B"]);
     // Undo reverts only the last mutation (EDIT_B); EDIT_A stays
-    const undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    const undone = await runCliTest(["undo", tempFile]);
     assertEquals(undone.undone_changes, 1);
     let text = await Deno.readTextFile(tempFile);
     assertStringIncludes(text, "EDIT_A");
     assertEquals(text.includes("EDIT_B"), false);
     // Snapshot consumed: a second undo is UNDO_STALE, not a redo
-    const stale = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    const stale = await runCliTest(["undo", tempFile]);
     assertEquals(stale.code, "UNDO_STALE");
     text = await Deno.readTextFile(tempFile);
     assertStringIncludes(text, "EDIT_A", "stale undo must not redo or modify the file");
@@ -1894,7 +1894,7 @@ Deno.test("DL78 Snapshot Undo - 1-Level Enforcement + Consume", { timeout: 15000
   }
 });
 
-Deno.test("User report - selector-only undo never falls back to replay", { timeout: 15000 }, async () => {
+Deno.test("User report - snapshot undo never falls back to replay (DL94)", { timeout: 15000 }, async () => {
   const body = "\\begin_layout Standard\nThe quick brown fox\n\\end_layout\n";
   const tempFile = await writeTempLyx("temp_user_report_snapshot_fallback.lyx", body);
   try {
@@ -1906,8 +1906,10 @@ Deno.test("User report - selector-only undo never falls back to replay", { timeo
     await Deno.writeTextFile(tempFile, tracked + "\n");
     const beforeUndo = await Deno.readTextFile(tempFile);
 
+    // Selector-less undo is snapshot mode: a missing/unusable snapshot must
+    // fail closed (UNDO_SNAPSHOT_UNAVAILABLE), never reinterpret as replay.
     const result = await runCliWithConfig(
-      ["undo", tempFile, "layout[Standard]"],
+      ["undo", tempFile],
       { trackChanges: true, authorName: "Alice" },
     );
 
@@ -1964,7 +1966,7 @@ Deno.test("DL78 Replay Undo - Snapshot Symmetry (replay can be undone)", { timeo
     );
     // Snapshot undo restores the pre-replay state — markers come back
     const restored = await runCliWithConfig(
-      ["undo", tempFile, "layout[Standard]"],
+      ["undo", tempFile],
       { trackChanges: true },
     );
     assertEquals(restored.method, "snapshot");
@@ -1995,6 +1997,140 @@ Deno.test("DL78 Replay Undo - Substring Still Works (regression)", { timeout: 15
     assertEquals(text.includes("QUICK"), false, "inserted block removed");
     assertStringIncludes(text, "\\change_deleted", "unrelated change_deleted block preserved");
     assertStringIncludes(text, "quick");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- Dev log 102: undo syntax redesign (mode by selector position) ---
+
+Deno.test("DL102 - replay-all (selector, no substring) reverts only the current author", { timeout: 15000 }, async () => {
+  // Mixed tracked edits by Alice (1) and Bob (2) in one paragraph. Alice runs
+  // replay-all with no substring — only Alice's regions must revert.
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "ALICE EDIT\n" +
+    "\\change_unchanged\n" +
+    " base text " +
+    "\\change_inserted 2 1700000001\n" +
+    "BOB EDIT\n" +
+    "\\change_unchanged\n" +
+    "\\change_deleted 2 1700000002\n" +
+    "BOB GONE\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl102_replay_all.lyx", body, "\\author 1 \"Alice\"\n\\author 2 \"Bob\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.method, "replay");
+    assertEquals(result.undone_changes, 1, "only Alice's inserted region is undone");
+    const text = await Deno.readTextFile(tempFile);
+    assertEquals(text.includes("ALICE EDIT"), false, "Alice's inserted region removed");
+    assertStringIncludes(text, "BOB EDIT", "Bob's inserted region untouched");
+    assertStringIncludes(text, "BOB GONE", "Bob's deleted region untouched");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL102 - no-substring replay on nodes with no tracked changes reports nothing-here", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nClean paragraph\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl102_none_here.lyx", body);
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.undone_changes, 0);
+    assertEquals(result.method, "replay");
+    const msg = (result.warnings || []).join(" ");
+    assertStringIncludes(msg, "No tracked changes found in the matched nodes.", "must report nothing-here, not author mismatch");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL102 - no-substring replay on other-author-only nodes reports nothing-of-yours", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "ALICE EDIT\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl102_none_yours.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.undone_changes, 0);
+    const msg = (result.warnings || []).join(" ");
+    assertStringIncludes(msg, "none belong to author 'Bob'", "must report nothing-of-yours");
+    assertEquals(msg.includes("lq init --author-name"), false, "must not suggest changing the author config (dev log 102 D4)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL102 - replay-all warns on multi-node blast radius and suggests undo", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "EDIT ONE\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n" +
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000001\n" +
+    "EDIT TWO\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl102_blast.lyx", body, "\\author 1 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.undone_changes, 2);
+    const msg = (result.warnings || []).join(" ");
+    assertStringIncludes(msg, "Selector matches 2 nodes", "multi-node replay must warn");
+    assertStringIncludes(msg, "To undo this undo, run 'lq undo", "warning must suggest the recovery path");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL102 - snapshot restore reports per-entry changes labels (untracked)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nOriginal text here\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl102_snap_labels.lyx", body);
+  try {
+    await runCliTest(["set", tempFile, "layout[Standard]", "CHANGED"]);
+    const undone = await runCliTest(["undo", tempFile]);
+    assertEquals(undone.method, "snapshot");
+    assertEquals(undone.undone_changes, 1);
+    const labels = (undone.changes as { label: string }[]).map(c => c.label);
+    assertEquals(labels.length, 1, "untracked set: only the body node is a content-changing entry");
+    assertStringIncludes(labels[0], "restored");
+    assertStringIncludes(labels[0], "Original text here");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL102 - tracked snapshot restore labels the header entry", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nOld text\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl102_snap_header.lyx", body);
+  try {
+    const cfg = { trackChanges: true, authorName: "Alice" };
+    await runCliWithConfig(["set", tempFile, "layout[Standard]", "NEW"], cfg);
+    const undone = await runCliWithConfig(["undo", tempFile], cfg);
+    assertEquals(undone.method, "snapshot");
+    const labels = (undone.changes as { label: string }[]).map(c => c.label);
+    assert(labels.includes("header"), "header restore must be labeled (dev log 102 D1b)");
+    assertEquals(undone.undone_changes, labels.length, "count must match label count (header kept in both)");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -2178,7 +2314,7 @@ Deno.test("DL84 F2 - tracked set --find then snapshot undo is byte-exact (header
     assertStringIncludes(await Deno.readTextFile(tempFile), "\\author");
     // Undo must run under the SAME config (same temp HOME) so it finds the
     // snapshot saved by the set command.
-    const undone = await runCliWithConfig(["undo", tempFile, "layout[Standard]"], cfg);
+    const undone = await runCliWithConfig(["undo", tempFile], cfg);
     assertEquals(undone.method, "snapshot");
     assertEquals(
       await Deno.readTextFile(tempFile),
@@ -2198,7 +2334,7 @@ Deno.test("DL84 F2 - tracked delete then snapshot undo is byte-exact (header res
     const cfg = { trackChanges: true, authorName: "Alice" };
     await runCliWithConfig(["delete", tempFile, "layout[Standard]"], cfg);
     assertStringIncludes(await Deno.readTextFile(tempFile), "\\author");
-    const undone = await runCliWithConfig(["undo", tempFile, "layout[Standard]"], cfg);
+    const undone = await runCliWithConfig(["undo", tempFile], cfg);
     assertEquals(undone.method, "snapshot");
     assertEquals(
       await Deno.readTextFile(tempFile),
@@ -2216,7 +2352,7 @@ Deno.test("DL84 F2 - untracked set undo stays byte-exact and counts only the bod
   try {
     const expected = serialize(parse(await Deno.readTextFile(tempFile)));
     await runCliTest(["set", tempFile, "layout[Standard]", "NEW", "--find", "old"]);
-    const undone = await runCliTest(["undo", tempFile, "layout[Standard]"]);
+    const undone = await runCliTest(["undo", tempFile]);
     assertEquals(undone.method, "snapshot");
     assertEquals(undone.undone_changes, 1, "no-op header restore must not inflate the count");
     assertEquals(await Deno.readTextFile(tempFile), expected);
@@ -2236,7 +2372,7 @@ Deno.test("DL84 F2 - tracked insert --cite then snapshot undo is byte-exact (hea
       cfg,
     );
     assertStringIncludes(await Deno.readTextFile(tempFile), "\\author");
-    const undone = await runCliWithConfig(["undo", tempFile, "layout[Standard]"], cfg);
+    const undone = await runCliWithConfig(["undo", tempFile], cfg);
     assertEquals(undone.method, "snapshot");
     assertEquals(
       await Deno.readTextFile(tempFile),

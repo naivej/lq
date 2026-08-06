@@ -236,7 +236,7 @@ Deno.test("CLI - local cache and undo stay isolated from global state", { timeou
     assertFalse(afterSet.text!.includes("\\change_deleted"));
 
     const undone = await runCliWithEnv(
-      ["undo", filePath, "layout[Title]"],
+      ["undo", filePath],
       { HOME: globalHome, USERPROFILE: globalHome },
       project,
     );

@@ -15,7 +15,7 @@ import {
   type TextSegment,
 } from "./text_utils.ts";
 import { getCachedAst, setCachedAst, hashText, hashFile, setMaxCacheEntries } from "./cache.ts";
-import { clearSnapshot, collectSnapshots, commitMutation, loadSnapshot, nodeAtPath } from "./undo.ts";
+import { clearSnapshot, collectSnapshots, commitMutation, findNodePath, loadSnapshot, nodeAtPath } from "./undo.ts";
 import { resolveInitStatePaths, resolveStatePaths, StatePaths } from "./paths.ts";
 import {
   annotateChanges,
@@ -398,27 +398,30 @@ Options (provide exactly one generation helper):
   --label <name>               Insert a CommandInset label with the given name.
   --footnote <text>            Insert a Foot inset containing a Plain Layout with <text>.`,
 
-  undo: `lq undo - Revert edits in matched nodes.
+  undo: `lq undo - Revert edits.
 
-Two modes, distinguished by the presence of a substring argument:
+Two modes, distinguished by the presence of a selector argument:
 
-  lq undo <file> <selector>              Snapshot restore (1-level, any mutation).
+  lq undo <file>                         Snapshot restore (1-level, any mutation).
                                          Consume the snapshot stored in the selected
                                          local or global state to revert the last
-                                         (tracked or plain) mutation, even when the
-                                         mutation deleted the matched nodes.
+                                         (tracked or plain) mutation as one unit,
+                                         even when the mutation deleted matched nodes.
 
-  lq undo <file> <selector> <substring>  Replay undo (unlimited levels).
-                                         Removes only the tracked-change block
-                                         (change_deleted/change_inserted) containing
-                                         <substring> and made by the current author;
-                                         a paired set edit is not restored as one unit.
-                                         Can be reverted by snapshot restore.
+  lq undo <file> <selector> [<substring>]
+                                         Replay undo (unlimited levels).
+                                         Removes tracked-change blocks
+                                         (change_deleted/change_inserted) in the
+                                         matched nodes that were made by the current
+                                         author; with <substring>, only blocks whose
+                                         text contains it. A paired set edit is not
+                                         restored as one unit; use snapshot restore
+                                         for that. Can be reverted by snapshot restore.
 
 Arguments:
   <file>       The path to the .lyx file.
   <selector>   A CSS-like selector. Run 'lq selector --help' for syntax.
-  <substring>  Text inside the change_deleted or change_inserted block to revert.`
+  <substring>  Optional text inside the change_deleted or change_inserted block to revert.`
 };
 
 // Helper to load user config
@@ -749,6 +752,20 @@ function nodeLabel(node: Node): string {
     return node.type + "[" + node.key + "]";
   }
   return node.type;
+}
+
+/** Brief text preview of a snapshot entry's restored children (dev log 102
+ *  D1b): concatenates the children's text with the same 60-char truncation
+ *  rule as replay's change labels. */
+function briefChildrenText(children: Node[], maxLen = 60): string {
+  let raw = "";
+  for (const c of children) {
+    if (raw.length > maxLen) break;
+    raw += extractAllText(c, maxLen + 1 - raw.length);
+  }
+  const text = raw.trim();
+  if (text.length <= maxLen) return text;
+  return text.substring(0, maxLen) + "...";
 }
 
 interface TocNode {
@@ -1485,21 +1502,23 @@ function foldNegativeDepth(args: string[]): string[] {
     return;
   }
 
-  if (!selector) {
+  if (!selector && command !== "undo") {
     printError("MISSING_SELECTOR", "A CSS selector is required for this command. Run 'lq selector --help' for selector syntax.");
   }
 
   let nodes: Node[] = [];
-  try {
-    nodes = query(ast, selector);
-  } catch (e: Error | unknown) {
-    printError("INVALID_SELECTOR", (e as Error).message);
+  if (selector) {
+    try {
+      nodes = query(ast, selector);
+    } catch (e: Error | unknown) {
+      printError("INVALID_SELECTOR", (e as Error).message);
+    }
   }
 
   // Warn if :until() is used without a preceding ~ combinator: without ~
   // there is no anchor to check intervening siblings against, so :until()
   // has no effect (all nodes pass through).
-  if (selector.includes(":until(")) {
+  if (selector && selector.includes(":until(")) {
     const parts = selector.split(",");
     for (const part of parts) {
       if (part.includes(":until(") && !part.includes("~")) {
@@ -1584,10 +1603,14 @@ function foldNegativeDepth(args: string[]): string[] {
   
   // Blast radius warning: if selector matches more than 1 node, warn to
   // stderr. The mutation still proceeds — this is a warning, not a blocker.
+  // The warning is only seen in the output AFTER the mutation has run, so it
+  // also points at undo as the recovery path (dev log 102 D1). `undo` replay
+  // is handled separately, after the replay actually reverted something, so
+  // its message can truthfully name the recovery.
   if (["set", "delete", "insert"].includes(command) && nodes.length > 1) {
     const warnMsg = `Selector matches ${nodes.length} nodes. ` +
       `If this is not intended, run 'lq read ${filePath} "${selector}"' ` +
-      `to inspect them before mutating.`;
+      `to inspect them, or 'lq undo ${filePath}' to revert the last mutation.`;
     pushWarning(warnMsg);
   }
 
@@ -2588,17 +2611,26 @@ function foldNegativeDepth(args: string[]): string[] {
   if (command === "undo") {
     const substring: string | undefined = restArgs.length > 0 ? restArgs.join(" ") : undefined;
 
-    // --- Snapshot-based undo (primary path, no substring) ---
-    // Restore from a pre-mutation snapshot when no surgical substring
-    // is specified. The snapshot is consumed on restore: undo-after-undo
-    // is UNDO_STALE, not a redo (dev log 78 — bounded, predictable undo).
-    if (substring === undefined) {
+    // --- Snapshot-based undo (no selector; dev log 102) ---
+    // Restore from a pre-mutation snapshot when no selector is given. The
+    // snapshot is keyed to the whole file's content hash, so no selector is
+    // needed — the restore reverts the last (tracked or plain) mutation as one
+    // unit. The snapshot is consumed on restore: undo-after-undo is
+    // UNDO_STALE, not a redo (dev log 78 — bounded, predictable undo).
+    if (selector === undefined) {
       let snapshotFailure = "No snapshot found for the current file content.";
       const currentHash = await hashFile(filePath);
       const snapshot = await loadSnapshot(currentHash, statePaths);
       if (snapshot) {
         let restoredCount = 0;
         let missingCount = 0;
+        const restoredLabels: string[] = [];
+        // Header path captured pre-restore: the header entry is labeled
+        // "header" by PATH, not content (test fixtures can have an empty
+        // header with no \textclass). Restores never move the header, so its
+        // index path is stable throughout the loop (dev log 102 D1b).
+        const headerNode = getHeader(ast);
+        const headerPath = headerNode ? findNodePath(ast.children, headerNode) : null;
         // Ancestor paths first: a parent restore recreates the structure
         // that descendant paths index into.
         const sortedEntries = [...snapshot.entries].sort((a, b) => a.path.length - b.path.length);
@@ -2612,14 +2644,23 @@ function foldNegativeDepth(args: string[]): string[] {
           target.children = entry.children;
           // Count only content-changing restores: the header entry is a no-op
           // for untracked mutations (dev log 84 F2) and must not inflate the
-          // count or trip the structure-changed warning.
-          if (before !== JSON.stringify(entry.children)) restoredCount++;
+          // count or trip the structure-changed warning. The header stays in
+          // BOTH the count and the labels when it does change (dev log 102).
+          if (before !== JSON.stringify(entry.children)) {
+            restoredCount++;
+            const isHeader = headerPath !== null &&
+              entry.path.length === headerPath.length &&
+              entry.path.every((v, i) => v === headerPath[i]);
+            restoredLabels.push(
+              isHeader ? "header" : `restored [${entry.path.join(".")}] "${briefChildrenText(entry.children)}"`
+            );
+          }
         }
         if (restoredCount > 0) {
           if (missingCount > 0) {
             pushWarning(
               `Restored ${restoredCount} of ${snapshot.entries.length} snapshot entries — ` +
-              `the document structure changed since the snapshot. Verify with 'lq read ${filePath} "${selector}"'.`
+              `the document structure changed since the snapshot. Verify with 'lq read ${filePath}'.`
             );
           }
           const newFileText = serialize(ast);
@@ -2627,28 +2668,33 @@ function foldNegativeDepth(args: string[]): string[] {
           try { await setCachedAst(await hashText(newFileText), ast, statePaths); } catch { /* non-fatal */ }
           await clearSnapshot(currentHash, statePaths);
           await refreshPostStep(filePath, refreshMode);
-          printJson({ undone_changes: restoredCount, method: "snapshot" });
+          printJson({
+            undone_changes: restoredCount,
+            changes: restoredLabels.map(l => ({ label: l })),
+            method: "snapshot",
+          });
           return;
         }
         snapshotFailure = "A snapshot was found, but the document structure changed before it could be restored.";
       }
 
-      // A clean file with no snapshot is stale. Checked before resolving the
-      // author ID so it stays untouched (no spurious \author entry).
-      const hasAnyTracked = nodes.some(n => n.type === "block" && hasTrackedChanges(n.children));
+      // A clean file with no snapshot is stale. Whole-document scan (snapshot
+      // is whole-file; there is no selector to scope it). Checked before
+      // resolving the author ID so it stays untouched (no spurious \author
+      // entry). No fallback into replay — modes stay strict (DL94).
+      const hasAnyTracked = hasTrackedChanges(ast.children);
       if (!hasAnyTracked) {
         printError("UNDO_STALE", "Nothing to undo. No snapshot found and no tracked changes to revert.");
       }
 
       printError(
         "UNDO_SNAPSHOT_UNAVAILABLE",
-        `${snapshotFailure} Selector-only undo never replays tracked changes. ` +
-        `Verify that the file was not changed externally, or provide a substring explicitly for per-block replay undo. ` +
-        `Replay does not restore a paired set edit as one unit.`,
+        `${snapshotFailure} Verify that the file was not changed externally, or provide a selector to replay tracked changes: ` +
+        `'lq undo <file> <selector> [<substring>]'. Replay does not restore a paired set edit as one unit.`,
       );
     }
 
-    // --- Replay-based undo (explicit substring only) ---
+    // --- Replay-based undo (selector required; dev log 102) ---
     // Replay scans the matched nodes' children, so it needs live matches —
     // unlike snapshot restore, which addresses nodes by path and therefore
     // works even when the mutation removed the matched nodes entirely.
@@ -2805,21 +2851,36 @@ function foldNegativeDepth(args: string[]): string[] {
       if (anyContainsSubstringOtherAuthor) {
         // The change is present — it just isn't this author's. "May have
         // already been undone" would send the user chasing a ghost
-        // (test_report_38 F5).
+        // (test_report_38 F5). Never suggest changing the author config —
+        // an agent must not do that without explicit approval (dev log 102 D4).
         pushWarning(
           `A tracked change matching '${substring}' exists but belongs to another author. ` +
-          `Undo only reverts author '${authorName}'. Change the default via 'lq init --author-name <name>'.`
+          `Undo only reverts author '${authorName}'.`
         );
       } else {
-        pushWarning(`No tracked change matching '${substring}' found. It may have already been undone. To undo the last undo, run 'lq undo ${filePath} "${selector}"' without a substring.`);
+        pushWarning(`No tracked change matching '${substring}' found. It may have already been undone. To revert the last undo, run 'lq undo ${filePath}'.`);
       }
     }
     if (substring === undefined && undoneCount === 0) {
-      // Reaching replay without a substring means tracked changes exist
-      // (otherwise UNDO_STALE fired above) — so none belong to this author.
+      // Distinguish "the matched nodes have no tracked changes at all" from
+      // "tracked changes exist but none are the current author's" (dev log
+      // 102 D4). Never suggest changing the author config (D4).
+      const hasAnyTracked = nodes.some(n => n.type === "block" && hasTrackedChanges(n.children));
+      if (!hasAnyTracked) {
+        pushWarning("No tracked changes found in the matched nodes.");
+      } else {
+        pushWarning(
+          `Tracked changes exist in the matched nodes but none belong to author '${authorName}'.`
+        );
+      }
+    }
+    // Blast radius for replay: the warning is only seen after the replay has
+    // already reverted, so it suggests the recovery path (dev log 102 D1).
+    if (undoneCount > 0 && nodes.length > 1) {
       pushWarning(
-        `Tracked changes exist in the matched nodes but none belong to author '${authorName}'. ` +
-        `Change the default via 'lq init --author-name <name>'.`
+        `Selector matches ${nodes.length} nodes. ` +
+        `The current author's changes in all of them were reverted. ` +
+        `To undo this undo, run 'lq undo ${filePath}'.`
       );
     }
     // Write file and save snapshot so the replay itself can be undone
