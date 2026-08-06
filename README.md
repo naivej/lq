@@ -76,6 +76,7 @@ Requires **Deno 2.8+**.
 - **Test coverage:** `deno task coverage` generates per-function coverage report in `./cov`
 - **Benchmark:** `deno bench -A --no-check tests/bench.ts`
 - **CPU profiling:** `deno task profile <args...>` (outputs .cpuprofile, SVG flamegraph, and Markdown report)
+- **Audit messages:** `deno task audit:messages` writes a report grouped by kind to `./audit/messages.md`; add `-- --format json` for `./audit/messages.json` or `--output <path>` for a custom destination
 - **Watch execution:** `deno task dev`
 - **Build binary:** `deno task build` (or `deno task build:all` for all platforms)
 - **Compatibility**:

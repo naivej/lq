@@ -1,3 +1,4 @@
 bin
 deno.lock
 cov
+audit
