@@ -7,13 +7,14 @@
   lq - a CLI for LyX
 </h1>
 
-`lq` is a standalone CLI designed to parse, query, and mutate LyX documents  (`.lyx` files) using a lossless Virtual DOM. It allows users to target document elements using CSS-like selectors without breaking the file formatting expected by LyX.
+`lq` is a standalone CLI designed to parse, query, and mutate LyX documents (`.lyx` files).
 
 ### Quick start
 
-- Build for your platform with `deno task build` (recommended), or download the binary (updated less frequently).
-- Configure default behavior with `lq init`. Run `lq init --help` to see all options.
-- Install the agent skill with `npx skills add naivej/lq`. Then ask your agent to `/use-lq`
+- Build for your platform with `deno task build`, or download the binary.
+- `lq init` to create a local configeration in `./.lq/`
+- `npx skills add naivej/lq` to install the skill. Then ask your agent to `/use-lq`
+- Learn more from `lq help` if you like
 
 ### Highlights
 
@@ -23,47 +24,12 @@
 - Collaborate with agents in an **auto-refreshed** LyX GUI through [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
 - Agents make **tracked changes**, allowing easy review.
 
-### Limitations and known issues
+### Limitations
 - `lq` focuses on writing assistance, not complex type-setting (e.g., intricate tables). Use the LyX GUI to fine-tune type-setting and preview the final PDF.
-- **Windows LyXServer limitations**: Three named-pipe behaviors of LyXServer on Windows that `lq` works around:
+- **Windows limitations**: Three named-pipe behaviors of LyXServer on Windows that `lq` works around:
   - **`buffer-switch` is unusable**: the pipe protocol delimits messages with `:`, which conflicts with the drive letter in Windows absolute paths (e.g. `C:\...`). Auto-refresh therefore operates on LyX's active buffer rather than switching to the target file first. **Open only one `.lyx` file while using `lq` to avoid using the wrong buffer.**
   - **Confirmations are unreliable**: LyX's Windows pipe server can lose a command's *response* even though the command executed (a LyX server behavior — no client read strategy fixes it). `lq` therefore treats a command as dispatched once it is written to the pipe, and a lost confirmation only downgrades the outcome. **warnings mean "unconfirmed", not "failed"** — the command was dispatched and almost certainly executed. When warnings repeat, restart LyX to restore a healthy server.
   - **Refresh round-trips are slow (~4 s per mutation)**: recovering a lost confirmation re-sends the command on a fresh connection, so a refresh-enabled mutation averages two pipe round-trips (~2 s each) instead of one. **Turning off live GUI sync with `--refresh none` (the default) for almost instant `lq`**.
-- Some LyX's serialization conventions (500-char column limit, punctuation newlines, font/change delta optimization) are not enforced by `lq`. Those are purely cosmetic and LyX reads files fine without them. As a result, opening an `lq`-edited file in LyX can cause formatting-only diffs.
-  - Line endings (CRLF vs LF): `lq` always serializes with LF line endings across platforms, while LyX's GUI save/auto-save on Windows writes CRLF. During a live auto-refresh round-trip, LyX's `buffer-write` rewrites the open buffer with CRLF, so the on-disk file can flip between the two conventions and show a full-file diff in git-based review.
-
-## Design Philosophy & Architecture
-
-### Lossless Virtual DOM
-
-`lq` is built on a "Lossless DOM" architecture. It parses `.lyx` files into a Concrete Syntax Tree (CST) rather than an Abstract Syntax Tree (AST). This ensures that perfectly valid but idiosyncratic LyX formatting (such as trailing whitespaces in specific tags or exact newline placement) is preserved exactly. The core rule of the project is that `serialize(parse(file)) === file_text` must result in a 0-byte difference.
-
-### Context-Aware Strict Validation
-
-When `lq` mutates document structure with the `insert` command, it enforces semantic rules to prevent corrupting `.lyx` files at two scales:
-
-- **Global Constructs**: Core engine constructs (Insets like `Formula`, `Note`, or inline properties like `change_inserted`) are mapped globally to provide a complete menu of legal operations regardless of textclass.
-- **Dynamic Document Class Resolution**: `lq` queries the document's header (`\textclass`) to determine the class (e.g., `article`, `book`) and loads the corresponding `.layout` file.
-
-**Checks that always run (no config needed):**
-
-- **Core CST guards**: `document`, `body`, and `header` cannot be mutated directly.
-- **Malformed `--raw-file` syntax** is rejected (doesn't parse as valid LyX).
-- **Unknown inset types in `--raw-file`** produce a warning in the JSON response's `warnings` field but don't block the insertion. This uses a hardcoded registry of known LyX engine inset types (sourced from LyX's `InsetCode.h`; There is no inset at the textclass level) and matches LyX's own permissive read path.
-
-**Checks that require `.layout` files** (enabled when the config has a `layoutsDir`, silently skipped otherwise):
-
-- **Layout name**: Unrecognized layout names are rejected with the list of valid alternatives.
-- **Context boundaries**: Document layouts (e.g., `Section`) cannot be inserted inside insets (e.g., `Foot`); only `Plain Layout` is allowed within insets. Insets must be inside a layout, not at the body level.
-- **Cross-class**: Layouts from other document classes (e.g., `Frame` in an `article` document) are rejected.
-- **Inline properties**: Unknown property keys are rejected with the list of valid alternatives.
-
-### LaTeX Independence
-
-While LyX is a frontend for LaTeX, `lq` operates entirely independently of the LaTeX layer:
-
-- **Separation of Concerns**: The tool mutates the LyX source file format directly. It does not parse, understand, or interact with LaTeX syntax.
-- **Opaque Payloads**: Any raw LaTeX existing in the document (such as within `\begin_inset Formula`, `\begin_inset ERT`, or `\begin_preamble`) is treated as opaque string data and preserved flawlessly by the lossless parser.
 
 ## [User Manual](.claude/skills/use-lq/SKILL.md)
 
@@ -86,5 +52,3 @@ Requires **Deno 2.8+**.
 ## License
 
 MIT
-
-Co-Author: GitHub Copilot powered by Gemeni 3.1 Pro (Thank you google for Vertex free trial!) and DeepSeek V4 Pro
