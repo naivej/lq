@@ -11,9 +11,10 @@
 
 ### Quick start
 
-- Build for your platform with `deno task build`, or download the binary.
+- Build for your platform with `deno task build`, or download the binary
 - `lq init` to create a local configuration in `./.lq/`
-- `npx skills add naivej/lq` to install the skill. Then ask your agent to `/use-lq`
+- `npx skills add naivej/lq` to install the skill
+- Ask your agent to `/use-lq`
 - Learn more from `lq help` if you like
 
 ### Highlights
