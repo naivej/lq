@@ -627,6 +627,121 @@ Deno.test("DL99 - ~ sibling with a note in a following sibling's descendants", (
   assertEquals(sibText.includes("Visible alpha"), true);
 });
 
+// --- DL104 (dev log 104): :until() boundary exclusivity. The sibling range
+// must stop BEFORE the next node matching the inner selector — the boundary
+// node itself and every descendant of following siblings are excluded.
+
+const DL104_BODY =
+  "\\begin_layout Section\n" +
+  "First Section\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "Before one\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Subsection\n" +
+  "First Subsection\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "Before two\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Subsection\n" +
+  "Second Subsection\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "After subsection\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Section\n" +
+  "Second Section\n" +
+  "\\begin_inset Float table\n" +
+  "status open\n" +
+  "\n" +
+  "\\begin_layout Plain Layout\n" +
+  "Inside table\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\end_inset\n" +
+  "\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "After boundary\n" +
+  "\\end_layout\n";
+
+function dl104Ast() {
+  return parse(
+    "#LyX 2.5 created this file.\n" +
+    "\\begin_document\n\\begin_header\n\\textclass article\n\\end_header\n\\begin_body\n" +
+    DL104_BODY +
+    "\\end_body\n\\end_document\n",
+  );
+}
+
+function dl104Args(nodes: { type: string; args?: string }[]): string[] {
+  return nodes.filter(n => n.type === "block").map(n => n.args ?? "");
+}
+
+Deno.test("DL104 - bare ~ layout:until(layout[Section]) excludes boundary node and its descendants", () => {
+  const ast = dl104Ast();
+  const res = query(ast, "layout[Section]:first ~ layout:until(layout[Section])");
+  const args = dl104Args(res);
+  // The next Section heading itself is the boundary — excluded.
+  assertEquals(args.filter(a => a === "Section").length, 0, "boundary Section must be excluded");
+  // Descendants of the next Section (its table's Plain Layout) are excluded.
+  assertEquals(args.filter(a => a === "Plain Layout").length, 0, "descendants of boundary must be excluded");
+  // Everything before the boundary survives: Before one, First Subsection,
+  // Before two, Second Subsection, After subsection.
+  assertEquals(args.length, 5, "only nodes before the next Section survive");
+  assertEquals(args.filter(a => a === "Standard").length, 3);
+  assertEquals(args.filter(a => a === "Subsection").length, 2);
+});
+
+Deno.test("DL104 - scoped ~ layout[Standard]:until(layout[Section]) counts unchanged", () => {
+  const ast = dl104Ast();
+  const res = query(ast, "layout[Section]:first ~ layout[Standard]:until(layout[Section])");
+  const args = dl104Args(res);
+  // Before one, Before two and After subsection survive; After boundary is
+  // rejected because the next Section sits between it and the anchor.
+  assertEquals(args.length, 3);
+  assertEquals(args[0], "Standard");
+  assertEquals(args[1], "Standard");
+  assertEquals(args[2], "Standard");
+});
+
+Deno.test("DL104 - multi-hop ~ layout[Subsection] ~ layout[Standard]:until(layout[Subsection]) unchanged", () => {
+  const ast = dl104Ast();
+  const res = query(ast, "layout[Section]:first ~ layout[Subsection] ~ layout[Standard]:until(layout[Subsection])");
+  const args = dl104Args(res);
+  // From the First Subsection anchor, only Before two survives (the Second
+  // Subsection is the boundary). From the Second Subsection anchor, After
+  // subsection and After boundary survive.
+  assertEquals(args.length, 3);
+  assertEquals(args[0], "Standard"); // Before two
+  assertEquals(args[1], "Standard"); // After subsection
+  assertEquals(args[2], "Standard"); // After boundary
+});
+
+Deno.test("DL104 - :until(layout:contains(...)) boundary found via descendant text", () => {
+  const ast = dl104Ast();
+  const res = query(ast, "layout[Section]:first ~ layout[Standard]:until(layout:contains('Inside table'))");
+  const args = dl104Args(res);
+  // Before one, Before two, After subsection survive (all before the Section
+  // whose table contains "Inside table"); After boundary is rejected.
+  assertEquals(args.length, 3);
+});
+
+Deno.test("DL104 - :until without ~ is a no-op (DL55 path unchanged)", () => {
+  const ast = dl104Ast();
+  const all = query(ast, "layout[Standard]").length;
+  const res = query(ast, "layout[Standard]:until(layout[Section])");
+  assertEquals(res.length, all);
+});
+
 Deno.test("DL99 - parser: :note without tag errors; bare :note in :not() parses", () => {
   let e1 = "";
   try { parseSelector(":note"); } catch (e) { e1 = (e as Error).message; }
