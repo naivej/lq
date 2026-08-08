@@ -2,3 +2,5 @@ bin
 deno.lock
 cov
 audit
+.lq/cache
+.lq/undo

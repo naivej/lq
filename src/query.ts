@@ -789,26 +789,6 @@ function buildParentMap(rootChildren: Node[]): Map<Node, BlockNode | null> {
 }
 
 /**
- * Walk up from `node` to find the ancestor-or-self that is a direct child of
- * `anchorParent`'s children — i.e. the top-level sibling under the anchor's
- * parent that contains `node`.  Returns null if `node` is not within
- * `anchorParent`.
- */
-function findTopLevelSibling(
-  node: Node,
-  anchorParent: BlockNode | null,
-  parentMap: Map<Node, BlockNode | null>,
-): Node | null {
-  let cur: Node = node;
-  while (true) {
-    const parent = parentMap.get(cur) ?? null;
-    if (parent === anchorParent) return cur;
-    if (parent === null) return null; // reached the root without finding anchorParent
-    cur = parent;
-  }
-}
-
-/**
  * Find all following siblings of the given anchor node that match `part`.
  * Used by the ~ (general sibling) combinator.
  * If parentIndex is provided, uses it for O(1) anchor lookup instead of O(n) tree walk.
@@ -846,37 +826,18 @@ function findFollowingSiblings(
 }
 
 /**
- * Check if any node in the range (parentChildren, from startIndex, up to but
- * not including the given node) matches `innerPart`.  Used by :until().
- */
-function hasInterveningMatch(
-  node: Node,
-  parentChildren: Node[],
-  startIndex: number,
-  innerPart: SelectorPart,
-  stateIndex?: Map<Node, TraversalState>,
-  insideNoteIndex?: Map<Node, boolean>,
-  noteScope?: boolean,
-  statusLines?: Set<Node>,
-): boolean {
-  for (let i = startIndex; i < parentChildren.length; i++) {
-    if (parentChildren[i] === node) return false; // reached target, no match found
-    const state = stateIndex?.get(parentChildren[i]) ?? createTraversalState();
-    if (matchNode(parentChildren[i], innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope, statusLines)) return true;
-    // Also check descendants of intervening blocks
-    if (parentChildren[i].type === "block") {
-      const descMatches = findDescendants((parentChildren[i] as BlockNode).children, innerPart, [], stateIndex, insideNoteIndex, noteScope, statusLines);
-      if (descMatches.length > 0) return true;
-    }
-  }
-  return false;
-}
-
-/**
  * Check whether any node in `block`'s subtree, in document order strictly
  * after `block` and at-or-before `target` (inclusive), matches `innerPart`.
  * `target` must be a descendant of `block`.  Used by :until() to bound
  * descendant candidates whose top-level sibling is `block`.
+ *
+ * Returns a tri-state: `true` = a match was found in the span; `false` =
+ * no match and `target` not reached (keep scanning); `null` = `target`
+ * reached without a match (stop — nothing after `target` is in the span).
+ * The `null` signal is what keeps the scan bounded by the candidate: without
+ * it, a recursion that reaches a *nested* target returns `false` and the
+ * caller keeps scanning siblings that come after the target in document
+ * order (DL105 F1 — false rejection of candidates before a boundary).
  */
 function subtreeHasMatchBeforeOrAt(
   block: BlockNode,
@@ -886,17 +847,22 @@ function subtreeHasMatchBeforeOrAt(
   insideNoteIndex?: Map<Node, boolean>,
   noteScope?: boolean,
   statusLines?: Set<Node>,
-): boolean {
+): boolean | null {
   for (const child of block.children) {
     if (child === target) {
-      // Target itself is the last node in the range — check it, then stop.
+      // Target is the last node in the range — check it, then signal reached.
       const state = stateIndex?.get(child) ?? createTraversalState();
-      return matchNode(child, innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope, statusLines);
+      return matchNode(child, innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope, statusLines)
+        ? true
+        : null;
     }
     const state = stateIndex?.get(child) ?? createTraversalState();
     if (matchNode(child, innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope, statusLines)) return true;
     if (child.type === "block") {
-      if (subtreeHasMatchBeforeOrAt(child as BlockNode, target, innerPart, stateIndex, insideNoteIndex, noteScope, statusLines)) return true;
+      // A `null` (target reached) or `true` (match) result stops the scan —
+      // later siblings come after the target in document order.
+      const sub = subtreeHasMatchBeforeOrAt(child as BlockNode, target, innerPart, stateIndex, insideNoteIndex, noteScope, statusLines);
+      if (sub !== false) return sub;
     }
   }
   return false;
@@ -1017,41 +983,87 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
             // bounds not only direct following siblings but also descendants
             // of following siblings, and excludes the boundary node itself.
             const innerPart = parseSelectorPart(p.argRaw, true);
-            if (siblingAnchors.length > 0) {
+            if (siblingAnchors.length > 0 && parentMap) {
+              // Group anchors by their parent's children (array identity) and
+              // precompute, per anchor, the FIRST sibling strictly after it
+              // that is a boundary (matches the inner selector itself or
+              // contains a matching descendant).  A candidate is then bounded
+              // with an O(1) comparison instead of a per-candidate
+              // sibling+descendant scan (DL105 F3 — `:until` was ~30x slower
+              // than the equivalent query on large documents).
+              const anchorGroups = new Map<Node[], { anchor: Node; index: number; firstBoundary: number }[]>();
+              for (const anchor of siblingAnchors) {
+                const aCtx = getSiblingContextFast(anchor, rootChildren, parentIndex);
+                if (!aCtx) continue;
+                let list = anchorGroups.get(aCtx.parentChildren);
+                if (!list) {
+                  list = [];
+                  anchorGroups.set(aCtx.parentChildren, list);
+                }
+                list.push({ anchor, index: aCtx.index, firstBoundary: Infinity });
+              }
+              for (const list of anchorGroups.values()) list.sort((a, b) => a.index - b.index);
+              for (const [pc, list] of anchorGroups) {
+                // isB[i]: sibling i is itself a boundary or contains one.
+                const isB: boolean[] = new Array(pc.length).fill(false);
+                for (let i = 0; i < pc.length; i++) {
+                  const sib = pc[i];
+                  const st = stateIndex?.get(sib) ?? createTraversalState();
+                  if (matchNode(sib, innerPart, traversalRegion(st), st.properties, stateIndex, insideNoteIndex, noteScope, statusLines)) { isB[i] = true; continue; }
+                  if (sib.type === "block" && findDescendants((sib as BlockNode).children, innerPart, [], stateIndex, insideNoteIndex, noteScope, statusLines).length > 0) isB[i] = true;
+                }
+                // Backward pass: firstBoundary[anchor] = first boundary strictly after it.
+                const anchorAt = new Map<number, { anchor: Node; index: number; firstBoundary: number }>();
+                for (const e of list) anchorAt.set(e.index, e);
+                let nextB = Infinity;
+                for (let i = pc.length - 1; i >= 0; i--) {
+                  const entry = anchorAt.get(i);
+                  if (entry) entry.firstBoundary = nextB;
+                  if (isB[i]) nextB = i;
+                }
+              }
               nextNodes = nextNodes.filter(n => {
-                if (!parentMap) return false;
-                // Find the nearest anchor that precedes this node.
-                for (let ai = siblingAnchors.length - 1; ai >= 0; ai--) {
-                  const anchor = siblingAnchors[ai];
-                  const anchorCtx = getSiblingContextFast(anchor, rootChildren, parentIndex);
-                  if (!anchorCtx) continue;
-                  const anchorParent = parentMap.get(anchor) ?? null;
-                  // Top-level sibling of n under the anchor's parent.
-                  const topSibling = findTopLevelSibling(n, anchorParent, parentMap);
-                  if (!topSibling) continue; // n not under this anchor's parent
-                  const tCtx = getSiblingContextFast(topSibling, rootChildren, parentIndex);
-                  if (!tCtx || tCtx.parentChildren !== anchorCtx.parentChildren) continue;
-                  if (tCtx.index <= anchorCtx.index) continue; // not after the anchor
-                  // Reject if a match appears in (anchor, n]:
-                  // siblings strictly between anchor and topSibling (+ descendants),
-                  if (hasInterveningMatch(topSibling, anchorCtx.parentChildren, anchorCtx.index + 1, innerPart, stateIndex, insideNoteIndex, noteScope, statusLines)) return false;
-                  // topSibling itself,
-                  const tState = stateIndex?.get(topSibling) ?? createTraversalState();
-                  if (matchNode(topSibling, innerPart, traversalRegion(tState), tState.properties, stateIndex, insideNoteIndex, noteScope, statusLines)) return false;
-                  // and topSibling's subtree up to and including n.
-                  if (topSibling !== n) {
-                    if (subtreeHasMatchBeforeOrAt(topSibling as BlockNode, n, innerPart, stateIndex, insideNoteIndex, noteScope, statusLines)) return false;
+                // Walk up from n to the first ancestor-or-self whose parent's
+                // children contain an anchor preceding it — that node is the
+                // top-level sibling under that anchor's parent.  The deepest
+                // such level wins, matching the previous reverse-anchor scan.
+                let cur: Node = n;
+                while (true) {
+                  const parent = parentMap.get(cur) ?? null;
+                  if (parent === null) break; // reached the root without an anchor
+                  const list = anchorGroups.get(parent.children);
+                  if (list) {
+                    const curCtx = getSiblingContextFast(cur, rootChildren, parentIndex);
+                    if (curCtx) {
+                      // Nearest anchor strictly before cur (binary search).
+                      let lo = 0, hi = list.length - 1, best = -1;
+                      while (lo <= hi) {
+                        const mid = (lo + hi) >> 1;
+                        if (list[mid].index < curCtx.index) { best = mid; lo = mid + 1; }
+                        else hi = mid - 1;
+                      }
+                      if (best !== -1) {
+                        // A boundary sibling strictly before cur? O(1).
+                        if (list[best].firstBoundary < curCtx.index) return false;
+                        // cur (the top-level sibling) itself,
+                        const cState = stateIndex?.get(cur) ?? createTraversalState();
+                        if (matchNode(cur, innerPart, traversalRegion(cState), cState.properties, stateIndex, insideNoteIndex, noteScope, statusLines)) return false;
+                        // and cur's subtree up to and including n.  Reject only
+                        // on an actual match (true); target-reached (null) keeps n.
+                        if (cur !== n) {
+                          if (subtreeHasMatchBeforeOrAt(cur as BlockNode, n, innerPart, stateIndex, insideNoteIndex, noteScope, statusLines) === true) return false;
+                        }
+                        return true;
+                      }
+                    }
                   }
-                  return true;
+                  cur = parent;
                 }
                 return true; // no anchor found, keep node
               });
             }
             // If no sibling anchors (e.g. :until() used without ~), the filter
             // has no effect — all nodes pass through.
-            if (siblingAnchors.length === 0) {
-              // :until() is only meaningful after ~; without it, no filtering occurs.
-            }
           }
         }
       }

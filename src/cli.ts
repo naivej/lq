@@ -2142,13 +2142,17 @@ function foldNegativeDepth(args: string[]): string[] {
         printError("PARSE_ERROR", `Failed to parse raw LyX string: ${(e as Error).message}`);
       }
     } else if (flags.layout) {
-      // Validate the layout against the schema (loaded from config)
+      // Validate the layout against the schema — config first, then the same
+      // runtime auto-detect fallback the schema/dump commands use, so that
+      // validation is not silently skipped when no layouts dir is configured
+      // (DL105 issue 4 — fallback restored after a946bc5 removed it).
       const config = await loadUserConfig(statePaths);
-      if (config.layoutsDir) {
+      const layoutsDir = config.layoutsDir || await getDefaultLayoutsDir();
+      if (layoutsDir) {
          const textclassNode = query(ast, "textclass")[0];
          if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
             try {
-               const schema = await getSchemaForClass(textclassNode.value, config.layoutsDir);
+               const schema = await getSchemaForClass(textclassNode.value, layoutsDir);
                if (!schema.documentLayouts.includes(flags.layout) && !schema.insetLayouts.includes(flags.layout)) {
                  printError("INVALID_LAYOUT", `The layout '${flags.layout}' is not permitted in textclass '${textclassNode.value}'. Allowed document layouts: ${schema.documentLayouts.join(", ")}`);
                }
@@ -2280,16 +2284,20 @@ function foldNegativeDepth(args: string[]): string[] {
       return null;
     };
 
-    // Pre-fetch schema from config once (avoid per-node I/O and CST traversal)
+    // Pre-fetch schema once (avoid per-node I/O and CST traversal) — config
+    // first, then the same runtime auto-detect fallback the schema/dump
+    // commands use, so validation is not silently skipped without a config
+    // (DL105 issue 4 — fallback restored after a946bc5 removed it).
     let schema: Awaited<ReturnType<typeof getSchemaForClass>> | null = null;
     let textclassValue: string | null = null;
     const config = await loadUserConfig(statePaths);
-    if (config.layoutsDir) {
+    const layoutsDir = config.layoutsDir || await getDefaultLayoutsDir();
+    if (layoutsDir) {
       const textclassNode = query(ast, "textclass")[0];
       if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
         textclassValue = textclassNode.value;
         try {
-          schema = await getSchemaForClass(textclassValue, config.layoutsDir);
+          schema = await getSchemaForClass(textclassValue, layoutsDir);
         } catch (_e) {
           // Layout files unavailable — skip validation, insert proceeds
         }

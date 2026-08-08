@@ -742,6 +742,53 @@ Deno.test("DL104 - :until without ~ is a no-op (DL55 path unchanged)", () => {
   assertEquals(res.length, all);
 });
 
+// --- DL105 (dev log 105) F1: the :until() span scan must be bounded by the
+// candidate in document order. A descendant candidate that PRECEDES a tag
+// boundary inside the same top-level sibling must be kept (the span scan used
+// to continue past the nested target and reject it). A recursive :contains
+// inner that matches the top-level sibling still rejects its descendants —
+// that behavior is design-consistent and must not regress.
+
+Deno.test("DL105 F1 - candidate before a nested Formula boundary is kept", () => {
+  const ast = parse(
+    "#LyX 2.5 created this file.\n" +
+    "\\begin_document\n\\begin_header\n\\textclass article\n\\end_header\n\\begin_body\n" +
+    "\\begin_layout Section\nFirst Section\n\\end_layout\n\n" +
+    "\\begin_layout Standard\nContainer\n" +
+    "\\begin_inset Float table\nstatus open\n\n" +
+    "\\begin_layout Plain Layout\nCell before\n\\end_layout\n\n" +
+    "\\end_inset\n\n" +
+    "\\begin_inset Formula\nx^2\n\\end_inset\n" +
+    "\\end_layout\n\n" +
+    "\\begin_layout Standard\nAfter container\n\\end_layout\n" +
+    "\\end_body\n\\end_document\n",
+  );
+  // "Cell before" precedes the Formula inside the Container — it must survive.
+  const res = query(ast, "layout[Section]:first ~ layout[Plain Layout]:until(inset[Formula])");
+  const args = dl104Args(res);
+  assertEquals(args.length, 1, "candidate before the nested boundary must be kept");
+  assertEquals(args[0], "Plain Layout");
+});
+
+Deno.test("DL105 F1 - guard: :contains inner matching the container still rejects its descendants", () => {
+  const ast = parse(
+    "#LyX 2.5 created this file.\n" +
+    "\\begin_document\n\\begin_header\n\\textclass article\n\\end_header\n\\begin_body\n" +
+    "\\begin_layout Section\nFirst Section\n\\end_layout\n\n" +
+    "\\begin_layout Standard\nContainer\n" +
+    "\\begin_inset Float table\nstatus open\n\n" +
+    "\\begin_layout Plain Layout\nCell A\n\\end_layout\n\n" +
+    "\\begin_layout Plain Layout\nCell B with X\n\\end_layout\n\n" +
+    "\\end_inset\n\\end_layout\n\n" +
+    "\\begin_layout Standard\nAfter\n\\end_layout\n" +
+    "\\end_body\n\\end_document\n",
+  );
+  // The Container matches layout:contains('X') (its subtree holds Cell B), so
+  // every descendant of Container is at/after the boundary — design-consistent.
+  const res = query(ast, "layout[Section]:first ~ layout[Plain Layout]:until(layout:contains('X'))");
+  assertEquals(res.length, 0);
+});
+
 Deno.test("DL99 - parser: :note without tag errors; bare :note in :not() parses", () => {
   let e1 = "";
   try { parseSelector(":note"); } catch (e) { e1 = (e as Error).message; }
