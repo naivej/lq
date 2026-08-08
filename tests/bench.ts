@@ -14,6 +14,9 @@ const SMALL = `${FIXTURES}/my_template.lyx`;
 const MEDIUM = `${FIXTURES}/Articles/Springer_Nature_Journals.lyx`;
 const LARGE = `${FIXTURES}/Modules/Fancy_Colored_Boxes.lyx`;
 const BIB_FIXTURE = `${FIXTURES}/Books/KOMA-Script_Book.lyx`;
+// Chapter-based large fixture used by the DL105 F3 :until perf work and the
+// R1 regression bench (DL106).
+const USERGUIDE = `${FIXTURES}/Help/UserGuide.lyx`;
 
 const TMP = Deno.env.get("TMPDIR") || Deno.env.get("TEMP") || "/tmp";
 const TMP_DIR = `${TMP}/lq_bench`;
@@ -72,6 +75,14 @@ Deno.bench("read | small  | :contains(the)", async () => {
 
 Deno.bench("read | medium | :first", async () => {
   await run(["read", MEDIUM, "layout:first"]);
+});
+
+// DL106 R1: guard against a regression of the DL105 F3 :until optimization
+// (anchor-grouping + firstBoundary). Baseline: ~0.17 s CLI wall (was ~3.3 s
+// pre-F3). Deno.bench enforces no threshold — the entry's presence plus the
+// recorded baseline is the guard.
+Deno.bench("read | large  | layout[Chapter] ~ layout:until(layout[Chapter])", async () => {
+  await run(["read", USERGUIDE, "layout[Chapter] ~ layout:until(layout[Chapter])", "--count"]);
 });
 
 // — Dump benchmarks —

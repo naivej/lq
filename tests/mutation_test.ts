@@ -752,7 +752,7 @@ Deno.test("DL98 F1 - control: --find with trailing text before an inset stays co
   }
 });
 
-Deno.test("DL98 F1 - --find inside \\change_deleted before an inset keeps the inset in its original deleted region", { timeout: 15000 }, async () => {
+Deno.test("DL98 F1 - --find inside \\change_deleted before an inset keeps the inset in its original deleted region (DL106 A1)", { timeout: 15000 }, async () => {
   const tempFile = await writeTempLyx("temp_dl98_f1_deleted_inset.lyx",
     "\\begin_layout Standard\n" +
     "\\change_deleted 1 1700000000\n" +
@@ -768,22 +768,139 @@ Deno.test("DL98 F1 - --find inside \\change_deleted before an inset keeps the in
     );
     assertEquals(result.modified_nodes, 1);
     const text = await Deno.readTextFile(tempFile);
-    // Current editor (Bob, id 2) re-authors the erased run...
-    assertStringIncludes(text, "\\change_deleted 2");
-    assertStringIncludes(text, "\\change_inserted 2");
-    // ...and the inset keeps its ORIGINAL deleted region (Alice, id 1). LyX's
+    // DL106 A1: the erased run inside Alice's \\change_deleted keeps HER
+    // author (Bob does not re-author the rejected text); only the replacement
+    // is Bob's insert.
+    assertStringIncludes(text, "\\change_inserted 2", "replacement is Bob's insert");
+    assertStringIncludes(text, "\\change_deleted 1", "Alice's rejected run stays Alice's");
+    assert(!text.includes("\\change_deleted 2"),
+      "Bob must NOT re-author Alice's rejected text (DL106 A1)");
+    // The inset keeps its ORIGINAL deleted region (Alice, id 1). LyX's
     // writer emits a direct same-type transition (\change_deleted 1) with no
     // closer between the two deleted runs — matching Paragraph::write. The
-    // last \change_unchanged is the one closing Alice's deleted region (the
-    // first closes Bob's inserted run, before both deleted runs).
-    const delBob = text.indexOf("\\change_deleted 2");
+    // last \change_unchanged closes Alice's deleted region (the first closes
+    // Bob's inserted run).
     const delAlice = text.indexOf("\\change_deleted 1");
     const insetPos = text.indexOf("\\begin_inset CommandInset ref");
     const unchangedPos = text.lastIndexOf("\\change_unchanged");
-    assert(delBob !== -1 && delAlice !== -1 && insetPos !== -1 && unchangedPos !== -1,
-      "expected Bob-deleted, Alice-deleted, inset, unchanged in order");
-    assert(delBob < delAlice && delAlice < insetPos && insetPos < unchangedPos,
-      "the inset must stay inside Alice's original \\change_deleted region, after Bob's re-authored run");
+    assert(delAlice !== -1 && insetPos !== -1 && unchangedPos !== -1,
+      "expected Alice-deleted, inset, unchanged in order");
+    assert(delAlice < insetPos && insetPos < unchangedPos,
+      "the inset must stay inside Alice's original \\change_deleted region");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- DL106 B1/A1: --find inside another author's \change_deleted must NOT
+// re-author the rejected run (preserve rejected author; replay-undo must not
+// resurrect it) ---
+
+Deno.test("DL106 B1 - Bob's --find inside Alice's \\change_deleted keeps Alice's author; Bob's replay-undo does not resurrect the rejected text", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl106_b1_reauthor.lyx",
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "Hello world\n" +
+    "\\change_unchanged\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "Alice's new text\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n",
+    '\\author 1 "Alice"\n');
+  try {
+    // Bob edits the rejected phrase (see-all default, no scope).
+    const setResult = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "Hi", "--find", "Hello world"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(setResult.modified_nodes, 1);
+    let text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_inserted 2", "replacement is Bob's insert");
+    assertStringIncludes(text, "\\change_deleted 1", "Alice's rejection keeps her author (DL106 A1)");
+    assert(!text.includes("\\change_deleted 2"),
+      "Bob must NOT re-author Alice's rejected text");
+    const children = firstLayoutChildren(text);
+    assertEquals(maxMarkerDepth(children), 1, "flat, never nested");
+
+    // Bob's replay-undo removes only HIS insert; Alice's deletion survives.
+    const undoResult = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(undoResult.undone_changes, 1, "only Bob's insert block is undone");
+    text = await Deno.readTextFile(tempFile);
+    assert(!text.includes("\\change_inserted 2"), "Bob's insert removed");
+    assertStringIncludes(text, "\\change_deleted 1", "Alice's rejection survives Bob's undo");
+    // The rejected text is still inside a deleted region — NOT resurrected as plain.
+    const delPos = text.indexOf("\\change_deleted 1");
+    const helloPos = text.indexOf("Hello world");
+    assert(delPos !== -1 && helloPos !== -1 && delPos < helloPos,
+      "Hello world must remain rejected text after Bob's undo");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL106 B1 - --find spanning deleted->current keeps the deleted part's author, re-authors the current part", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl106_b1_span.lyx",
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "Hello\n" +
+    "\\change_unchanged\n" +
+    " world\n" +
+    "\\end_layout\n",
+    '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "Hi", "--find", "Hello world"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_inserted 2", "replacement is Bob's insert");
+    assertStringIncludes(text, "\\change_deleted 1", "deleted part keeps Alice's author");
+    assertStringIncludes(text, "\\change_deleted 2", "current part re-authored to Bob");
+    const delAlice = text.indexOf("\\change_deleted 1");
+    const helloPos = text.indexOf("Hello");
+    const delBob = text.indexOf("\\change_deleted 2");
+    const worldPos = text.indexOf(" world");
+    assert(delAlice !== -1 && helloPos !== -1 && delBob !== -1 && worldPos !== -1 &&
+      delAlice < helloPos && helloPos < delBob && delBob < worldPos,
+      "order: Alice-deleted{Hello} then Bob-deleted{ world}");
+    // Flat: the two deleted runs are ADJACENT same-type regions (direct author
+    // transition — LyX Paragraph::write), so no closer sits between them. The
+    // maxMarkerDepth counter overcounts that legitimate flat shape as depth 2
+    // (advanceChangeDepths), so assert the exact marker sequence instead.
+    assertEquals(
+      changeMarkers(firstLayoutChildren(text)).map(m => m.key),
+      ["change_inserted", "change_unchanged", "change_deleted", "change_deleted", "change_unchanged"],
+      "flat: inserted{Hi}, Alice-deleted{Hello} adjacent Bob-deleted{ world}, final unchanged",
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL106 B1 - same-author --find inside own \\change_deleted keeps the same author (guard)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl106_b1_sameauthor.lyx",
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "Hello world\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n",
+    '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "Hi", "--find", "Hello world"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_inserted 1", "replacement is Alice's insert");
+    assertStringIncludes(text, "\\change_deleted 1", "rejected run stays Alice's");
+    assert(!text.includes("\\change_deleted 2") && !text.includes("\\change_inserted 2"),
+      "no second author introduced");
+    assertEquals(maxMarkerDepth(firstLayoutChildren(text)), 1, "flat, never nested");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }

@@ -553,6 +553,17 @@ async function getDefaultLayoutsDir(): Promise<string> {
   }
 }
 
+/**
+ * Resolve the layouts dir for schema validation: configured value, else
+ * runtime auto-detect. DL105 B1 invariant — every schema user (schema, dump,
+ * insert) must use config-first with the same fallback; a single site keeps
+ * the "one command diverges" failure mode (a946bc5 / DL105 issue 4) from
+ * recurring. R3a (test_report_50).
+ */
+async function resolveLayoutsDir(config: { layoutsDir?: string }): Promise<string> {
+  return config.layoutsDir || await getDefaultLayoutsDir();
+}
+
 // Warnings accumulator — all warnings go to stdout JSON, never stderr.
 // Each printJson call flushes and clears the accumulator.
 const _warnings: string[] = [];
@@ -1361,7 +1372,7 @@ function foldNegativeDepth(args: string[]): string[] {
       }
       let headingHierarchy: { layout: string; tocLevel: number }[];
       try {
-        const layoutsDir = userConfig.layoutsDir || await getDefaultLayoutsDir();
+        const layoutsDir = await resolveLayoutsDir(userConfig);
         const schema = await getSchemaForClass(textclass, layoutsDir);
         headingHierarchy = schema.headingHierarchy;
       } catch {
@@ -1523,7 +1534,7 @@ function foldNegativeDepth(args: string[]): string[] {
 
   if (command === "schema") {
     const config = await loadUserConfig(statePaths);
-    const layoutsDir = config.layoutsDir || await getDefaultLayoutsDir();
+    const layoutsDir = await resolveLayoutsDir(config);
     if (!layoutsDir) {
       printError("NO_CONFIG", "No layouts directory found. Run 'lq init' to auto-detect and save your LyX layouts path.");
     }
@@ -2147,7 +2158,7 @@ function foldNegativeDepth(args: string[]): string[] {
       // validation is not silently skipped when no layouts dir is configured
       // (DL105 issue 4 — fallback restored after a946bc5 removed it).
       const config = await loadUserConfig(statePaths);
-      const layoutsDir = config.layoutsDir || await getDefaultLayoutsDir();
+      const layoutsDir = await resolveLayoutsDir(config);
       if (layoutsDir) {
          const textclassNode = query(ast, "textclass")[0];
          if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
@@ -2291,7 +2302,7 @@ function foldNegativeDepth(args: string[]): string[] {
     let schema: Awaited<ReturnType<typeof getSchemaForClass>> | null = null;
     let textclassValue: string | null = null;
     const config = await loadUserConfig(statePaths);
-    const layoutsDir = config.layoutsDir || await getDefaultLayoutsDir();
+    const layoutsDir = await resolveLayoutsDir(config);
     if (layoutsDir) {
       const textclassNode = query(ast, "textclass")[0];
       if (textclassNode && textclassNode.type === "property" && textclassNode.value) {

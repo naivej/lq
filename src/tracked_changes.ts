@@ -568,9 +568,11 @@ function propertyStrictlyInsideMatch(
  *   then insert at pos);
  * - the erased range becomes \change_deleted (current editor). Exceptions:
  *   matched text inside a same-author \change_inserted region is dropped (F3
- *   merge semantics), and change markers strictly inside a match are absorbed
- *   so the erased range serializes as one contiguous delete region (flat
- *   model — never nested).
+ *   merge semantics), and matched text already inside \change_deleted keeps
+ *   its ORIGINAL author and timestamp (DL106 B1/A1 — LyX eraseChar returns
+ *   false on a deleted char, so the rejected run is never re-authored), and
+ *   change markers strictly inside a match are absorbed so the erased range
+ *   serializes as one contiguous delete region (flat model — never nested).
  *
  * Matches that cross a structural boundary (inset between text nodes) are
  * silently skipped. When `scope` is set (a :change()/:property() selector
@@ -617,6 +619,7 @@ export function applyCrossNodeReplace(
     deleted: boolean;
     inserted: boolean;
     author: number;
+    ts: string;
     props: Record<string, string | undefined>;
   }[] = [];
   {
@@ -634,6 +637,7 @@ export function applyCrossNodeReplace(
           deleted: traversalRegion(state) === "deleted",
           inserted: traversalRegion(state) === "inserted",
           author: change.author,
+          ts: change.ts,
           props: { ...state.properties },
         });
         seg++;
@@ -794,11 +798,19 @@ export function applyCrossNodeReplace(
           }
           if (tracked) {
             // Erased run: same-author inserted text is dropped (F3 merge —
-            // same-author deletion of pending-inserted text removes it);
-            // everything else becomes DELETED by the current editor (LyX
-            // eraseChars re-authors the whole erased range).
+            // same-author deletion of pending-inserted text removes it).
+            // A run already inside \change_deleted keeps its ORIGINAL author
+            // and timestamp (DL106 B1/A1: LyX eraseChar returns false on a
+            // deleted char — Paragraph.cpp; DL90 §5.2 "erased with no new
+            // marker"), so another author's replay-undo cannot resurrect it.
+            // Everything else becomes DELETED by the current editor (LyX
+            // eraseChars re-authors unchanged / co-author-inserted chars).
             if (!(segRegion.inserted && segRegion.author === authorId)) {
-              atoms.push({ kind: "text", text: runText, state: "d", author: authorId, ts });
+              if (segRegion.deleted) {
+                atoms.push({ kind: "text", text: runText, state: "d", author: segRegion.author, ts: segRegion.ts });
+              } else {
+                atoms.push({ kind: "text", text: runText, state: "d", author: authorId, ts });
+              }
             }
           }
           // untracked: erased text is dropped (no atoms)
