@@ -27,10 +27,10 @@ Deno.test("Selector Parsing", () => {
   assertEquals(parsed4[0][0].pseudos![0].name, "contains");
   assertEquals(parsed4[0][0].pseudos![0].argRaw, '"["');
 
-  const parsed5 = parseSelector('layout:nth-child(odd), layout:nth-child( 2n+1 )');
-  assertEquals(parsed5[0][0].pseudos![0].name, "nth-child");
+  const parsed5 = parseSelector('layout:nth-match(odd), layout:nth-match( 2n+1 )');
+  assertEquals(parsed5[0][0].pseudos![0].name, "nth-match");
   assertEquals(parsed5[0][0].pseudos![0].argRaw, "odd");
-  assertEquals(parsed5[1][0].pseudos![0].name, "nth-child");
+  assertEquals(parsed5[1][0].pseudos![0].name, "nth-match");
   assertEquals(parsed5[1][0].pseudos![0].argRaw, "2n+1");
 
   const parsed6 = parseSelector('layout[Standard]:not(inset[CommandInset bibtex])');
@@ -86,12 +86,12 @@ Deno.test("Query Engine on LyX Document", async () => {
     assertEquals(firstSection[0].children[0].text, "Section ");
   }
 
-  const secondSection = query(ast, "layout[Section]:nth-child(2)");
+  const secondSection = query(ast, "layout[Section]:nth-match(2)");
   assertEquals(secondSection.length, 1);
   
   const allSections = query(ast, "layout[Section]");
-  const oddSections = query(ast, "layout[Section]:nth-child(odd)");
-  const evenSections = query(ast, "layout[Section]:nth-child(even)");
+  const oddSections = query(ast, "layout[Section]:nth-match(odd)");
+  const evenSections = query(ast, "layout[Section]:nth-match(even)");
   assertEquals(oddSections.length + evenSections.length, allSections.length);
   if (allSections.length >= 2) {
     assertEquals(oddSections[0], allSections[0]);

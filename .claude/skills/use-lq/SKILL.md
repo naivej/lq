@@ -36,7 +36,7 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
 |---|---|---|
 | **Content** — matching / extracting text | `:contains`, bare `text`, `--find`, `split-after`, `--text-only` | **visible-only**: private-note prose is excluded unless the selector is note-scoped |
 | **State** — matching change regions / styles | `:change`, `:property` | **visibility-blind**: always see note prose (a deleted note's text is still `:change(deleted)`) |
-| **Structure** — locating nodes / lossless views | `layout`/`inset`/`property` tags, `:first`/`:last`/`:nth-child`/`:not`/`:adjacent`/`:until`, `~`, `read`/`dump` CST, `--toc` | **lossless**: note nodes stay present; the TOC never surfaces note headings or note text |
+| **Structure** — locating nodes / lossless views | `layout`/`inset`/`property` tags, `:first`/`:last`/`:nth-match`/`:not`/`:adjacent`/`:until`, `~`, `read`/`dump` CST, `--toc` | **lossless**: note nodes stay present; the TOC never surfaces note headings or note text |
 
 **Default (content axis):** a phrase or text node inside a private note is invisible. To opt in, make the selector **note-scoped** — a `:note` part (`layout:note:contains('X')`, `text:note`) or an explicit `inset[Note …]` path (`inset[Note Note] layout[Plain Layout]`). Note-scope is per `,` group, so `text, text:note` is "visible text + note text". `Note Greyedout` is visible output and is never excluded. GUI-only `status open/collapsed` lines (the inset's expand/collapse state) are never matched as `text`.
 
@@ -54,7 +54,7 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
   - `,` for OR group. Example: `layout[Section], inset[Foot]` matches all Section and Foot layouts.
 - **Chainable Pseudo-classes** — node predicates: each is a true/false filter that keeps only nodes matching its condition. Must follow a tag (e.g. `layout:contains("text")`, `inset:first`); chain several to narrow further.
 
-  - `:first`, `:last`, `:nth-child(an+b/even/odd)`,
+  - `:first`, `:last`, `:nth-match(an+b/even/odd)`,
   - `:contains("text")` searches recursively and case-sensitively node children for text. The phrase may be quoted with either `'...'` or `"..."`; prefer `"..."` when the phrase itself contains an apostrophe (e.g. `:contains("rock 'n' roll")`).
   - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
   - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).

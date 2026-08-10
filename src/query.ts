@@ -13,7 +13,7 @@ import {
 import { INLINE_PROPERTIES, isInlineStyleKey } from "./registry.ts";
 
 export interface PseudoClass {
-  name: "first" | "last" | "contains" | "nth-child" | "not" | "adjacent" | "until" | "change" | "property" | "note";
+  name: "first" | "last" | "contains" | "nth-match" | "not" | "adjacent" | "until" | "change" | "property" | "note";
   argRaw?: string;
 }
 
@@ -38,7 +38,7 @@ function parsePseudoClasses(suffix: string): PseudoClass[] {
     const pName = pMatch[1];
     const pArg = pMatch[2] ? pMatch[2].trim() : undefined;
 
-    if (!["first", "last", "nth-child", "contains", "not", "adjacent", "until", "change", "property", "note"].includes(pName)) {
+    if (!["first", "last", "nth-match", "contains", "not", "adjacent", "until", "change", "property", "note"].includes(pName)) {
       throw new Error(`Unsupported pseudo-class: :${pName}`);
     }
 
@@ -930,14 +930,14 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
         }
       }
 
-      // Apply pseudo-classes (first, last, nth, nth-child, adjacent, contains, not, until)
+      // Apply pseudo-classes (first, last, nth, nth-match, adjacent, contains, not, until)
       if (part.pseudos) {
         for (const p of part.pseudos) {
           if (p.name === "first" && nextNodes.length > 0) {
             nextNodes = [nextNodes[0]];
           } else if (p.name === "last" && nextNodes.length > 0) {
             nextNodes = [nextNodes[nextNodes.length - 1]];
-          } else if (p.name === "nth-child" && p.argRaw !== undefined) {
+          } else if (p.name === "nth-match" && p.argRaw !== undefined) {
             let formula = p.argRaw;
             if (formula === "odd") formula = "2n+1";
             if (formula === "even") formula = "2n";

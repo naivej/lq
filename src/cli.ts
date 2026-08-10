@@ -188,7 +188,7 @@ Combinators:
   , for OR group        e.g. layout[Section], inset[Foot]
 
 Chainable pseudo-classes: must follow a tag
-  :first, :last, :nth-child(an+b/even/odd),
+  :first, :last, :nth-match(an+b/even/odd),
   :contains("text"),
   :not(selector), :adjacent(selector),
   :until(selector) bounds a ~ range to stop before the next matching sibling
