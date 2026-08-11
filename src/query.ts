@@ -1,4 +1,4 @@
-import { DocumentNode, Node, BlockNode, TextNode } from "./ast.ts";
+import { DocumentNode, Node, BlockNode } from "./ast.ts";
 import {
   advanceChangeDepths,
   advanceTraversalState,
@@ -431,59 +431,6 @@ function buildInsideNoteMap(rootChildren: Node[]): Map<Node, string | undefined>
   return map;
 }
 
-/**
- * DL101 (test report 46 F1): set of text nodes that are GUI-only `status
- * open/collapsed` lines inside collapsible insets. They control the LyX GUI's
- * expand/collapse state and are never document content, so content-axis `text`
- * matching excludes them.
- *
- * LyX writes `status` via InsetCollapsible::write: most collapsibles put it
- * FIRST (Note, Foot, ERT, …), but Float/Branch/Box write their params first
- * (InsetFloat.cpp:313, InsetBranch.cpp:53, InsetBox.cpp:112) and only then the
- * status line — always before the first nested `\begin_layout` content block.
- *
- * Rule (a text node is a status line iff it is a DIRECT child of an inset and
- * matches `^status (open|collapsed)$` AND one of):
- *   - it is the FIRST child of the inset (ERT is a raw-text inset with no
- *     nested layouts — its payload lines are later direct children and must
- *     survive; its real status line is always the first child); or
- *   - the inset contains a nested layout block AND this node appears BEFORE
- *     the first nested layout (Float/Branch/Box params-then-status prologue).
- *
- * The nested-layout clause never fires for ERT-like raw-text insets, so their
- * flat content (which can legitimately be a line literally `status open`) is
- * never marked — only their first-child real status line is.
- */
-function buildStatusLineSet(rootChildren: Node[]): Set<Node> {
-  const statusLines = new Set<Node>();
-  const STATUS_SHAPE = /^status (open|collapsed)$/;
-  function walk(children: Node[]): void {
-    for (const c of children) {
-      if (c.type === "block") {
-        const b = c as BlockNode;
-        if (b.tag === "inset") {
-          const first = b.children[0];
-          if (first && first.type === "text" && STATUS_SHAPE.test((first as TextNode).text.trim())) {
-            statusLines.add(first);
-          }
-          // Float/Branch/Box: params before status, all before first nested layout.
-          if (b.children.some((ch) => ch.type === "block")) {
-            for (const ch of b.children) {
-              if (ch.type === "block") break; // reached the content region
-              if (ch.type === "text" && STATUS_SHAPE.test((ch as TextNode).text.trim())) {
-                statusLines.add(ch);
-              }
-            }
-          }
-        }
-        walk(b.children);
-      }
-    }
-  }
-  walk(rootChildren);
-  return statusLines;
-}
-
 /** Does a block contain any text under the given style state? (:property() on blocks.) */
 function blockContainsProperty(
   node: BlockNode,
@@ -547,7 +494,6 @@ function matchNode(
   stateIndex?: Map<Node, TraversalState>,
   insideNoteIndex?: Map<Node, string | undefined>,
   noteScope?: boolean,
-  statusLines?: Set<Node>,
 ): boolean {
   if (part.tag === "property") {
     if (node.type !== "property") return false;
@@ -574,15 +520,13 @@ function matchNode(
     }
   }
 
-  // DL99/DL101: bare `text` is a CONTENT surface. A text node inside a private
-  // note matches only when the group is note-scoped (noteScope) or the part
-  // opts in with :note; and GUI-only `status` lines are never content. Text
-  // parts carrying :change()/:property() are on the STATE axis (DL93) and are
-  // unaffected by either rule.
+  // DL99: bare `text` is a CONTENT surface. A text node inside a private note
+  // matches only when the group is note-scoped (noteScope) or the part opts in
+  // with :note. Text parts carrying :change()/:property() are on the STATE
+  // axis (DL93) and are unaffected by either rule.
   if (part.tag === "text" && node.type === "text") {
     const hasState = part.pseudos?.some((p) => p.name === "change" || p.name === "property") ?? false;
     if (!hasState) {
-      if (statusLines?.has(node)) return false;
       const hasNote = part.pseudos?.some((p) => p.name === "note") ?? false;
       if (!hasNote) {
         const inside = insideNoteIndex?.get(node) ?? false;
@@ -629,7 +573,7 @@ function matchNode(
         // in the inner selector (e.g. :not(:contains('TODO'))).
         const innerPart = parseSelectorPart(p.argRaw, true);
         if (node.type === "block") {
-          const matches = findDescendants(node.children, innerPart, [], stateIndex, insideNoteIndex, noteScope, statusLines);
+          const matches = findDescendants(node.children, innerPart, [], stateIndex, insideNoteIndex, noteScope);
           if (matches.length > 0) return false;
         }
         // For non-block nodes, :not() always passes (there are no descendants to check).
@@ -700,7 +644,6 @@ function findDescendants(
   stateIndex?: Map<Node, TraversalState>,
   insideNoteIndex?: Map<Node, string | undefined>,
   noteScope?: boolean,
-  statusLines?: Set<Node>,
 ): Node[] {
   for (const node of nodes) {
     const state = stateIndex?.get(node) ?? createTraversalState();
@@ -712,11 +655,11 @@ function findDescendants(
     ) {
       continue;
     }
-    if (matchNode(node, part, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope, statusLines)) {
+    if (matchNode(node, part, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope)) {
       results.push(node);
     }
     if (node.type === "block") {
-      findDescendants(node.children, part, results, stateIndex, insideNoteIndex, noteScope, statusLines);
+      findDescendants(node.children, part, results, stateIndex, insideNoteIndex, noteScope);
     }
   }
 
@@ -811,7 +754,6 @@ function findFollowingSiblings(
   stateIndex?: Map<Node, TraversalState>,
   insideNoteIndex?: Map<Node, string | undefined>,
   noteScope?: boolean,
-  statusLines?: Set<Node>,
 ): Node[] {
   let ctx = parentIndex?.get(anchor);
   if (!ctx) {
@@ -824,12 +766,12 @@ function findFollowingSiblings(
   for (let i = ctx.index + 1; i < ctx.parentChildren.length; i++) {
     const sibling = ctx.parentChildren[i];
     const state = stateIndex?.get(sibling) ?? createTraversalState();
-    if (matchNode(sibling, part, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope, statusLines)) {
+    if (matchNode(sibling, part, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope)) {
       results.push(sibling);
     }
     // Also search descendants of sibling blocks (like space combinator does)
     if (sibling.type === "block") {
-      findDescendants(sibling.children, part, results, stateIndex, insideNoteIndex, noteScope, statusLines);
+      findDescendants(sibling.children, part, results, stateIndex, insideNoteIndex, noteScope);
     }
   }
   return results;
@@ -856,22 +798,21 @@ function subtreeHasMatchBeforeOrAt(
   stateIndex?: Map<Node, TraversalState>,
   insideNoteIndex?: Map<Node, string | undefined>,
   noteScope?: boolean,
-  statusLines?: Set<Node>,
 ): boolean | null {
   for (const child of block.children) {
     if (child === target) {
       // Target is the last node in the range — check it, then signal reached.
       const state = stateIndex?.get(child) ?? createTraversalState();
-      return matchNode(child, innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope, statusLines)
+      return matchNode(child, innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope)
         ? true
         : null;
     }
     const state = stateIndex?.get(child) ?? createTraversalState();
-    if (matchNode(child, innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope, statusLines)) return true;
+    if (matchNode(child, innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope)) return true;
     if (child.type === "block") {
       // A `null` (target reached) or `true` (match) result stops the scan —
       // later siblings come after the target in document order.
-      const sub = subtreeHasMatchBeforeOrAt(child as BlockNode, target, innerPart, stateIndex, insideNoteIndex, noteScope, statusLines);
+      const sub = subtreeHasMatchBeforeOrAt(child as BlockNode, target, innerPart, stateIndex, insideNoteIndex, noteScope);
       if (sub !== false) return sub;
     }
   }
@@ -884,8 +825,6 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
   const stateIndex = buildTraversalStateIndex(rootChildren);
   // DL99: one extra tree walk for the inside-note map (content visibility).
   const insideNoteIndex = buildInsideNoteMap(rootChildren);
-  // DL101: GUI-only `status` lines (first child of a collapsible inset).
-  const statusLines = buildStatusLineSet(rootChildren);
   
   // Pre-build parent index for O(1) sibling lookups when any sibling-related
   // feature is used (~ combinator, :adjacent(), :until()).
@@ -926,16 +865,16 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
       if (part.combinator === "sibling") {
         // ~ combinator: search following siblings of each current anchor
         for (const cn of currentNodes) {
-          nextNodes = nextNodes.concat(findFollowingSiblings(cn, rootChildren, part, parentIndex, stateIndex, insideNoteIndex, noteScope, statusLines));
+          nextNodes = nextNodes.concat(findFollowingSiblings(cn, rootChildren, part, parentIndex, stateIndex, insideNoteIndex, noteScope));
         }
         // Save current nodes as anchors for potential :until() filtering
         siblingAnchors = currentNodes;
       } else if (i === 0) {
-        nextNodes = findDescendants(currentNodes, part, [], stateIndex, insideNoteIndex, noteScope, statusLines);
+        nextNodes = findDescendants(currentNodes, part, [], stateIndex, insideNoteIndex, noteScope);
       } else {
         for (const cn of currentNodes) {
           if (cn.type === "block") {
-            nextNodes = nextNodes.concat(findDescendants(cn.children, part, [], stateIndex, insideNoteIndex, noteScope, statusLines));
+            nextNodes = nextNodes.concat(findDescendants(cn.children, part, [], stateIndex, insideNoteIndex, noteScope));
           }
         }
       }
@@ -982,7 +921,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
                 const prev = ctx.parentChildren[si];
                 if (prev.type === "text" || prev.type === "property") continue;
                 const state = stateIndex.get(prev) ?? createTraversalState();
-                return matchNode(prev, innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope, statusLines);
+                return matchNode(prev, innerPart, traversalRegion(state), state.properties, stateIndex, insideNoteIndex, noteScope);
               }
               return false;
             });
@@ -1019,8 +958,8 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
                 for (let i = 0; i < pc.length; i++) {
                   const sib = pc[i];
                   const st = stateIndex?.get(sib) ?? createTraversalState();
-                  if (matchNode(sib, innerPart, traversalRegion(st), st.properties, stateIndex, insideNoteIndex, noteScope, statusLines)) { isB[i] = true; continue; }
-                  if (sib.type === "block" && findDescendants((sib as BlockNode).children, innerPart, [], stateIndex, insideNoteIndex, noteScope, statusLines).length > 0) isB[i] = true;
+                  if (matchNode(sib, innerPart, traversalRegion(st), st.properties, stateIndex, insideNoteIndex, noteScope)) { isB[i] = true; continue; }
+                  if (sib.type === "block" && findDescendants((sib as BlockNode).children, innerPart, [], stateIndex, insideNoteIndex, noteScope).length > 0) isB[i] = true;
                 }
                 // Backward pass: firstBoundary[anchor] = first boundary strictly after it.
                 const anchorAt = new Map<number, { anchor: Node; index: number; firstBoundary: number }>();
@@ -1057,11 +996,11 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
                         if (list[best].firstBoundary < curCtx.index) return false;
                         // cur (the top-level sibling) itself,
                         const cState = stateIndex?.get(cur) ?? createTraversalState();
-                        if (matchNode(cur, innerPart, traversalRegion(cState), cState.properties, stateIndex, insideNoteIndex, noteScope, statusLines)) return false;
+                        if (matchNode(cur, innerPart, traversalRegion(cState), cState.properties, stateIndex, insideNoteIndex, noteScope)) return false;
                         // and cur's subtree up to and including n.  Reject only
                         // on an actual match (true); target-reached (null) keeps n.
                         if (cur !== n) {
-                          if (subtreeHasMatchBeforeOrAt(cur as BlockNode, n, innerPart, stateIndex, insideNoteIndex, noteScope, statusLines) === true) return false;
+                          if (subtreeHasMatchBeforeOrAt(cur as BlockNode, n, innerPart, stateIndex, insideNoteIndex, noteScope) === true) return false;
                         }
                         return true;
                       }
