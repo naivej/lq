@@ -156,6 +156,66 @@ Deno.test("CLI - bib search (no match)", { timeout: 10000 }, async () => {
 });
 
 // ---------------------------------------------------------------------------
+// 7b. bib on a direct .bib file (dev log 109)
+// ---------------------------------------------------------------------------
+const BIB_FIXTURE = "tests/fixtures/biblioExample.bib";
+
+Deno.test("CLI - bib on .bib file returns all citations", { timeout: 10000 }, async () => {
+  const result = await runCliTest(["bib", BIB_FIXTURE]);
+  const data = result.data as Array<Record<string, string>>;
+  assertEquals(data.length, 15);
+  const keys = data.map(c => c.key);
+  assert(keys.includes("Mena2000"));
+  assert(keys.includes("Abernethy2003"));
+  assertEquals(new Set(keys).size, keys.length);
+});
+
+Deno.test("CLI - bib on .bib file with --search", { timeout: 10000 }, async () => {
+  const result = await runCliTest(["bib", BIB_FIXTURE, "--search", "Mena"]);
+  const data = result.data as Array<Record<string, string>>;
+  assertEquals(data.length, 1);
+  assertEquals(data[0].key, "Mena2000");
+});
+
+Deno.test("CLI - bib on .bib file deduplicates keys", { timeout: 10000 }, async () => {
+  const tempFile = await Deno.makeTempFile({ suffix: ".bib" });
+  try {
+    await Deno.writeTextFile(tempFile,
+      "@ARTICLE{Dup2020,\n  author = {Alice Author},\n  title = {Duplicate key},\n  year = {2020}\n}\n" +
+      "@BOOK{Dup2020,\n  author = {Bob Author},\n  title = {Same key},\n  year = {2021}\n}\n" +
+      "@ARTICLE{Unique2022,\n  author = {Carol Author},\n  title = {Unique key},\n  year = {2022}\n}\n"
+    );
+    const result = await runCliTest(["bib", tempFile]);
+    const data = result.data as Array<Record<string, string>>;
+    assertEquals(data.length, 2);
+    assertEquals(data.map(c => c.key).sort(), ["Dup2020", "Unique2022"]);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - bib on .BIB file (case-insensitive)", { timeout: 10000 }, async () => {
+  const tempFile = await Deno.makeTempFile({ suffix: ".BIB" });
+  try {
+    await Deno.writeTextFile(tempFile,
+      "@ARTICLE{CaseTest2000,\n  author = {Case Author},\n  title = {Case test},\n  year = {2000}\n}\n"
+    );
+    const result = await runCliTest(["bib", tempFile]);
+    const data = result.data as Array<Record<string, string>>;
+    assertEquals(data.length, 1);
+    assertEquals(data[0].key, "CaseTest2000");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - bib rejects non-.lyx non-.bib files", { timeout: 10000 }, async () => {
+  const result = await runCliTest(["bib", "refs.txt"]);
+  assertEquals(result.code, "INVALID_EXTENSION");
+  assertStringIncludes(result.message!, ".lyx document or a .bib file");
+});
+
+// ---------------------------------------------------------------------------
 // 8. set command success
 // ---------------------------------------------------------------------------
 Deno.test("CLI - set command success", { timeout: 10000 }, async () => {

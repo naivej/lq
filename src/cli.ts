@@ -261,7 +261,8 @@ Usage:
   lq bib <file> [options]
 
 Arguments:
-  <file>      The path to the .lyx file.
+  <file>      The path to a .lyx document (its linked .bib files are resolved)
+              or a .bib file (parsed directly).
 
 Options:
   --search <term>           Filter citations by a case-insensitive substring match across
@@ -1088,6 +1089,47 @@ function assertTrackingHeader(ast: DocumentNode, trackChanges: boolean): void {
     "('lq init --track-changes off') to mutate without tracking.");
 }
 
+/**
+ * Shared bib-file pipeline (dev log 109, D4): read each bib path, parse with
+ * parseBibtex, concatenate, run the NO_BIBFILE check, deduplicate by key,
+ * apply the --search filter, and print. Used by both the .lyx route
+ * (inset-resolved file list) and the direct .bib route ([filePath]); it does
+ * not know where the paths came from.
+ */
+async function printBibFiles(bibPaths: string[], searchTerm: string | undefined): Promise<void> {
+  const citations: Citation[] = [];
+  let bibFileCount = 0;
+
+  for (const bibPath of bibPaths) {
+    bibFileCount++;
+    try {
+      const rawBib = await Deno.readTextFile(bibPath);
+      const parsed = parseBibtex(rawBib);
+      citations.push(...parsed);
+    } catch (e: Error | unknown) {
+      printError("BIB_READ_ERROR", `Could not read or parse bib file '${bibPath}': ${(e as Error).message}`);
+    }
+  }
+
+  if (bibFileCount === 0) {
+    printError("NO_BIBFILE", "No .bib files are referenced by the bibliography inset. Add a .bib file in LyX, then rerun 'lq bib'.");
+  }
+
+  // Deduplicate citations by key
+  let uniqueCitations = Array.from(new Map(citations.map(c => [c.key, c])).values());
+
+  // Filter by search term if provided
+  if (searchTerm) {
+    const terms = searchTerm.toLowerCase().split(/\s+/).filter(Boolean);
+    uniqueCitations = uniqueCitations.filter(c => {
+      const haystack = `${c.key} ${c.author} ${c.title} ${c.year}`.toLowerCase();
+      return terms.every(t => haystack.includes(t));
+    });
+  }
+
+  printJson({ data: uniqueCitations });
+}
+
 export async function runCli(args: string[]) {
 
   const parsedHelp = parseArgs(args, { boolean: ["help", "h"] });
@@ -1247,7 +1289,25 @@ export async function runCli(args: string[]) {
   }
   
   if (command !== "init" && !filePath.endsWith(".lyx")) {
-    printError("INVALID_EXTENSION", `Target file '${filePath}' must have a .lyx extension. Select the LyX document to edit.`);
+    const isDirectBib = command === "bib" && filePath.toLowerCase().endsWith(".bib");
+    if (!isDirectBib) {
+      const message = command === "bib"
+        ? `Target file '${filePath}' must be a .lyx document or a .bib file. Use 'lq bib refs.bib' to parse a .bib file directly.`
+        : `Target file '${filePath}' must have a .lyx extension. Select the LyX document to edit.`;
+      printError("INVALID_EXTENSION", message);
+    }
+  }
+
+  // Direct .bib path (dev log 109, D1-A): parse the .bib file directly with
+  // the same pipeline as the .lyx route, skipping the .lyx → inset → bibfiles
+  // resolution. Read-only; needs none of the statePaths/config/refresh/CST
+  // machinery below.
+  if (command === "bib" && filePath.toLowerCase().endsWith(".bib")) {
+    const bibArgs = selector ? [selector, ...restArgs] : restArgs;
+    const bibFlags = parseArgs(bibArgs, { string: ["search"] });
+    assertNoUnknownFlags(bibFlags, ["search"], "bib");
+    await printBibFiles([filePath], bibFlags["search"]);
+    return;
   }
 
   const statePaths = await resolveStatePaths();
@@ -1471,9 +1531,10 @@ function foldNegativeDepth(args: string[]): string[] {
       printError("NO_BIBLIO", "No bibliography inset was found. Inspect the document with 'lq read <file> \"inset[CommandInset bibtex]\"' or add a bibliography in LyX, then rerun 'lq bib'.");
     }
 
-    const citations: Citation[] = [];
+    // Resolve the .lyx → bibliography-inset → bibfiles list, then run the
+    // shared pipeline (read + parseBibtex + dedup + --search + print).
+    const bibPaths: string[] = [];
     const lyxDir = path.dirname(path.resolve(filePath));
-    let bibFileCount = 0;
 
     for (const node of bibtexNodes) {
       if (node.type === "block") {
@@ -1481,7 +1542,7 @@ function foldNegativeDepth(args: string[]): string[] {
         if (bibFilesLine && bibFilesLine.type === "text") {
           const value = bibFilesLine.text.replace(/^bibfiles\s+/, "");
           const files = value.split(',').map(f => f.trim().replace(/^"|"$/g, ''));
-          
+
           for (let bibFile of files) {
             // Skip files with a non-.bib extension (e.g. .bst style files).
             // Files without an extension follow LyX convention — append .bib.
@@ -1492,43 +1553,18 @@ function foldNegativeDepth(args: string[]): string[] {
             if (!hasExt) {
               bibFile += ".bib";
             }
-            bibFileCount++;
-            
+
             let bibPath = bibFile;
             if (!path.isAbsolute(bibPath)) {
               bibPath = path.join(lyxDir, bibPath);
             }
-
-            try {
-              const rawBib = await Deno.readTextFile(bibPath);
-              const parsed = parseBibtex(rawBib);
-              citations.push(...parsed);
-            } catch (e: Error | unknown) {
-              printError("BIB_READ_ERROR", `Could not read or parse bib file '${bibPath}': ${(e as Error).message}`);
-            }
+            bibPaths.push(bibPath);
           }
         }
       }
     }
 
-    if (bibFileCount === 0) {
-      printError("NO_BIBFILE", "No .bib files are referenced by the bibliography inset. Add a .bib file in LyX, then rerun 'lq bib'.");
-    }
-    
-    // Deduplicate citations by key
-    let uniqueCitations = Array.from(new Map(citations.map(c => [c.key, c])).values());
-
-    // Filter by search term if provided
-    const searchTerm: string | undefined = bibFlags["search"];
-    if (searchTerm) {
-      const terms = searchTerm.toLowerCase().split(/\s+/).filter(Boolean);
-      uniqueCitations = uniqueCitations.filter(c => {
-        const haystack = `${c.key} ${c.author} ${c.title} ${c.year}`.toLowerCase();
-        return terms.every(t => haystack.includes(t));
-      });
-    }
-
-    printJson({ data: uniqueCitations });
+    await printBibFiles(bibPaths, bibFlags["search"]);
     return;
   }
 

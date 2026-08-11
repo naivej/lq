@@ -88,8 +88,6 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
   - New config precedence is built-in defaults, then explicit options. Existing
     config precedence is existing values, then explicit options; omitted values
     persist, including `layoutsDir`.
-  - Successful init responses include `scope`, `configPath`, `action` (`read`,
-    `created`, or `updated`), and the configuration under `data`.
   - Local and global config, cache, and undo state are strictly isolated. A
     local cache miss or undo lookup never falls back to global state.
   - Local init and commands using an existing local `.lq` do not require a home
@@ -116,7 +114,7 @@ Private notes (`Note Note` / `Note Comment`) are for the researcher and are **in
     - `inlineProperties` — Valid inline property keys (family, lang, change_inserted, etc.)
     - `headingHierarchy` — Heading layouts with TocLevel
 - `lq bib <file> [--search <text>]`
-  - Extracts available citation keys from linked `.bib` bibliography files and outputs them as JSON.
+  - Extracts available citation keys and outputs them as JSON. `<file>` is a `.lyx` document (linked `.bib` files are resolved from its bibliography insets) or a `.bib` file (parsed directly).
   - Each citation includes `key`, `author`, `title`, and `year`.
   - `--search <text>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
 - `lq dump <file> [<selector>] [--depth <n>] [--toc]`
