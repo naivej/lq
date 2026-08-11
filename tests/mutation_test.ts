@@ -3495,6 +3495,120 @@ Deno.test("DL90 - split-after SPLIT_AMBIGUOUS resolved by :change(deleted)", { t
   }
 });
 
+// --- Dev log 108: multi-target split-after aggregate diagnostics ---
+// A broad selector matching several blocks must not abort with a per-target
+// message on the first offending block — it reports the exactly-once /
+// multiple / none breakdown and restates the contract as the hint (DL108 §4).
+
+const DL108_BODY_ONE_OF_THREE =
+  "\\begin_layout Standard\n" +
+  "Alpha\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "write here\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "Beta\n" +
+  "\\end_layout\n";
+
+const DL108_BODY_WORRYING_CASE =
+  "\\begin_layout Standard\n" +
+  "write once\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "write again\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "write and write twice\n" +
+  "\\end_layout\n";
+
+const DL108_BODY_MIXED =
+  "\\begin_layout Standard\n" +
+  "write and write twice\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "nothing here\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "write once\n" +
+  "\\end_layout\n";
+
+const DL108_BODY_ALL_ONCE =
+  "\\begin_layout Standard\n" +
+  "write first\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "write second\n" +
+  "\\end_layout\n";
+
+Deno.test("DL108 - multi-target no-match reports the aggregate breakdown (SPLIT_NO_MATCH)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl108_nomatch.lyx", DL108_BODY_ONE_OF_THREE, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["insert", tempFile, "layout[Standard]", "split-after", "write", "--text", "!"]);
+    assertEquals(result.code, "SPLIT_NO_MATCH");
+    assertStringIncludes(result.message!, "matched 3 blocks");
+    assertStringIncludes(result.message!, "appears exactly once in 1 of them");
+    assertStringIncludes(result.message!, "in none of the others");
+    assertStringIncludes(result.message!, "(tracked changes included)");
+    assertStringIncludes(result.message!, "appears exactly once in every matched block");
+    // Abort precedes the splice loop — nothing reaches disk.
+    assertEquals((await Deno.readTextFile(tempFile)).includes("!"), false, "abort must precede any splice");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL108 - phrase in every block, once in some and multiple times in others (SPLIT_AMBIGUOUS breakdown)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl108_amb.lyx", DL108_BODY_WORRYING_CASE, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["insert", tempFile, "layout[Standard]", "split-after", "write", "--text", "!"]);
+    assertEquals(result.code, "SPLIT_AMBIGUOUS");
+    assertStringIncludes(result.message!, "matched 3 blocks");
+    assertStringIncludes(result.message!, "appears exactly once in 2 of them");
+    assertStringIncludes(result.message!, "multiple times in 1");
+    assertStringIncludes(result.message!, "(tracked changes included)");
+    assertStringIncludes(result.message!, "appears exactly once in every matched block");
+    assertEquals((await Deno.readTextFile(tempFile)).includes("!"), false, "abort must precede any splice");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL108 - deterministic precedence: any 0-occurrence target wins over ambiguity", { timeout: 15000 }, async () => {
+  // The first block has 2 occurrences (loop order would fire SPLIT_AMBIGUOUS),
+  // but a later block has none — SPLIT_NO_MATCH must win regardless of order.
+  const tempFile = await writeTempLyx("temp_dl108_precedence.lyx", DL108_BODY_MIXED, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["insert", tempFile, "layout[Standard]", "split-after", "write", "--text", "!"]);
+    assertEquals(result.code, "SPLIT_NO_MATCH", "NO_MATCH wins when any target has 0");
+    assertStringIncludes(result.message!, "appears exactly once in 1 of them");
+    assertStringIncludes(result.message!, "multiple times in 1");
+    assertStringIncludes(result.message!, "in none of the others");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL108 - multi-target all exactly-once still splits every block", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl108_allonce.lyx", DL108_BODY_ALL_ONCE, "\\textclass article\n");
+  try {
+    const result = await runCliTest(["insert", tempFile, "layout[Standard]", "split-after", "write", "--text", "!"]);
+    assertEquals(result.code, undefined);
+    assertEquals(result.matched_nodes, 2, "both targets split");
+    const text = await Deno.readTextFile(tempFile);
+    assertEquals((text.match(/!/g) ?? []).length, 2, "payload lands in both blocks");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("DL91 - --find spanning an inset NO_MATCH names the blocker", { timeout: 15000 }, async () => {
   const body =
     "\\begin_layout Standard\n" +

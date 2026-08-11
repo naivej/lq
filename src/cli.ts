@@ -2336,6 +2336,67 @@ function foldNegativeDepth(args: string[]): string[] {
     const insertTs = trackChanges ? Math.floor(Date.now() / 1000).toString() : "";
     if (trackChanges) ensureTrackingChangesInHeader(ast);
 
+    // DL108: multi-target split-after pre-scan. When the selector matched
+    // several blocks, classify every target's in-scope occurrence count
+    // (0/1/>1) BEFORE any splice, so a no-match or ambiguity anywhere aborts
+    // with an aggregate message reporting the breakdown instead of the first
+    // offending block's per-target message. Single-target behavior is
+    // unchanged — the per-target checks inside the loop still run.
+    if (position === "split-after" && nodes.length > 1 && nodes.every((n) => n.type === "block")) {
+      const splitScope = buildScopePredicate(selector);
+      let k = 0; // targets with exactly one in-scope occurrence
+      let m = 0; // targets with more than one
+      let z = 0; // targets with none
+      let anyNoteScope = false;
+      for (const targetNode of nodes) {
+        const block = targetNode as BlockNode;
+        const blockCtx = findNodeContext(ast.children, targetNode);
+        const noteScope = selectorNoteScope(selector) ||
+          isInvisibleInset(block) ||
+          (blockCtx?.ancestorChain?.some((a) => isInvisibleInset(a)) ?? false);
+        anyNoteScope = anyNoteScope || noteScope;
+        const { segments, fullText } = concatenateTextNodes(block.children, {
+          recurseLayouts: true,
+          topLevelIsLayout: block.tag !== "inset",
+          includeDeleted: true,
+          inheritedState: traversalStateIndex.get(block),
+          skipInvisibleNotes: !noteScope,
+        });
+        let totalMatches = 0;
+        let pos = 0;
+        while ((pos = fullText.indexOf(splitMatch!, pos)) !== -1) {
+          const me = pos + splitMatch!.length;
+          if (!splitScope || matchSpanInScope(segments, pos, me, splitScope)) totalMatches++;
+          pos += splitMatch!.length;
+        }
+        if (totalMatches === 0) z++;
+        else if (totalMatches === 1) k++;
+        else m++;
+      }
+      if (z > 0 || m > 0) {
+        // Aggregate message (dev log 108 §4): report how many blocks the
+        // selector matched and the exactly-once / multiple / none breakdown,
+        // then restate the contract as the hint.
+        let occurrenceClause: string;
+        if (k === 0 && m === 0) {
+          occurrenceClause = "appears in none of them";
+        } else {
+          const parts: string[] = [];
+          if (k > 0) parts.push(`appears exactly once in ${k} of them`);
+          if (m > 0) parts.push(`multiple times in ${m}`);
+          if (z > 0) parts.push(`in none of the others`);
+          occurrenceClause = parts.join(" and ");
+        }
+        let msg = `split-after: the selector matched ${nodes.length} blocks; the substring '${splitMatch}' ${occurrenceClause} (tracked changes included). split-after only proceeds when the substring appears exactly once in every matched block.`;
+        // DL99: the phrase may exist only inside a private note (invisible
+        // to content matching by default) — name it so the agent can opt in.
+        if (z > 0 && !anyNoteScope && phraseOnlyInInvisibleContent(ast, splitMatch!)) {
+          msg += ` It exists only inside a private note (Note/Comment) — add ':note' to the selector to target note prose.`;
+        }
+        printError(z > 0 ? "SPLIT_NO_MATCH" : "SPLIT_AMBIGUOUS", msg);
+      }
+    }
+
     for (const targetNode of nodes) {
       let targetParentBlock: BlockNode | null = null;
       let ctx: { list: Node[]; index: number; parentBlock: BlockNode | null; ancestorChain: BlockNode[] } | null = null;
