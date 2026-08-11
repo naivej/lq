@@ -6,6 +6,7 @@ import {
   concatenateTextNodes,
   createTraversalState,
   enterTraversalState,
+  invisibleInsetType,
   isInvisibleInset,
   traversalRegion,
   type TraversalState,
@@ -415,18 +416,18 @@ export function selectorNoteScope(selectorStr: string): boolean {
  * note. One top-down tree walk; used by `:note` and the visible-only `text`
  * rule.
  */
-function buildInsideNoteMap(rootChildren: Node[]): Map<Node, boolean> {
-  const map = new Map<Node, boolean>();
-  function walk(children: Node[], insideNote: boolean): void {
+function buildInsideNoteMap(rootChildren: Node[]): Map<Node, string | undefined> {
+  const map = new Map<Node, string | undefined>();
+  function walk(children: Node[], insideNoteType: string | undefined): void {
     for (const c of children) {
-      map.set(c, insideNote);
+      map.set(c, insideNoteType);
       if (c.type === "block") {
         const b = c as BlockNode;
-        walk(b.children, insideNote || isInvisibleInset(b));
+        walk(b.children, invisibleInsetType(b) ?? insideNoteType);
       }
     }
   }
-  walk(rootChildren, false);
+  walk(rootChildren, undefined);
   return map;
 }
 
@@ -544,7 +545,7 @@ function matchNode(
   region?: "deleted" | "inserted" | "current",
   propState?: Record<string, string | undefined>,
   stateIndex?: Map<Node, TraversalState>,
-  insideNoteIndex?: Map<Node, boolean>,
+  insideNoteIndex?: Map<Node, string | undefined>,
   noteScope?: boolean,
   statusLines?: Set<Node>,
 ): boolean {
@@ -673,9 +674,18 @@ function matchNode(
 
       if (p.name === "note") {
         // DL99: matches a private note inset itself, or any node inside one.
-        const isNoteInset = node.type === "block" && isInvisibleInset(node as BlockNode);
-        const inside = insideNoteIndex?.get(node) ?? false;
-        if (!isNoteInset && !inside) return false;
+        // With an argument, :note(Note) / :note(Comment), the note type must
+        // match — the argument selects a specific private type.
+        const noteType = node.type === "block" && isInvisibleInset(node as BlockNode)
+          ? invisibleInsetType(node as BlockNode)
+          : insideNoteIndex?.get(node);
+        if (!noteType) return false;
+        if (p.argRaw !== undefined) {
+          let want = p.argRaw;
+          if (want.startsWith('"') && want.endsWith('"')) want = want.substring(1, want.length - 1);
+          if (want.startsWith("'") && want.endsWith("'")) want = want.substring(1, want.length - 1);
+          if (noteType !== want) return false;
+        }
       }
     }
   }
@@ -688,7 +698,7 @@ function findDescendants(
   part: SelectorPart,
   results: Node[] = [],
   stateIndex?: Map<Node, TraversalState>,
-  insideNoteIndex?: Map<Node, boolean>,
+  insideNoteIndex?: Map<Node, string | undefined>,
   noteScope?: boolean,
   statusLines?: Set<Node>,
 ): Node[] {
@@ -799,7 +809,7 @@ function findFollowingSiblings(
   part: SelectorPart,
   parentIndex?: Map<Node, { parentChildren: Node[]; index: number }>,
   stateIndex?: Map<Node, TraversalState>,
-  insideNoteIndex?: Map<Node, boolean>,
+  insideNoteIndex?: Map<Node, string | undefined>,
   noteScope?: boolean,
   statusLines?: Set<Node>,
 ): Node[] {
@@ -844,7 +854,7 @@ function subtreeHasMatchBeforeOrAt(
   target: Node,
   innerPart: SelectorPart,
   stateIndex?: Map<Node, TraversalState>,
-  insideNoteIndex?: Map<Node, boolean>,
+  insideNoteIndex?: Map<Node, string | undefined>,
   noteScope?: boolean,
   statusLines?: Set<Node>,
 ): boolean | null {

@@ -620,6 +620,26 @@ Deno.test("DL99 - Greyedout stays visible; :note(Greyedout) errors; :note(Commen
   assertEquals(query(ast, "layout:note(Comment)").length >= 1, true);
 });
 
+Deno.test("DL99 - :note(Note)/:note(Comment) filter by note type", () => {
+  const ast = dl99Ast();
+  // Bare :note matches both private types.
+  assertEquals(query(ast, "text:note").some(n => n.type === "text" && n.text.includes("PRIVATE SECRET")), true);
+  assertEquals(query(ast, "text:note").some(n => n.type === "text" && n.text.includes("COMMENT SECRET")), true);
+  // :note(Note) matches only Note Note prose.
+  assertEquals(query(ast, "text:note(Note)").some(n => n.type === "text" && n.text.includes("PRIVATE SECRET")), true);
+  assertEquals(query(ast, "text:note(Note)").some(n => n.type === "text" && n.text.includes("COMMENT SECRET")), false);
+  // :note(Comment) matches only Note Comment prose.
+  assertEquals(query(ast, "text:note(Comment)").some(n => n.type === "text" && n.text.includes("COMMENT SECRET")), true);
+  assertEquals(query(ast, "text:note(Comment)").some(n => n.type === "text" && n.text.includes("PRIVATE SECRET")), false);
+  // The note inset itself is matched by its own type.
+  assertEquals(query(ast, "inset[Note Note]:note(Note)").length, 1);
+  assertEquals(query(ast, "inset[Note Note]:note(Comment)").length, 0);
+  assertEquals(query(ast, "inset[Note Comment]:note(Comment)").length, 1);
+  // layout:note(Comment) selects the Plain Layout inside the Comment note only.
+  assertEquals(query(ast, "layout:note(Comment):contains('COMMENT SECRET')").length, 1);
+  assertEquals(query(ast, "layout:note(Comment):contains('PRIVATE SECRET')").length, 0);
+});
+
 Deno.test("DL99 - ~ sibling with a note in a following sibling's descendants", () => {
   const ast = dl99Ast();
   const sibText = dl99Text(query(ast, "layout[Section] ~ layout[Standard] text"));

@@ -3,15 +3,26 @@ import type { Node, BlockNode } from "./ast.ts";
 export type TextRegion = "deleted" | "inserted" | "current";
 
 /**
+ * The private-note type of an invisible-in-output note inset block — `Note`
+ * (Note Note) or `Comment` (Note Comment) — or undefined for anything else
+ * (Greyedout is visible output and is NOT included).
+ */
+export function invisibleInsetType(block: BlockNode): string | undefined {
+  if (block.type !== "block" || block.tag !== "inset") return undefined;
+  const args = (block.args ?? "").trim();
+  if (args === "Note Note") return "Note";
+  if (args === "Note Comment") return "Comment";
+  return undefined;
+}
+
+/**
  * Is this block a private (invisible-in-output) note inset — `Note Note` or
  * `Note Comment`? `Note Greyedout` is visible output and is NOT included.
  * Shared by the query engine and split-after so the private set lives in one
  * place (dev log 99 — F2 notes visibility).
  */
 export function isInvisibleInset(block: BlockNode): boolean {
-  if (block.type !== "block" || block.tag !== "inset") return false;
-  const args = (block.args ?? "").trim();
-  return args === "Note Note" || args === "Note Comment";
+  return invisibleInsetType(block) !== undefined;
 }
 
 export interface TraversalState {
