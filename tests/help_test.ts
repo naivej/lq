@@ -98,3 +98,36 @@ Deno.test("help catalog - grouped map covers all non-home pages", () => {
   assertEquals(grouped[1].pages.length, 6);
   assertEquals(grouped[2].pages.length, 9);
 });
+
+// --- Phase 1: content migration invariants (dev log 113) ---
+
+Deno.test("help catalog - every furtherReading target resolves to a real page", () => {
+  for (const p of HELP_PAGES) {
+    for (const link of p.furtherReading) {
+      assertEquals(
+        findPage(link.page) !== undefined,
+        true,
+        `${p.id} links to unknown page '${link.page}'`,
+      );
+      assertEquals(link.hint.length > 0, true);
+    }
+  }
+});
+
+Deno.test("help catalog - every page has at least one non-empty section", () => {
+  for (const p of HELP_PAGES) {
+    assertEquals(p.sections.length > 0, true, `${p.id} has no sections`);
+    for (const s of p.sections) {
+      assertEquals(s.heading.length > 0, true);
+      assertEquals(s.body.length > 0, true);
+    }
+  }
+});
+
+Deno.test("help catalog - furtherReading never links to itself", () => {
+  for (const p of HELP_PAGES) {
+    for (const link of p.furtherReading) {
+      assertEquals(link.page === p.id, false, `${p.id} links to itself`);
+    }
+  }
+});
