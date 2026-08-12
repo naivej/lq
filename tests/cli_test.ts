@@ -122,6 +122,85 @@ Deno.test("CLI - invalid --rich value fails", { timeout: 10000 }, async () => {
 });
 
 // ---------------------------------------------------------------------------
+// Phase 4 — comprehensive help navigation and content
+// ---------------------------------------------------------------------------
+const COMMAND_REACHES = ["init", "schema", "dump", "read", "bib", "set", "delete", "insert", "undo"];
+const TOPIC_REACHES = [
+  "cst",
+  "guarantees",
+  "state-scope",
+  "private-notes",
+  "insets",
+  "selectors",
+  "mutations",
+  "tracked-changes",
+];
+const ALL_REACHES = [...COMMAND_REACHES, ...TOPIC_REACHES];
+
+Deno.test("CLI - every help page is reachable via lq help <page>", { timeout: 30000 }, async () => {
+  for (const reach of COMMAND_REACHES) {
+    const { stdout } = await runCliRaw(["help", reach]);
+    assertStringIncludes(stdout, `lq ${reach}`, `command page ${reach} not reachable`);
+  }
+  for (const reach of TOPIC_REACHES) {
+    const { stdout } = await runCliRaw(["help", reach]);
+    assertStringIncludes(stdout, `lq help ${reach}`, `topic page ${reach} not reachable`);
+  }
+});
+
+Deno.test("CLI - lq <command> --help equals lq help <command> for every command", { timeout: 30000 }, async () => {
+  for (const cmd of COMMAND_REACHES) {
+    const viaHelp = await runCliRaw(["help", cmd]);
+    const viaFlag = await runCliRaw([cmd, "--help"]);
+    assertEquals(viaHelp.stdout, viaFlag.stdout, `${cmd} alias mismatch`);
+  }
+});
+
+Deno.test("CLI - home page map lists every page", { timeout: 10000 }, async () => {
+  const { stdout } = await runCliRaw(["help"]);
+  for (const reach of ALL_REACHES) {
+    assertStringIncludes(stdout, `lq help ${reach}`, `home map missing ${reach}`);
+  }
+});
+
+Deno.test("CLI - help output stays plain when stdout is not a terminal", { timeout: 30000 }, async () => {
+  const cases: string[][] = [["help"], ["help", "read"], ["help", "--rich=auto"], ["help", "--rich=never"]];
+  for (const args of cases) {
+    const { stdout } = await runCliRaw(args);
+    assertEquals(stdout.includes("\x1b["), false, `ANSI leaked for '${args.join(" ")}'`);
+  }
+});
+
+Deno.test("CLI - no help output references the removed lq selector --help", { timeout: 30000 }, async () => {
+  for (const reach of ALL_REACHES) {
+    const { stdout } = await runCliRaw(["help", reach]);
+    assertEquals(stdout.includes("lq selector --help"), false, `${reach} references lq selector --help`);
+  }
+});
+
+/** High-risk facts each command page must document (edge-case checklist). */
+const PAGE_FACTS: [string, string[]][] = [
+  ["init", ["--global", "--refresh", "auto-detect", "--track-changes", "save-reload"]],
+  ["schema", ["documentLayouts", "insetLayouts", "commandInsetSubtypes", "headingHierarchy", "textclass"]],
+  ["dump", ["--depth", "--toc", "TocLevel", "truncated"]],
+  ["read", ["--count", "--text-only", "change_deleted", "empty result"]],
+  ["bib", ["--search", ".bib"]],
+  ["set", ["--find", "--replace-all", "inset is rejected"]],
+  ["delete", ["subtree"]],
+  ["insert", ["split-after", "--raw-file", "exactly once", "prepend"]],
+  ["undo", ["Snapshot restore", "Replay undo", "substring"]],
+];
+
+Deno.test("CLI - each command page documents its high-risk facts", { timeout: 30000 }, async () => {
+  for (const [page, facts] of PAGE_FACTS) {
+    const { stdout } = await runCliRaw(["help", page]);
+    for (const fact of facts) {
+      assertStringIncludes(stdout, fact, `${page} missing '${fact}'`);
+    }
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 3. Invalid file extension
 // ---------------------------------------------------------------------------
 Deno.test("CLI - reject non-.lyx files", { timeout: 10000 }, async () => {
