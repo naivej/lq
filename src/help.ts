@@ -69,7 +69,7 @@ export const HELP_PAGES: HelpPage[] = [
     title: "built-in help home and page map",
     sections: [
       sec(
-        "About lq",
+        "",
         "lq is a standalone CLI for parsing, querying, and mutating LyX documents (`.lyx` files):\n\n" +
           "1. **Parse**: reads a `.lyx` file into a Concrete Syntax Tree (CST).\n" +
           "2. **Query**: queries the CST with a CSS-like selector engine to find specific nodes.\n" +

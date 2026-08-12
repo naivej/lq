@@ -123,8 +123,11 @@ Deno.test("help catalog - every page has at least one non-empty section", () => 
   for (const p of HELP_PAGES) {
     assertEquals(p.sections.length > 0, true, `${p.id} has no sections`);
     for (const s of p.sections) {
-      assertEquals(s.heading.length > 0, true);
       assertEquals(s.body.length > 0, true);
+      if (s.heading.length === 0) {
+        // Only the home intro renders bare (straight under the splash).
+        assertEquals(p.id, "home", `${p.id} has an empty section heading`);
+      }
     }
   }
 });
@@ -173,7 +176,20 @@ Deno.test("help render - rich=always is ANSI, stripped equals text, runs are bal
 
 Deno.test("help render - rich home shows the splash only in rich mode", () => {
   const home = findPage("home")!;
-  assertEquals(renderPageText(home).includes("a companion for LyX"), false);
-  assertEquals(renderPageRich(home).includes("a companion for LyX"), true);
+  assertEquals(renderPageText(home).includes("❯"), false);
+  assertEquals(renderPageRich(home).includes("❯"), true);
   assertEquals(renderPageRich(home).includes("\x1b["), true);
+});
+
+Deno.test("help render - home starts with the intro, straight after the splash", () => {
+  const home = findPage("home")!;
+  const text = renderPageText(home);
+  assertEquals(text.startsWith("lq is a standalone CLI"), true);
+  assertEquals(text.includes("About lq"), false);
+  assertEquals(text.includes("Help commands"), true);
+  const rich = renderPageRich(home);
+  const splashAt = rich.indexOf("❯");
+  const introAt = rich.indexOf("lq is a standalone CLI");
+  assertEquals(splashAt > -1, true);
+  assertEquals(introAt > splashAt, true);
 });

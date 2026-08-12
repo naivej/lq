@@ -29,13 +29,12 @@ const ANSI = {
 /** Safety markers emphasized in prose (bold). Deterministic, conservative. */
 const SAFETY_TERMS = ["rejected", "hard error", "writes nothing", "cannot", "never"];
 
-/** The home splash (brand palette), embedded for the compiled binary. */
+/** The home splash (brand palette), embedded for the compiled binary.
+ *  Keep in sync with brand/splash-ansi.sh. */
 const SPLASH =
   "\n" +
-  "  \x1b[38;5;208m❭\x1b[0m\x1b[38;5;214m❭\x1b[0m \x1b[38;5;230mlq\x1b[0m\x1b[38;5;33m▉\x1b[0m\n" +
-  "\n" +
-  "  \x1b[38;5;246m// a companion for LyX\n" +
-  "  // parse · query · mutate\x1b[0m\n";
+  "  \x1b[1;38;5;202m❯\x1b[0m\x1b[1;38;5;220m❯\x1b[0m \x1b[38;5;230mlq\x1b[0m\x1b[38;5;33m ▉\x1b[0m\n" +
+  "\n";
 
 /** Render a help page for stdout, honoring the `--rich` mode. */
 export function renderPage(page: HelpPage, rich: RichMode): string {
@@ -46,14 +45,19 @@ export function renderPage(page: HelpPage, rich: RichMode): string {
 /** Deterministic plain-text rendering of a help page — the floor. */
 export function renderPageText(page: HelpPage): string {
   const out: string[] = [];
-  const header = pageHeader(page);
-  out.push(header);
-  out.push("=".repeat(header.length));
+  if (page.id !== "home") {
+    const header = pageHeader(page);
+    out.push(header);
+    out.push("=".repeat(header.length));
+  }
 
-  for (const section of page.sections) {
-    out.push("");
-    out.push(section.heading);
-    out.push("-".repeat(section.heading.length));
+  for (let i = 0; i < page.sections.length; i++) {
+    const section = page.sections[i];
+    if (!(page.id === "home" && i === 0)) out.push("");
+    if (section.heading.length > 0) {
+      out.push(section.heading);
+      out.push("-".repeat(section.heading.length));
+    }
     out.push(toPlainText(section.body));
   }
 
@@ -68,14 +72,19 @@ export function renderPageRich(page: HelpPage): string {
   const out: string[] = [];
   if (page.id === "home") out.push(SPLASH);
 
-  const header = pageHeader(page);
-  out.push(`${ANSI.heading}${header}${ANSI.reset}`);
-  out.push("=".repeat(header.length));
+  if (page.id !== "home") {
+    const header = pageHeader(page);
+    out.push(`${ANSI.heading}${header}${ANSI.reset}`);
+    out.push("=".repeat(header.length));
+  }
 
-  for (const section of page.sections) {
-    out.push("");
-    out.push(`${ANSI.heading}${section.heading}${ANSI.reset}`);
-    out.push("-".repeat(section.heading.length));
+  for (let i = 0; i < page.sections.length; i++) {
+    const section = page.sections[i];
+    if (!(page.id === "home" && i === 0)) out.push("");
+    if (section.heading.length > 0) {
+      out.push(`${ANSI.heading}${section.heading}${ANSI.reset}`);
+      out.push("-".repeat(section.heading.length));
+    }
     out.push(toStyledText(section.body));
   }
 
