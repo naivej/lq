@@ -16,6 +16,7 @@ import {
 import { renderPage, renderPageRich, renderPageText } from "../src/help_render.ts";
 
 /** Remove ANSI escape sequences. */
+// deno-lint-ignore no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 
 /** The 18-page page map from the help draft, exactly. */
@@ -160,6 +161,7 @@ Deno.test("help render - rich=always is ANSI, stripped equals text, runs are bal
     const rich = renderPageRich(p);
     assertEquals(rich.includes("\x1b["), true, `${p.id} has no ANSI`);
     assertEquals(stripAnsi(rich), renderPageText(p), `${p.id} rich != text after strip`);
+    // deno-lint-ignore no-control-regex
     const escapes = rich.match(/\x1b\[[0-9;]*m/g) ?? [];
     for (let i = 0; i < escapes.length; i++) {
       if (escapes[i] !== "\x1b[0m") {
