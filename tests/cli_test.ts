@@ -223,10 +223,10 @@ Deno.test("CLI - missing selector recommends selector help", { timeout: 10000 },
   assertStringIncludes(result.message!, "lq help selectors");
 });
 
-Deno.test("CLI - unknown command recommends global help", { timeout: 10000 }, async () => {
+Deno.test("CLI - unknown command recommends home help", { timeout: 10000 }, async () => {
   const result = await runCliTest(["unknown", FIXTURE, "layout"]);
   assertEquals(result.code, "UNKNOWN_COMMAND");
-  assertStringIncludes(result.message!, "lq --help");
+  assertStringIncludes(result.message!, "lq help");
 });
 
 // ---------------------------------------------------------------------------

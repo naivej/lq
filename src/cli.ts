@@ -1091,7 +1091,7 @@ export async function runCli(args: string[]) {
   }
 
   if (cleanArgs.length < 2) {
-    printError("MISSING_ARGS", "Usage: lq <command> <file> [selector] [value]. Run 'lq --help' for details.");
+    printError("MISSING_ARGS", "Usage: lq <command> <file> [selector] [value]. Run 'lq help' for details.");
   }
 
   // Extract --count and --text-only flags early (before positional arg destructuring)
@@ -2929,5 +2929,5 @@ function foldNegativeDepth(args: string[]): string[] {
     return;
   }
 
-  printError("UNKNOWN_COMMAND", `Unknown command: ${command}. Run 'lq --help' to list available commands.`);
+  printError("UNKNOWN_COMMAND", `Unknown command: ${command}. Run 'lq help' for the page map.`);
 }
