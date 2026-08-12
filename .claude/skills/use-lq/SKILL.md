@@ -1,283 +1,189 @@
 ---
 name: use-lq
-description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use the LyX CLI to create, import, or export the documents.
+description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use the LyX CLI to create, import, or export the documents, and open the LyX GUI to establish a LyXServer connection.
 allowed-tools: Bash(lq *)
 ---
-# `lq` manual
 
-`lq` is a standalone CLI tool for parsing, querying, and mutating LyX documents (`.lyx` files).
+Run `lq help` for the authoritative manual of how to parse, query, and mutate LyX documents.
 
-At its core, `lq` operates on a simple lifecycle:
+# Mental model
 
-1. **Parse**: Reads a `.lyx` file and converts it into a structured Concrete Syntax Tree (CST). The parse is cached by file-content SHA-256 hash in the selected state scope's `cache/` directory — subsequent reads of the same file deserialize the CST from cache instead of re-parsing. After mutations, the cache is updated with the new CST (write-through), so even back-to-back edits hit the cache after the first parse.
-2. **Query**: Uses a CSS-like selector engine to find specific nodes in the CST.
-3. **Mutate**: Applies changes (insert, set, delete) to the matched nodes.
-4. **Serialize**: Converts the modified CST back into a perfectly formatted `.lyx` file.
+Three ideas carry the whole skill:
 
-## The LyX-to-CST Mapping
+- **Source, not LaTeX.** `lq` edits LyX syntax; LyX owns import, export, compilation, and PDF. Formula, ERT, and preamble payloads are opaque strings — target the inset, never parse the LaTeX inside it.
+- **Reach, not recursion.** A selector can *match* recursively while a mutation *changes* only what the command can reach. Layouts are flat siblings; text splits at every state boundary; inset metadata stays opaque. Never infer mutation reach from selector reach.
+- **Fail closed, reported separately.** A hard error exits non-zero and writes nothing. File outcome, LyXServer dispatch, and confirmation are separate facts; warnings can accompany a committed file.
 
-To effectively use the query engine, Users need to understand how LyX syntax maps to the CST nodes:
+# Operating loop
 
-- **Layout Nodes**: Structures like `\begin_layout Section` map to a `layout` tag with a `Section` argument. Users select them using `layout[Section]`.
-- **Inset Nodes**: Structures like `\begin_inset Formula` map to an `inset` tag with a `Formula` argument. Users select them using `inset[Formula]`.
-- **Property Nodes**: Single-line settings like `\textclass article` map to property nodes.
-- **Text Nodes**: The actual text content inside layouts and insets. The parser splits text at every property boundary (`\change_deleted`, `\emph on`, `\family roman`, …), so a text node never straddles a tracked-change region or an inline-style span. Regions and style spans are therefore always **runs of whole nodes** — never sub-node ranges.
-- **CST is flat**: Layouts like `Section` and `Standard` are **siblings** under the document body, not parent-child. Use a sibling range such as `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` to retrieve paragraphs following a heading.
+Run the same sequence for every task:
 
-## Query Engine
+1. **Set the task's author name first.** `lq init --author-name "<task>"` before the first mutation, and switch when the task changes. Replay undo is author-scoped, so each task's edits stay separately revertible. Name the task, not the human.
+2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, `layoutsDir`, `refresh`. Change configuration only with authorization. See the state-scope note below.
+3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → count (`--count`) → text-only on the narrowed result. Done when you can see the exact node(s) you will touch.
+4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not.
+5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.
+6. **Mutate minimally.** Every match is edited — `insert` duplicates its payload per match, broad `set`/`delete` can rewrite the document. Prefer a unique anchor and the smallest scale that expresses the workflow.
+7. **Verify immediately.** Read the same selector back (`--text-only` or `--count`), inspect the JSON warnings, review `git diff`; export with LyX for high-risk changes. Done when the read-back matches the intent and the diff shows only it.
 
-The query engine supports traversing the CST using CSS-like selector:
+Work inside Git when possible: stage before mutating, review the staged diff. There is no `--dry-run`; counts, schema, Git, and snapshots are the safety workflow. Rollback by intent:
 
-### One rule, two axes: visible vs private notes
+- `git restore` — broad rollback to a committed or staged state.
+- `lq undo <file>` — snapshot restore; reverts the last mutation as one unit, restoring deleted nodes.
+- `lq undo <file> <selector> [<substring>]` — replay; reverts the current author's tracked changes in matched blocks, so per-task rollback.
 
-Private notes (`Note Note` / `Note Comment`) are for the researcher and are **invisible to `lq` by default** — content matching sees the *visible document* unless you explicitly opt into notes. Every surface lives on exactly one axis:
+**State scope.** The nearest ancestor containing `.lq` supplies local config, cache, and undo; without one, `lq` uses the global `<host-native-home>/.lq`. Local state is isolated from global — use `lq init --global` only to inspect or change profile-wide defaults. After a local init, add the generated `.lq/` to `.gitignore` (config, cache, and undo snapshots are machine and workflow state, not source); version `.lq/config.json` only when the project wants to share configuration.
 
-| Axis | Surfaces | Default |
+# Query recipes
+
+| Goal | Command |
+| --- | --- |
+| See the document outline | `lq dump file.lyx --toc` |
+| Get section headings | `lq read file.lyx "layout[Section]" --text-only` |
+| Read body under a section | `lq read file.lyx "layout[Section]:contains(Theory):first ~ layout:until(layout[Section])" --text-only` |
+| Count a broad section range | `lq read file.lyx "layout[Section]:contains(Theory):first ~ layout:until(layout[Section])" --count` |
+| Find a paragraph | `lq read file.lyx "layout:contains(unique phrase)" --text-only` |
+| Find by multiple words | `lq read file.lyx "layout:contains(climate):contains(policy)" --text-only` |
+| Get the first paragraph in a section | `lq read file.lyx "layout[Section]:contains(Intro):first ~ layout[Standard]:until(layout[Section]):first" --text-only` |
+| Traverse multiple heading ranges | `lq read file.lyx "layout[Section] ~ layout[Subsection]:contains(Methods) ~ layout[Standard]:until(layout[Section])" --text-only` |
+| Exclude footnotes | `lq read file.lyx "layout[Standard]:not(inset[Foot]):until(layout[Section])" --text-only` |
+| Find a paragraph after a quote | `lq read file.lyx "layout[Standard]:until(layout[Section]):adjacent(layout[Quote])" --text-only` |
+| Check selector blast radius | `lq read file.lyx "<selector>" --count` |
+| Inspect exact CST | `lq read file.lyx "<precise selector>"` |
+| Deep-debug a node | `lq dump file.lyx "<selector>"` |
+| Find a citation key | `lq bib file.lyx --search "keyword"` |
+| Restore the last mutation | `lq undo file.lyx` |
+| Replay all direct tracked changes by the current author | `lq undo file.lyx "<block selector>"` |
+| Replay one matching tracked change | `lq undo file.lyx "<block selector>" "bad text"` |
+
+`Section` and `Standard` layouts are siblings under the body, not parent-child. For a section range, anchor on unique heading text and put `:first` before the `~`: `:contains()` is recursive, so a common heading word can anchor on an unintended node and expand the range. `:until()` is exclusive of its boundary, so the bare `~ layout:until(layout[Section])` form is safe once the anchor is unique; prefer the scoped `layout[Standard]:until(...)` form for paragraph ranges.
+
+Bare `text` takes no bracket argument (`text[...]` is rejected) and excludes private-note prose; `text:change(...)` and `text:property(...)` are the state-oriented views and can see note prose. An inset's content: `inset[...]` is the full raw content (parameters, `status`, prose); `inset[...] layout[...] --text-only` is the prose alone; a note's prose is `inset[Note Note] layout[Plain Layout] --text-only`.
+
+Token discipline for large documents: prefer `--count` over `--text-only` when a selector may match many nodes; use `dump --toc` instead of a full CST dump; use a unique anchor and `:first` rather than post-processing a large result in context; narrow a large `.bib` with `lq bib --search`, not a full dump.
+
+# Workflows by task
+
+Pick the workflow up front — it chooses the author name, the selection scale, and the mutation style.
+
+## Ground-up writing and autonomous drafting
+
+Structural work. Set the per-task author name so the whole draft is one review unit, check `lq schema`, and confirm the layouts directory resolves. Build the skeleton first — headings and blocks with `insert --layout` — then fill in with `--text`, `split-after`, and `--raw-file` for citations, references, and math. Verify each section with `read --text-only`; run a LyX export at milestones as the structural acceptance check.
+
+## Proofreading and surgical typo fixes
+
+The goal is the minimum footprint: read the exact phrase first, then replace only the changed substring. Two facts decide whether a surgical edit is practical:
+
+- `set --find` replaces the substring **everywhere it appears in the matched scope** — there is no "second occurrence" targeting. The minimal-touch trick works when the changed substring is unique in scope; a common word such as `the` is not.
+- The location is pinned by the selector scope and the match string together. The practical question is always: can I make the changed substring unique in scope, or do I accept a longer match?
+
+Pinning the location:
+
+1. **Pin the paragraph first with a unique phrase.** `lq read file.lyx "layout:contains(<unique phrase>)" --text-only`, adding `:first` or `:nth-match(n)` when the phrase repeats. `--find` then operates inside that paragraph only — never inside its nested insets.
+2. **A short substring is usually unique once the scope is one paragraph.** `12345` → `12435` by replacing just `34` with `43`:
+
+   ```bash
+   lq set file.lyx "layout:contains(12345)" "43" --find "34"
+   ```
+
+   With tracking on the diff is exactly `\change_inserted{43}\change_deleted{34}` — two digits, not a whole rewritten number.
+3. **When the word is common even inside the paragraph**, lengthen the match with context and replace the whole phrase (`--find "the quick brown" "the lazy brown"`); the changed unit is the phrase, not the word. Case-sensitivity is a free disambiguator (`the` ≠ `The`); scope with `:change(...)` / `:property(...)` when the ambiguity is between regions or style spans.
+4. **Read the occurrence count.** `--find` reports how many occurrences it matched in its result warning; a count larger than expected means the scope is too broad, and `lq undo file.lyx` reverts the over-match as one unit.
+5. **Respect the limits.** `--find` swaps one contiguous substring; a non-contiguous change needs two passes or a full `set` — which rewrites the whole matched node, never for a one-token fix. If the match stays ambiguous even with context, split the operation or edit the whole node.
+
+When every occurrence should change — a terminology or style pass over a section — every-match is the desired behavior, not a hazard; just confirm the scope with `--count` first.
+
+## Draft review and paragraph-level revision
+
+Review at the paragraph scale: read a section range (`layout[Section]:contains(Intro):first ~ layout[Standard]:until(layout[Section]) --text-only`) so prose, structure, and tracked markers stay together. Rewrite a paragraph with a tracked `set` on the layout — old paragraph in `change_deleted`, new in `change_inserted`, insets preserved — and use `--replace-all` only for deliberate structural rewrites. Because the review pass has its own `--author-name`, `lq undo file.lyx "<section selector>"` later reverts exactly the reviewer's edits and leaves the author's tracked changes intact; `lq read file.lyx "text:change(current), text:change(deleted)" --text-only` shows the diff-style review view.
+
+# Reference: reach and selection
+
+Ask four separate questions before an operation — the answers differ:
+
+1. What nodes can the selector match recursively?
+2. What text can the command search across node boundaries?
+3. What descendants can the mutation actually change?
+4. Which inset metadata or private-note boundaries stop it?
+
+Per-command reach:
+
+- `:contains()` and `:change()`/`:property()` inspect descendant prose; inset metadata stays opaque.
+- `set --find` crosses ordinary text-node boundaries but not inset boundaries, and does not edit nested inset prose. When `--find` reports a phrase that spans an inset, use a full `set` on the containing block (insets preserved as current content) or break it into per-node operations.
+- `insert split-after` reaches nested prose where supported, never inset metadata.
+- `delete` removes a selected structural subtree; tracked deletion has atomic-inset restrictions.
+- `lq undo <file>` restores the last snapshot by saved paths; selector replay scans only direct children of matched blocks.
+
+Choose the selection scale deliberately — the smallest scale that expresses the workflow without crossing a structure boundary. Too small loses the context needed for a valid mutation; too large changes unrelated descendants. The count is scale-dependent too: text counts runs, layouts count paragraphs, insets count objects. Always inspect one representative node at the selected scale before mutating many matches.
+
+| Workflow | Prefer | Why |
 |---|---|---|
-| **Content** — matching / extracting text | `:contains`, bare `text`, `--find`, `split-after`, `--text-only` | **visible-only**: private-note prose is excluded unless the selector is note-scoped |
-| **State** — matching change regions / styles | `:change`, `:property` | **visibility-blind**: always see note prose (a deleted note's text is still `:change(deleted)`) |
-| **Structure** — locating nodes / lossless views | `layout`/`inset`/`property` tags, `:first`/`:last`/`:nth-match`/`:not`/`:adjacent`/`:until`, `~`, `read`/`dump` CST, `--toc` | **lossless**: note nodes stay present; the TOC never surfaces note headings or note text |
+| Understand a paragraph's mixed content | `layout[Standard]` with `read --text-only` or `dump` | Shows text, tracked markers, properties, and inset markers together |
+| Fix a phrase in one paragraph | A unique layout selector plus `set --find` | Keeps the operation inside the paragraph while allowing substring replacement |
+| Fix only one tracked/style region | A containing block with `:change(...)` or `:property(...)`, or a `text:change(...)` selector for direct text work | Selects the state run without treating the marker itself as prose |
+| Change one document or inline property | `property[key]` | The property is the unit being changed; do not replace the containing paragraph |
+| Add or remove a whole footnote, citation, formula, or private note | `inset[...]` | The inset is the structural unit and its metadata must travel with it |
+| Edit prose inside a footnote or other text inset with tracking | `inset[Foot] layout[Plain Layout]` | Markers belong around layout prose, not inside inset metadata |
+| Replace a whole paragraph including its structure | `layout[...]` with explicit `--replace-all` | Deliberately operates on the block's direct children; broader than a text-only edit |
+| Read a whole section, heading through body | Union the heading anchor with its `layout[Standard]` sibling range: `layout[Section]:contains(Intro):first, layout[Section]:contains(Intro):first ~ layout[Standard]:until(layout[Section])` | Reads the heading and the paragraphs under it, stopping before the next heading |
+| Read or edit a section body | A unique heading anchor plus a sibling range using `~` and `:until()` | Layouts are siblings, not children of the heading |
+| Inspect a private note without touching visible content | `inset[Note Note] layout[Plain Layout]` or a `:note` selector | Explicitly opts into source content omitted from PDF output |
 
-**Default (content axis):** a phrase or text node inside a private note is invisible. To opt in, make the selector **note-scoped** — a `:note` part (`layout:note:contains('X')`, `text:note`) or an explicit `inset[Note …]` path (`inset[Note Note] layout[Plain Layout]`). Note-scope is per `,` group, so `text, text:note` is "visible text + note text". `Note Greyedout` is visible output and is never excluded.
+Private notes: leave `Note Note` and `Note Comment` alone unless the task concerns them. Content matching hides their prose by default; state predicates and structural selectors can still see them; `Note Greyedout` is visible output and is not private. Opt in with `:note` or an explicit note path. See `lq help private-notes`.
 
-- **Tag[args]** — substitute a concrete value from `lq schema <file>` (the names below are categories, not literal queries)
+# Reference: tracked changes
 
-  - `layout[Section]` — a document layout from `documentLayouts`
-  - `inset[Formula]` — an inset type from `insets`
-  - `inset[CommandInset citation]` — a CommandInset subtype from `commandInsetSubtypes`
-  - `property[family]` — an inline property key from `inlineProperties`
-  - `text` — text nodes (the actual text content; `text` has no `[args]` — `text[...]` is rejected).
-- **Combinators**
+See `lq help tracked-changes` for the marker model, regions, and the per-position overwrite model. Operational rules that prevent mistakes:
 
-  - Space for descendant. Example: `layout[Section] inset[Formula]` finds a Formula inside a Section.
-  - `~` for sibling. Example: `layout[Section] ~ layout[Standard]` matches all Standard layouts after a Section.
-  - `,` for OR group. Example: `layout[Section], inset[Foot]` matches all Section and Foot layouts.
-- **Chainable Pseudo-classes** — node predicates: each is a true/false filter that keeps only nodes matching its condition. Must follow a tag (e.g. `layout:contains("text")`, `inset:first`); chain several to narrow further.
+- **Inspect the regions before editing a reviewed document.** `text:change(current)`, `text:change(inserted)`, and `text:change(deleted)` name the three regions; scope the next operation instead of treating visually similar text as one region. Diff view: `lq read file.lyx "text:change(current), text:change(deleted)" --text-only`; add `text:change(inserted)` for pending insertions. `read`/`dump` annotate tracked text by default.
+- **Editing rejected text does not accept it.** The deleted text is preserved and the replacement becomes an adjacent new tracked change; the rejected region keeps its original author, so another author's replay-undo cannot resurrect it.
+- **Tracked markers live only inside a layout's text.** With tracking on, edits to preamble lines, `#` comments, header text, or inset metadata are rejected with `TRACKING_ERROR`; disable tracking for those surfaces or target layout text instead.
+- **Tracking off vs on for a plain `set`.** Off: the inline properties around the replaced text are dropped (no dead markup). On: they are kept inside `\change_deleted`, so rejecting the change restores the original formatting.
+- **Do not assume `--replace-all` always wipes.** A node with review history follows the per-position preservation path and keeps insets outside the new change pair.
+- **Undo has two modes by syntax.** `lq undo file.lyx` is snapshot restore (one level); `lq undo file.lyx "<block selector>" ["substring"]` is author-scoped replay over a block's direct children. Use replay for per-task rollback, snapshot for the whole last mutation. See `lq help undo`.
 
-  - `:first`, `:last`, `:nth-match(an+b/even/odd)`,
-  - `:contains("text")` searches recursively and case-sensitively node children for text. The phrase may be quoted with either `'...'` or `"..."`; prefer `"..."` when the phrase itself contains an apostrophe (e.g. `:contains("rock 'n' roll")`).
-  - `:not(selector)` excludes nodes that have any descendant matching the inner selector (e.g. `layout[Standard]:not(inset[Formula])` matches Standard layouts that do NOT contain a Formula).
-  - `:adjacent(selector)` matches nodes whose immediately preceding sibling matches the inner selector (skips text/property nodes).
-  - `:until(selector)` bounds a `~` sibling range — it rejects a candidate when any node matching the inner selector appears in document order between the anchor and the candidate (inclusive of the candidate), so the range stops before the next matching node: the boundary node itself and everything after it are excluded. Example: `layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section])` gives all Standard paragraphs in the Introduction section. **Caution:** `:contains` is recursive (matches body/tables too), so a common heading word explodes the range — anchor on unique heading text and run `--count` first (e.g. `layout[Section]:contains('Introduction'):first`).
-  - `:change(current|inserted|deleted)` matches nodes by the tracked-change region they sit in. Text nodes match by their effective region; layouts/insets match if they sit in that region of their parent OR contain text in it, recursively (so `inset:change(deleted)` and its nested `Plain Layout` prose are reachable inside a rejected run); property nodes never match. State is inherited through nested layouts/insets, while inset metadata remains opaque. Also scopes `set --find` / `split-after`.
-  - `:property(key[=value])` matches nodes under an inline style state: `text:property(emph)` (emphasis active), `text:property(family=roman)` (roman-family text). Text nodes match by their effective value (case-insensitive; `key` = any non-default value, `key=value` = a specific value); layouts/insets match if they sit in the parent's style span OR contain styled text, including nested layout prose. State is inherited through nested layouts/insets, but Foot status and CommandInset parameter lines remain opaque. Property nodes never match. Change keys are excluded — use `:change()` for regions. Also scopes `set --find` / `split-after`.
-  - `:note([Note|Comment])` matches nodes inside a **private** note (`Note Note` / `Note Comment`) or the note inset itself; bare `:note` = any private note, `:note(Note)` / `:note(Comment)` = a specific type, `:note(Greyedout)` is an error (Greyedout is visible output). A `:note` part (or an explicit `inset[Note …]` path like `inset[Note Note] layout[Plain Layout]`) makes the group's content matching see note prose — e.g. `layout:note:contains('X')`, `read f.lyx "text:note"`, `set f.lyx "layout:note" "new"`.
-  - **Scoping**: the selector's `:change()`/`:property()` predicates scope `set --find` / `split-after` — a match must be fully inside the selector's region/style combination: `,` OR-groups give a union (e.g. `text:change(current), text:change(deleted)` = current+deleted but not inserted — a diff view/edit), `:` chaining requires every predicate. An unscoped arm makes the scope see-all.
-  - Multiple pseudo-classes can be chained (e.g. `:first:contains("foo")`).
+# Domain recipes
 
-## Context-Aware Strict Validation
+## Cross-references
 
-`lq` features strict context validation. It will actively reject mutations that target core CST boundaries like `body` or `document`. It will also reject `insert` commands if you try to put a layout like `Section` inside an inset like `Foot`, or if you use an unrecognized layout. Unknown inset types produce a warning but do NOT block the insertion.
-
-## Commands
-
-### Config
-
-- State selection is per invocation. Starting at the current working directory,
-  `lq` finds the nearest ancestor containing a `.lq` directory. That directory
-  supplies local config, cache, and undo state. If none is found, `lq` uses the
-  global `<host-native-home>/.lq` state. The global home directory is not
-  treated as a local project marker.
-- `lq init [--global] [--layouts-dir <path>] [--refresh <mode>] [--track-changes <on|off>] [--max-cache-entries <n>] [--author-name <name>]`
-  - `lq init` selects the nearest local `.lq`; if none exists, it creates
-    `<current-working-directory>/.lq` and initializes its config.
-  - `lq init --global` selects only the global target. Every other init option
-    works the same way for local and global configuration.
-  - Without options, prints the selected config if it exists; otherwise creates
-    it with built-in defaults and auto-detected layouts.
-  - New config precedence is built-in defaults, then explicit options. Existing
-    config precedence is existing values, then explicit options; omitted values
-    persist, including `layoutsDir`.
-  - Local and global config, cache, and undo state are strictly isolated. A
-    local cache miss or undo lookup never falls back to global state.
-  - Local init and commands using an existing local `.lq` do not require a home
-    environment variable. Global fallback and `--global` require a resolvable
-    home directory.
-  - `--layouts-dir <path>`: If not provided, auto-detects the highest installed LyX version's layouts directory.
-  - `--refresh <mode>` configures automatic LyX buffer refresh in opened `.lyx` files after mutations:
-    - `none` (default): No refresh. LyX detects external changes via its own polling and prompts the user to reload.
-    - `reload`: Reload the buffer after `lq` writes. Fast, but discards unsaved in-LyX edits. Best-effort — warns if LyX is unreachable or the reload can't be confirmed (the file is still written).
-    - `save-reload`: Save unsaved edits first, then reload. Preserves everything. Aborts only when LyX is genuinely unreachable or reports a save error. On Windows, LyXserver can lose a command's response even though the command executed: an unconfirmed save proceeds with a warning instead of aborting, since the save was almost certainly applied.
-    - Setting a non-`none` mode makes `lq init` run a fast reachability probe and warn if LyXServer can't be reached (no socket found, or LyX is not accepting commands) — the warning doesn't abort init; enable LyXServer in LyX Preferences and restart LyX.
-  - `--track-changes <on|off>`: Enable or disable tracked changes for all mutation commands (default on).
-  - `--author-name <name>`: Set the author recorded on new tracked changes (default `"lq user"`).
-  - `--max-cache-entries <n>`: Set the maximum number (default 50) of cached parse results in the selected state's `cache/` directory. `<n>` must be a complete non-negative integer; malformed numeric prefixes are rejected.
-
-### Query
-
-- `lq schema <file>`
-  - Returns all valid elements for the document's class across 6 categories:
-    - `documentLayouts` — Styles valid for this class (e.g. Section, Standard)
-    - `insetLayouts` — Layouts valid inside insets (e.g. Plain Layout)
-    - `insets` — Valid inset types (e.g. Formula, Foot, CommandInset)
-    - `commandInsetSubtypes` — Valid CommandInset subtypes (citation, ref, label, etc.)
-    - `inlineProperties` — Valid inline property keys (family, lang, change_inserted, etc.)
-    - `headingHierarchy` — Heading layouts with TocLevel
-- `lq bib <file> [--search <text>]`
-  - Extracts available citation keys and outputs them as JSON. `<file>` is a `.lyx` document (linked `.bib` files are resolved from its bibliography insets) or a `.bib` file (parsed directly).
-  - Each citation includes `key`, `author`, `title`, and `year`.
-  - `--search <text>`: Filters citations by a case-insensitive substring match across all fields. Multiple words are AND'd. Use this to find the right key from a human description without dumping the entire `.bib` file.
-- `lq dump <file> [<selector>] [--depth <n>] [--toc]`
-  - Outputs the CST as a JSON document.
-  - Selector: Scope the dump to matching nodes. Omit to dump the whole document.
-  - `--toc`: Output a hierarchical heading tree (table of contents) instead of the raw CST. Heading levels come from the document class's `.layout` file (LaTeX's standard hierarchy as fallback). Mutually exclusive with `<selector>`.
-  - `--depth <n>`: Limit the output depth. Meaning depends on the mode:
-    - Raw CST (default or `<selector>`): parse-tree nesting — `--depth 0` = root node only, `--depth 1` = direct children, `--depth N` = descend N levels; omit `--depth` for full depth.
-    - With `--toc`: absolute LyX `TocLevel` up to any integer. Typically `--depth 1` = Sections in the document.
-- `lq read <file> <selector> [--count] [--text-only]`
-  - Read matched nodes. Default mode returns CST nodes.
-  - `--count`: Return match counts by type (`{"count": {"layout[Section]": 12, "layout[Standard]": 450}}`).
-  - `--text-only`: Output the text content of matched nodes with structural annotations. Each matched node gets a `tag[args]` prefix (e.g. `layout[Standard]`), and insets appear as inline markers (e.g. `inset[Foot]`).
-
-### Mutate
-
-- `lq set <file> <selector> <new text> [--replace-all] [--find <substring>]`
-  - Default behaviour: replaces text content within the targeted nodes while preserving insets as current content. Inline properties around the replaced text are dropped when tracking is off (no dead markup).
-  - With tracking on, the replacement follows LyX's per-position overwrite model: existing rejected (`\change_deleted`) regions are **preserved** (any author's rejected text stays rejected), the current author's own pending insertions are **consumed**, and plain text plus other authors' pending insertions are re-marked as the current author's deletion.
-  - `--replace-all`: Wipe all children and rebuild from scratch. **When the node already has tracked changes, the wipe is bounded by the per-position model** — the same preservation rules as a plain tracked `set` apply (other authors' rejected text stays rejected, the current author's pending inserts are consumed, insets are kept outside the change pair). The full wipe (insets included) only applies to nodes *without* existing tracked changes.
-  - `--find <substring>` (Mutually exclusive with `--replace-all`): Surgical, case-sensitive substring replacement — replace only the specified substring within the matched nodes' text. All occurrences are replaced. Scope to a tracked-change region (`:change(...)`) or inline style (`:property(...)`) via the selector; combine regions with `,` (union) and predicates with `:` chaining.
-- `lq delete <file> <selector>`
-  - Deletes the targeted nodes.
-- `lq undo <file> [<selector> [<substring>]]`
-  - **Snapshot restore** (`lq undo <file>`, no selector): consume the snapshot stored in the selected local or global state's `undo/` directory to revert the last (tracked or plain) mutation as one unit, even when the mutation deleted matched nodes. Reports one `changes` label per restored entry (`header` for the metadata restore on tracked mutations).
-  - Unlimited-level **Replay undo** (`lq undo <file> <selector> [<substring>]`): removes the tracked-change blocks in the matched nodes made by the current author — with `<substring>`, only blocks whose text contains it. Replay operates on **block** nodes (`layout`/`inset`) and scans only the matched block's direct children, so a tracked change nested inside an inset (e.g. a footnote's `Plain Layout`) needs the innermost-layout selector (e.g. `inset[Foot] layout[Plain Layout]`) to be reverted. A paired `set` edit is not restored as one unit; use snapshot restore for that. Can be reverted by snapshot restore.
-- `lq insert <file> <selector> <position> [helper]`
-  - Insert new blocks or properties relative to a selector.
-  - Positions:
-    - `before`/`after`: insert a layout as a **sibling** of the target.
-    - `prepend`/`append`: insert as **children** of the target, used for adding insets or text inside a layout.
-    - `split-after <text>`: split a **block target** (such as `layout` or `inset`) right after the exact, case-sensitive substring and insert new content at that point. A direct `text` selector is not a valid target; apply `:change(...)` or `:property(...)` to the containing block instead. All text is visible by default, including `\change_deleted`; scope with `:change(...)` or `:property(...)`. Recursive `split-after` reaches prose in nested layouts inside insets but never inset metadata. Only proceeds if the match appears **exactly once** in the matched text. For prose with citations, insert a text + citation-inset payload in one pass with `--raw-file`; for complex payloads, prefer two passes (skeleton first, then populate).
-  - Helpers (must provide exactly one generation strategy):
-    - `--layout <name> --text <content>`: Insert a layout block with the given name and text (e.g., --layout 'Standard' --text 'Hello world'). --text requires --layout, except with 'split-after' where bare --text inserts inline text.
-    - `--cite <key> [--cite-cmd <command>]`: Insert a citation inset. Valid `--cite-cmd` values: `cite`, `citet` (default), `citep`, `citeauthor`, `citeyear`, `citeyearpar`, `citebyear`, `footcite`, `autocite`, `citetitle`, `fullcite`, `footfullcite`, `nocite`, `keyonly`.
-    - `--ref <label> [--ref-cmd <command>]`: Insert a cross-reference inset. Valid `--ref-cmd` values: `ref` (default), `eqref`, `pageref`, `vpageref`, `vref`, `nameref`, `formatted`, `labelonly`.
-    - `--label <name>`: Insert a label inset (`CommandInset label`) with the given name.
-    - `--footnote <text>`: Insert a footnote inset (`Foot`) containing a `Plain Layout` with the given text. For complex footnotes (citations, cross-refs, math), use the two-pass approach: create the skeleton with `--footnote`, then populate with `split-after` and other helpers.
-    - `--raw-file <path>`: The power-user option for complex structures (e.g. nested formulas, batch insertion, non-default citation/reference params). Read raw LyX syntax from a file and parse it into CST nodes. Example: `\begin_layout Standard\nHello\n\end_layout`
-
-## Tracked Changes
-
-With `--track-changes on` (the default), mutations record a reviewable edit instead of silently rewriting text: old content goes in `\change_deleted`, new content in `\change_inserted`, and the header gains `\tracking_changes true` plus an `\author` entry.
-
-**How each mutation records a change:**
-- `set` — old text in `\change_deleted` + new in `\change_inserted`. On a full-text `set`, inline properties around the replaced text are kept **in place** inside `\change_deleted`, so rejecting the change restores the original formatting; insets are preserved as current content outside the change pair.
-- `delete` — matched nodes wrapped in `\change_deleted`.
-- `insert` — new content wrapped in `\change_inserted`.
-
-**Selecting tracked changes:** `:contains(...)` matches text inside `\change_deleted`.
-
-**Mutating tracked changes:** `--find` and `split-after` match `\change_deleted` as well. Editing rejected text inserts the replacement as a new tracked change adjacent to the deletion (never nested); the deleted text is preserved. Scope a find to specific regions/styles with the selector's `:change(...)`/`:property(...)` predicates (union via `,`, conjunction via `:` chaining) — e.g. `text:change(deleted), text:change(inserted)` for a diff-only view/edit.
-
-State-scoped edits also reach prose in nested layouts inside an atomically tracked inset. The enclosing change/style state is inherited, while inset metadata such as `status`, `LatexCommand`, and citation parameters is not matchable or editable as prose.
-
-Tracked markers are only valid inside a layout's text: with tracking on, edits to preamble lines, `#` comments, header text, or inset metadata are rejected with `TRACKING_ERROR` (disable tracking for those, or target layout text instead).
-
-**For tracked edits, target the child layout inside an inset** (e.g. `inset[Foot] layout[Plain Layout]`), not the inset node itself — tracked markers cannot wrap inset metadata, so mutating an inset directly is rejected with `TRACKING_ERROR`.
-
-**Viewing tracked changes:** `dump` and `read` (default) annotate text inside tracked blocks with `changeStatus` (`deleted`/`inserted`); `read --text-only` marks them inline as `\change_deleted{...}` / `\change_inserted{...}`.
-
-# Best Practices
-
-## Before you start
-
-1. **Run `lq init`**: Confirm configuration is set. Only change configuration with explicit user consent.
-2. **Stage before mutating**: `git stage`, then review with `git diff`. `git restore` reverts everything; Use `lq undo` for surgical restores. There is no `--dry-run` flag because git + undo cover the same need.
-3. **Treat LaTeX as Opaque**: `lq` abstracts away the LaTeX layer. Raw LaTeX (like equations inside `inset[Formula]`) is pure string data. Target the `inset[Formula]` node and replace its text content.
-4. **Connect LyXServer in save-reload mode**: see [`LyX_CLI.md`](LyX_CLI.md).
-
-## Smart query
-
-Start by checking the `.lyx` file size (`ls -l file.lyx`): `read`/`dump` JSON output is **several times larger** than the file (quotes, tags, and indentation on every line; a large table alone can be 100KB+), and 100KB+ output gets truncated by the terminal. For large files, zoom in *before* dumping — the patterns below are the first move, not the recovery.
-
-Navigate large documents strategically with a zoom-in approach with scoped queries:
-
-| You want to…                              | Use this                                                                                                                             |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| See the document outline                   | `lq dump <file> --toc`                                                                                                             |
-| Get just section headings                  | `lq read <file> "layout[Section]" --text-only`                                                                                     |
-| Read body text under a section             | `lq read <file> "layout[Section]:contains('Theory') ~ layout:until(layout[Section])" --text-only`                                  |
-| Read all body text under a section (broad) | `lq read <file> "layout[Section]:contains('Theory') ~ layout:until(layout[Section])" --count --text-only`                          |
-| Find a specific paragraph by content       | `lq read <file> "layout:contains('unique phrase')" --text-only`                                                                    |
-| Find a paragraph by multiple keywords      | `lq read <file> "layout:contains('climate'):contains('policy')" --text-only`                                                       |
-| Get first paragraph of a section           | `lq read <file> "layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section]):first" --text-only`                   |
-| Get body under a subsection (multi-hop ~)  | `lq read <file> "layout[Section] ~ layout[Subsection]:contains('Methods') ~ layout[Standard]:until(layout[Section])" --text-only`  |
-| Body text without footnotes in a section   | `lq read <file> "layout[Section] ~ layout[Standard]:not(inset[Foot]):until(layout[Section])" --text-only`                          |
-| Paragraph after a Quote, within a section  | `lq read <file> "layout[Section]:contains('Intro') ~ layout[Standard]:until(layout[Section]):adjacent(layout[Quote])" --text-only` |
-| Check selector blast radius & composition  | `lq read <file> "<selector>" --count`                                                                                              |
-| Inspect a specific node's CST              | `lq read <file> "<precise selector>"`                                                                                              |
-| Deep-debug a node's children               | `lq dump <file> "<selector>"`                                                                                                      |
-| Find a citation key                        | `lq bib <file> --search "keyword"`                                                                                                 |
-| Revert a tracked change                    | `lq undo <file> "<selector>" "bad text"`                                                                                      |
-| Revert the last mutation (whole)           | `lq undo <file>` (snapshot restore)                                                                                             |
-
-
-## Safe Mutation Workflow
-
-All mutations (`insert`, `set`, `delete`, `undo`) apply to all matched nodes of a selector. In particular,
-
-- `insert` duplicates the payload once for each matched node.
-- `set` and `delete` could wipe out the entire document with an overly broad selector (e.g., `layout[Standard]`).
-- If more than 1 node matches, a warning is issued. `undo` is the exception only for the selector-less snapshot form (`lq undo <file>`, which has no selector); replay warns like other mutations and the warning points at `lq undo <file>` to revert the replay.
-
-When modifying a document, follow this safe workflow:
-
-1. **Check Schema**: Documents vary wildly. A `Beamer` presentation allows `Frame` layouts, but an `article` does not. Run `lq schema <file>` to know what layouts and insets are legally allowed in the specific document.
-2. **Test Blast Radius**: Run `lq read <file> <selector> --count` first. The subtype breakdown (e.g. `{"layout[Section]": 8, "layout[Standard]": 120}`) tells you the composition — if you meant to target sections but see 120 Standard layouts, your selector is wrong. Narrow before mutating: anchor on unique text, take one with `:first`, and prefer `layout:contains(...)` + `--text-only` inspection over `text:` selectors.
-3. **Surgical edit** (typo fix, rephrase, word change): Use `lq set ... --find "old substring"`. **Keep `new_text` scoped to only the changed substring.** `--find` operates on individual text nodes; `new_text` is the literal replacement, not merged with surrounding nodes.
-4. **Verify the edit**: after any mutation, `lq read <file> "<selector>" --text-only` (or `--count`) confirms the result — the no-GUI diff substitute; `git diff` remains the general answer.
-
-## Cross-Referencing
-
-Before inserting a cross-reference, find the exact label names. Labels are stored as text inside `CommandInset label` insets. Query all labels with:
+Find the exact label first — labels are text inside `CommandInset label` blocks:
 
 ```bash
-lq read <file> "inset[CommandInset label]"
+lq read file.lyx "inset[CommandInset label]" --text-only
+lq read file.lyx "inset[CommandInset label]:contains(sec:)" --text-only
 ```
 
-To filter by prefix (e.g., all section labels):
+Then insert a standard reference:
 
 ```bash
-lq read <file> "inset[CommandInset label]:contains('sec:')"
+lq insert file.lyx "layout[Standard]:last" append --ref "sec:methods"
+lq insert file.lyx "layout[Standard]:last" append --ref "fig:results" --ref-cmd pageref
 ```
 
-**Complex references via `--raw-file`**: When you need non-default params (`plural`, `caps`, `noprefix`, `nolink`, `tuple`), write the full inset to a temp file:
-
-```
-\begin_inset CommandInset ref
-LatexCommand vref
-reference "sec:Section_label"
-plural "true"
-caps "false"
-noprefix "false"
-nolink "false"
-tuple "range"
-\end_inset
-```
+Non-default parameters (`plural`, `caps`, `tuple`, …) need a `--raw-file` payload; read the LyX syntax reference before constructing it.
 
 ## Citations
 
-Before inserting a citation, find citation keys with:
+Find keys with `lq bib` instead of dumping a bibliography file:
 
 ```bash
-lq bib <file> --search "author name"
+lq bib file.lyx --search "author topic"
 ```
 
-**Complex citations via `--raw-file`**: When you need `before`/`after` text, multi-citation lists, or `literal` mode, write the full inset to a temp file:
+Then insert a standard citation:
 
-```
-\begin_inset CommandInset citation
-LatexCommand citet
-key "Einstein1905"
-literal "false"
-after "p. 42"
-\end_inset
+```bash
+lq insert file.lyx "layout[Standard]:last" append --cite "Einstein1905"
+lq insert file.lyx "layout[Standard]:last" append --cite "Einstein1905" --cite-cmd citep
 ```
 
-## List Items (Itemize, Enumerate, Description): 
+Before/after text, multiple keys, or literal mode need a `--raw-file` payload.
 
-Each list item is a **separate paragraph** with the list layout. LyX uses repeated `\begin_layout Itemize` blocks (not `\item`, which is a LaTeX command LyX discards as an "Unknown token"):
+## Lists
 
-```
+List items are repeated layout blocks, not literal LaTeX `\item` commands:
+
+```lyx
 \begin_layout Itemize
 First bullet point.
 \end_layout
@@ -286,20 +192,61 @@ Second bullet point.
 \end_layout
 ```
 
-To insert multiple list items at once with `--raw-file`:
+Use `Enumerate` for numbered items and `Description` for description items; wrap nested lists in `\begin_deeper` / `\end_deeper` in a raw payload.
 
-```bash
-lq insert file.lyx "layout[Standard]:last" after --raw-file /tmp/items.raw
-```
+## Inserting new content
 
-For nested lists, use `\begin_deeper` / `\end_deeper` around the nested items. For enumerated lists, use `\begin_layout Enumerate` instead. For description lists, use `\begin_layout Description`.
+- `split-after` splits a block's prose: a direct `text` selector is not a valid target; apply `:change(...)` or `:property(...)` to the containing block instead.
+- `--text` requires `--layout`, except with `split-after` where bare `--text` inserts inline text.
+- For prose that should carry a citation, insert the text and the citation inset in one pass with a `--raw-file` payload.
+- For complex payloads, prefer two passes: create the skeleton first, then populate it. A complex footnote (citations, cross-refs, math) starts with `--footnote` and is then populated with `split-after` and other helpers.
 
-# LyX manual
+# Reference: editing inset and preamble data
 
-## LyX Syntax Reference
+Formula, ERT, and preamble payloads are opaque text nodes, not CST structure — except inline formulas, whose payload sits on the `\begin_inset` line itself.
 
-For raw inset syntax (citation params, cross-reference params, note inset subtypes), read [`LyX_syntax.md`](LyX_syntax.md). Load it when constructing `--raw-file` payloads or when you need exact parameter defaults for a citation or cross-reference inset.
+- **Inspect first.** `lq read file.lyx "inset[Formula] text"` shows a display formula's raw LaTeX lines; `lq read file.lyx "preamble"` shows the preamble. That is the ground truth for what a later `--find` can match.
+- **Display formulas and multi-line data are text.** With tracking off, `set --find` edits them surgically — one line is one text node, so keep the match within a line: `lq set file.lyx "inset[Formula]" "p_2" --find "p_{2}"`. The preamble works the same: `lq set file.lyx "preamble" "new@mail.org" --find "a@b.c"` touches only the address, not the surrounding `\newcommand`.
+- **Inline formulas are a whole-inset unit.** `\begin_inset Formula $...$` keeps its payload on the opening line, not in text nodes, so `--find` cannot reach it and `--replace-all` rewrites only the children, not that line. Change it by `delete` + `insert --raw-file` with the new formula line.
+- **Tracking is the constraint.** LyX does not track changes inside inset parameters or preamble lines. With tracking on, any `set` on an inset block is rejected with `TRACKING_ERROR`, and preamble and `#`-comment lines are not a trackable surface. Two reviewable-safe paths: disable tracking (`lq init --track-changes off`) for plain surgical data edits, or keep tracking on and `delete` the old inset + `insert` the new one.
+- **Inserting math has no generation helper.** Build the inset with `--raw-file`:
+
+  ```lyx
+  \begin_inset Formula $x^2 + y^2 = z^2$
+  \end_inset
+  ```
+
+  With tracking on the change markers wrap the whole inset, never inside its line. Generate ground-truth formula syntax with `tex2lyx` for complex math.
+- **Do not fabricate structural blocks with `insert`.** A `\begin_preamble ... \end_preamble` payload is not placed into the header; it lands in the body with markers LyX would read literally. Edit the existing preamble with `set --find` (tracking off) or add preamble content in LyX.
+- **ERT is a text inset.** Its payload lives in a nested `Plain Layout`, so tracked edits target `inset[ERT] layout[Plain Layout]`, and the raw `\backslash`-style content is that layout's prose.
+
+# LyX reference
+
+## LyX source syntax
+
+LyX's own source and serialization are the authoritative reference for edge cases — citation and cross-reference parameters, inset status lines, nested layouts and list depth, formula and ERT content, and exact CommandInset defaults. The LyX writer is more authoritative than a permissive reader: a lossless round trip should satisfy `serialize(parse(file_text)) === file_text`. Some conventions are cosmetic, but structural markers, inset status lines, header entries, and change regions must stay valid for LyX to open the file. Use `lq dump` on a LyX-generated fixture when the CST shape is uncertain; what looks like markup inside an ERT inset may be literal text.
+
+Raw LyX syntax references: [`LyX_inset.md`](LyX_inset.md) (insets), [`LyX_preamble.md`](LyX_preamble.md) (preamble).
 
 ## LyX CLI
 
-See [`LyX_CLI.md`](LyX_CLI.md) for how to create, import, and export LyX documents, and open the LyX GUI to establish a LyXServer connection using the LyX CLI.
+See [`LyX_CLI.md`](LyX_CLI.md) for creating, importing, exporting, and opening documents through the LyX binary.
+
+The acceptance check for a mutated document is a headless export, run with a timeout:
+
+```text
+"<LyX>/bin/lyx.exe" -e latex document.lyx
+```
+
+Exit 0 with an output file means LyX parsed the document; a non-zero exit or a lingering process usually means LyX opened a modal parse-error dialog. `lyx.exe` is normally not on `PATH` — find the installation root through `lq init`. Generate ground-truth syntax with `"<LyX>/bin/tex2lyx.exe" -f input.tex output.lyx`; prefer LyX-generated examples over hand-written syntax for unfamiliar structures.
+
+## LyXServer and refresh
+
+LyXServer is optional; disk is the primary integration point. For automatic refresh: `lq init --refresh reload` (fast, but discards unsaved in-LyX edits) or `lq init --refresh save-reload` (preserves unsaved edits; requires LyXServer and is slower). Use `save-reload` when LyX has unsaved work that must be preserved; use `none` for ordinary fast, Git-backed edits when LyX can reload externally changed files.
+
+On Windows, LyXServer's response delivery is unreliable: a lost confirmation does not mean the command failed — lq reports dispatched, confirmed, and errored separately and treats an unconfirmed refresh as a warning when it is safe to proceed. Connection checks: verify LyX is running and LyXServer enabled; check that the LyX user directory and pipe discovery path exist; use `lq init --refresh save-reload` as the fast reachability check; restart LyX if confirmations repeatedly disappear; keep only the intended `.lyx` buffer open on Windows. Do not diagnose repeated confirmation loss by adding more blocking reads — the server shares an output buffer and can execute a command while losing its response.
+
+## Real-LyX verification
+
+`deno test` verifies lq's parser, query engine, serializer, and mutation logic; only LyX confirms that a file is acceptable. For high-risk changes: copy the fixture or document to a temporary path, apply the mutation to the copy, export with LyX under a bounded process timeout, inspect the generated output, and record the result in the relevant development log. Never use a repository fixture as a scratch file for manual mutation tests; restore or delete temporary files after verification.
+
