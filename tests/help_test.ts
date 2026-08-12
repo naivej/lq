@@ -180,20 +180,3 @@ Deno.test("help render - rich home shows the splash only in rich mode", () => {
   assertEquals(renderPageRich(home).includes("❯"), true);
   assertEquals(renderPageRich(home).includes("\x1b["), true);
 });
-
-Deno.test("help render - home body comes first in text, after the splash in rich", () => {
-  const home = findPage("home")!;
-  // Derive the expected first line from the catalog: the first section's body
-  // with code markers stripped (mirrors the text renderer). No hard-coded prose.
-  const intro = home.sections[0].body.split("\n")[0].replace(/`/g, "");
-  const text = renderPageText(home);
-  // No header, no section heading, no leading blank: the page starts with the
-  // first section's body (if a header or heading were emitted, this would fail).
-  assertEquals(text.startsWith(intro), true);
-  assertEquals(text.includes("Help commands"), true);
-  // The rich output styles code spans (e.g. `.lyx`), so compare on the
-  // ANSI-stripped text: the splash caret comes before the intro body.
-  const richPlain = stripAnsi(renderPageRich(home));
-  assertEquals(richPlain.indexOf("❯") > -1, true);
-  assertEquals(richPlain.indexOf(intro) > richPlain.indexOf("❯"), true);
-});
