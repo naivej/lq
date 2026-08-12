@@ -13,6 +13,10 @@ import {
   groupedPages,
   reachOf,
 } from "../src/help.ts";
+import { renderPage, renderPageRich, renderPageText } from "../src/help_render.ts";
+
+/** Remove ANSI escape sequences. */
+const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 
 /** The 18-page page map from the help draft, exactly. */
 const EXPECTED_IDS = [
@@ -130,4 +134,44 @@ Deno.test("help catalog - furtherReading never links to itself", () => {
       assertEquals(link.page === p.id, false, `${p.id} links to itself`);
     }
   }
+});
+
+// --- Phase 3: renderers ---
+
+Deno.test("help render - text is deterministic, marker-free, and non-empty", () => {
+  for (const p of HELP_PAGES) {
+    const text = renderPageText(p);
+    assertEquals(text.length > 0, true, `${p.id} renders empty`);
+    assertEquals(text.includes("\x1b["), false, `${p.id} has ANSI`);
+    assertEquals(text.includes("`"), false, `${p.id} has stray backticks`);
+  }
+});
+
+Deno.test("help render - rich=never and rich=auto (non-TTY) equal the text floor", () => {
+  for (const p of HELP_PAGES) {
+    assertEquals(renderPage(p, "never"), renderPageText(p), `${p.id} never != text`);
+    assertEquals(renderPage(p, "auto"), renderPageText(p), `${p.id} auto (non-TTY) != text`);
+  }
+});
+
+Deno.test("help render - rich=always is ANSI, stripped equals text, runs are balanced", () => {
+  for (const p of HELP_PAGES) {
+    if (p.id === "home") continue; // home adds the rich-only splash
+    const rich = renderPageRich(p);
+    assertEquals(rich.includes("\x1b["), true, `${p.id} has no ANSI`);
+    assertEquals(stripAnsi(rich), renderPageText(p), `${p.id} rich != text after strip`);
+    const escapes = rich.match(/\x1b\[[0-9;]*m/g) ?? [];
+    for (let i = 0; i < escapes.length; i++) {
+      if (escapes[i] !== "\x1b[0m") {
+        assertEquals(escapes[i + 1], "\x1b[0m", `${p.id}: unbalanced ANSI after ${escapes[i]}`);
+      }
+    }
+  }
+});
+
+Deno.test("help render - rich home shows the splash only in rich mode", () => {
+  const home = findPage("home")!;
+  assertEquals(renderPageText(home).includes("a companion for LyX"), false);
+  assertEquals(renderPageRich(home).includes("a companion for LyX"), true);
+  assertEquals(renderPageRich(home).includes("\x1b["), true);
 });
