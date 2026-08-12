@@ -170,6 +170,8 @@ With `--track-changes on` (the default), mutations record a reviewable edit inst
 
 State-scoped edits also reach prose in nested layouts inside an atomically tracked inset. The enclosing change/style state is inherited, while inset metadata such as `status`, `LatexCommand`, and citation parameters is not matchable or editable as prose.
 
+Tracked markers are only valid inside a layout's text: with tracking on, edits to preamble lines, `#` comments, header text, or inset metadata are rejected with `TRACKING_ERROR` (disable tracking for those, or target layout text instead).
+
 **For tracked edits, target the child layout inside an inset** (e.g. `inset[Foot] layout[Plain Layout]`), not the inset node itself — tracked markers cannot wrap inset metadata, so mutating an inset directly is rejected with `TRACKING_ERROR`.
 
 **Viewing tracked changes:** `dump` and `read` (default) annotate text inside tracked blocks with `changeStatus` (`deleted`/`inserted`); `read --text-only` marks them inline as `\change_deleted{...}` / `\change_inserted{...}`.

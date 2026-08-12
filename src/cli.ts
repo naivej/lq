@@ -26,6 +26,7 @@ import {
   flattenNestedChanges,
   getHeader,
   hasDirectTrackedChanges,
+  hasLayoutAncestor,
   hasTrackedChanges,
   isChangeCloser,
   isChangeOpener,
@@ -1692,6 +1693,27 @@ function foldNegativeDepth(args: string[]): string[] {
   const unsafeNodes = nodes.filter(n => (n.type === "block" && (n.tag === "body" || n.tag === "header" || n.tag === "document")));
   if (unsafeNodes.length > 0 && ["set", "delete", "insert"].includes(command)) {
     printError("INVALID_CONTEXT", "Cannot mutate core document structures ('document', 'body', 'header') directly. Target specific layouts or properties instead.");
+  }
+
+  // DL111: LyX only accepts change markers inside a layout's text. A tracked
+  // mutation whose target is not in a layout's text stream (preamble lines,
+  // `#` comments, header text, inset status/parameter lines) would silently
+  // emit markers LyX reads as literal content — fail closed instead.
+  // Property targets are never wrapped (plain value edits; no-op deletes) and
+  // inset blocks have their own guards below, so both are skipped here.
+  if (trackChanges && ["set", "delete"].includes(command)) {
+    for (const node of nodes) {
+      if (node.type === "property") continue;
+      if (node.type === "block" && (node as BlockNode).tag === "inset") continue;
+      if (!hasLayoutAncestor(node, ast)) {
+        printError("TRACKING_ERROR",
+          `LyX cannot track changes to '${nodeLabel(node)}' — change markers are only valid inside a layout's text.\n` +
+          `Alternatives:\n` +
+          `  - Disable tracking first ('lq init --track-changes off'), then re-run this command\n` +
+          `  - Target text inside a layout paragraph instead\n` +
+          `Run 'lq read ${filePath} "${selector}" --count' to verify the target.`);
+      }
+    }
   }
 
   // Mutation commands below

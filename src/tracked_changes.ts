@@ -449,6 +449,40 @@ export function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted", au
   return result;
 }
 
+/**
+ * Is `node` inside a layout's *text stream* — the only place LyX accepts
+ * tracked-change markers (DL111)?
+ *
+ * For a text node this means its direct parent block is a `layout`; for a
+ * block, the block itself must be a `layout`. A `layout` higher up does NOT
+ * make inset metadata (status/parameter lines) or header text (preamble)
+ * trackable: LyX writes markers only in paragraph text, so the *nearest*
+ * container block decides. A naive "any layout ancestor" check would miss
+ * `inset[Foot]` metadata sitting inside `layout[Author]` (DL111 scope).
+ *
+ * Walks `root` to locate `node` (CST nodes carry no parent pointers). The
+ * boolean threaded through the walk means "the current children list is
+ * paragraph text of a layout"; entering an inset's children resets it, and
+ * entering a nested layout re-establishes it.
+ */
+export function hasLayoutAncestor(node: Node, root: DocumentNode | BlockNode): boolean {
+  const walk = (list: Node[], inLayoutText: boolean): boolean | undefined => {
+    for (const child of list) {
+      if (child === node) {
+        if (child.type === "block") return (child as BlockNode).tag === "layout";
+        return inLayoutText;
+      }
+      if (child.type === "block") {
+        const b = child as BlockNode;
+        const r = walk(b.children, b.tag === "layout");
+        if (r !== undefined) return r;
+      }
+    }
+    return undefined;
+  };
+  return walk(root.children, false) ?? false;
+}
+
 // --- Cross-text-node substring matching utilities ---
 
 /** Detect whether a block child (inset) sits between two matched segments.

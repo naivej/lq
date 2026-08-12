@@ -824,3 +824,121 @@ Deno.test("CLI - delete on top-level inset wraps markers around whole inset", { 
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
+
+// ---------------------------------------------------------------------------
+// 33. DL111 tracked edits on non-layout text — preamble / comments / inset metadata
+// ---------------------------------------------------------------------------
+// LyX only accepts change markers inside a layout's text. Tracked set/delete
+// on preamble lines, `#` comments, or inset metadata must fail closed
+// (TRACKING_ERROR) and leave the file byte-identical instead of emitting
+// markers LyX would read as literal content (dev log 111).
+
+async function assertFileByteIdentical(tempFile: string) {
+  const original = await Deno.readTextFile(FIXTURE);
+  assertEquals(await Deno.readTextFile(tempFile), original);
+}
+
+Deno.test("CLI - tracked set on preamble block rejects with TRACKING_ERROR", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl111_preamble_set.lyx");
+  try {
+    const result = await runCliWithConfig(["set", tempFile, "preamble", "X"], { trackChanges: true });
+    assertEquals(result.code, "TRACKING_ERROR");
+    assertStringIncludes(result.message!, "only valid inside a layout's text");
+    await assertFileByteIdentical(tempFile);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - tracked set --find on preamble text rejects with TRACKING_ERROR", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl111_preamble_find.lyx");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "preamble text", "X", "--find", "threeparttable"],
+      { trackChanges: true },
+    );
+    assertEquals(result.code, "TRACKING_ERROR");
+    assertStringIncludes(result.message!, "only valid inside a layout's text");
+    await assertFileByteIdentical(tempFile);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - tracked delete on preamble block rejects with TRACKING_ERROR", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl111_preamble_delete.lyx");
+  try {
+    const result = await runCliWithConfig(["delete", tempFile, "preamble"], { trackChanges: true });
+    assertEquals(result.code, "TRACKING_ERROR");
+    assertStringIncludes(result.message!, "only valid inside a layout's text");
+    await assertFileByteIdentical(tempFile);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - tracked set on root # comment rejects with TRACKING_ERROR", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl111_comment_set.lyx");
+  try {
+    const result = await runCliWithConfig(["set", tempFile, "text:first()", "X"], { trackChanges: true });
+    assertEquals(result.code, "TRACKING_ERROR");
+    assertStringIncludes(result.message!, "only valid inside a layout's text");
+    await assertFileByteIdentical(tempFile);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - tracked set --find on inset metadata text rejects with TRACKING_ERROR", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl111_inset_meta.lyx");
+  try {
+    // `inset[Foot] text` matches the `status collapsed` metadata line (a text
+    // node in the CST). It HAS a layout[Author] ancestor but is NOT layout
+    // text — a naive "any layout ancestor" check would miss it (dev log 111).
+    const result = await runCliWithConfig(
+      ["set", tempFile, "inset[Foot] text", "X", "--find", "status"],
+      { trackChanges: true },
+    );
+    assertEquals(result.code, "TRACKING_ERROR");
+    assertStringIncludes(result.message!, "only valid inside a layout's text");
+    await assertFileByteIdentical(tempFile);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - tracked set --find on header property still allowed (regression)", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl111_prop_ok.lyx");
+  try {
+    // Properties are plain value edits — never wrapped, never guarded (the
+    // guard must not fire on them: cli_test #20/#27 depend on this).
+    const result = await runCliWithConfig(
+      ["set", tempFile, "property[language]", "english", "--find", "british"],
+      { trackChanges: true },
+    );
+    assertEquals(result.code, undefined);
+    assertStringIncludes(await Deno.readTextFile(tempFile), "\\language english");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - untracked preamble set --find edits cleanly", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl111_preamble_untracked.lyx");
+  try {
+    // With tracking off, preamble edits remain surgical and marker-free.
+    const result = await runCliTest(["set", tempFile, "preamble", "X", "--find", "threeparttable"]);
+    assertEquals(result.code, undefined);
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\usepackage{X}");
+    // No change markers inside the preamble (the fixture itself has a
+    // deliberate tracked-change region in a Standard layout elsewhere).
+    const preamble = text.match(/\\begin_preamble[\s\S]*?\\end_preamble/);
+    assert(preamble !== null);
+    assertEquals(preamble[0].includes("\\change_deleted"), false);
+    assertEquals(preamble[0].includes("\\change_inserted"), false);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
