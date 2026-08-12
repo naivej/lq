@@ -37,19 +37,17 @@ Deno.test("Paths - prefer a native HOME override on Windows", () => {
 // ---------------------------------------------------------------------------
 // 1. Global help
 // ---------------------------------------------------------------------------
-Deno.test("CLI - global help", { timeout: 10000 }, async () => {
+Deno.test("CLI - global help is the home page map", { timeout: 10000 }, async () => {
   const { stdout } = await runCliRaw(["--help"]);
-  assertStringIncludes(stdout, "lq - A CLI Tool for Editing LyX Files");
-  assertStringIncludes(stdout, "read");
-  assertStringIncludes(stdout, "dump");
-  assertStringIncludes(stdout, "bib");
-  assertStringIncludes(stdout, "set");
-  assertStringIncludes(stdout, "delete");
-  assertStringIncludes(stdout, "schema");
-  assertStringIncludes(stdout, "insert");
-  assertStringIncludes(stdout, "init");
-  assertStringIncludes(stdout, "Commands return JSON. Help text is plain text.");
-  assertStringIncludes(stdout, "mark them deleted when tracking is enabled");
+  assertStringIncludes(stdout, "Help commands");
+  assertStringIncludes(stdout, "Pages");
+  assertStringIncludes(stdout, "model/");
+  assertStringIncludes(stdout, "concepts/");
+  assertStringIncludes(stdout, "commands/");
+  assertStringIncludes(stdout, "lq help read");
+  assertStringIncludes(stdout, "lq help set");
+  assertStringIncludes(stdout, "lq help undo");
+  assertStringIncludes(stdout, "lq help tracked-changes");
 });
 
 // ---------------------------------------------------------------------------
@@ -69,24 +67,58 @@ Deno.test("CLI - per-command help (insert)", { timeout: 10000 }, async () => {
   assertStringIncludes(stdout, "<file>");
   assertStringIncludes(stdout, "<selector>");
   assertStringIncludes(stdout, "<position>");
-  assertStringIncludes(stdout, "before");
   assertStringIncludes(stdout, "split-after");
-  assertStringIncludes(stdout, "target must be a");
-  assertStringIncludes(stdout, "block (such as layout or inset)");
+  assertStringIncludes(stdout, "exactly once");
+  assertStringIncludes(stdout, "prepend");
   assertStringIncludes(stdout, "--layout");
+  assertStringIncludes(stdout, "--cite");
+  assertStringIncludes(stdout, "--ref");
+  assertStringIncludes(stdout, "--label");
+  assertStringIncludes(stdout, "--footnote");
   assertStringIncludes(stdout, "--raw-file");
-  assertStringIncludes(stdout, "All text is visible");
-  assertStringIncludes(stdout, ":change(current|inserted|deleted)");
-  assertEquals(stdout.includes("Text inside \\change_deleted blocks is skipped."), false);
 });
 
 Deno.test("CLI - per-command help (init) documents strict cache count", { timeout: 10000 }, async () => {
   const { stdout } = await runCliRaw(["init", "--help"]);
+  assertStringIncludes(stdout, "lq init");
   assertStringIncludes(stdout, "--global");
   assertStringIncludes(stdout, "local");
-  assertStringIncludes(stdout, "configPath");
   assertStringIncludes(stdout, "--max-cache-entries");
-  assertStringIncludes(stdout, "complete non-negative integer");
+  assertStringIncludes(stdout, "non-negative integer");
+  assertStringIncludes(stdout, "--track-changes");
+  assertStringIncludes(stdout, "State scope");
+});
+
+// --- Help router (Phase 2) ---
+Deno.test("CLI - lq help opens the home page map", { timeout: 10000 }, async () => {
+  const { stdout } = await runCliRaw(["help"]);
+  assertStringIncludes(stdout, "Pages");
+  assertStringIncludes(stdout, "lq help selectors");
+});
+
+Deno.test("CLI - lq help <page> opens that page", { timeout: 10000 }, async () => {
+  const { stdout } = await runCliRaw(["help", "tracked-changes"]);
+  assertStringIncludes(stdout, "lq help tracked-changes");
+  assertStringIncludes(stdout, "change_deleted");
+  assertStringIncludes(stdout, "Further reading");
+});
+
+Deno.test("CLI - lq help <page> and lq <command> --help are equivalent", { timeout: 10000 }, async () => {
+  const viaHelp = await runCliRaw(["help", "read"]);
+  const viaFlag = await runCliRaw(["read", "--help"]);
+  assertEquals(viaHelp.stdout, viaFlag.stdout);
+});
+
+Deno.test("CLI - unknown help page fails with an actionable message", { timeout: 10000 }, async () => {
+  const result = await runCliTest(["help", "nope"]);
+  assertEquals(result.code, "UNKNOWN_HELP_PAGE");
+  assertStringIncludes(result.message!, "lq help");
+});
+
+Deno.test("CLI - invalid --rich value fails", { timeout: 10000 }, async () => {
+  const result = await runCliTest(["help", "--rich=bogus"]);
+  assertEquals(result.code, "INVALID_FLAG");
+  assertStringIncludes(result.message!, "--rich");
 });
 
 // ---------------------------------------------------------------------------
@@ -109,7 +141,7 @@ Deno.test("CLI - missing arguments", { timeout: 10000 }, async () => {
 Deno.test("CLI - missing selector recommends selector help", { timeout: 10000 }, async () => {
   const result = await runCliTest(["read", FIXTURE]);
   assertEquals(result.code, "MISSING_SELECTOR");
-  assertStringIncludes(result.message!, "lq selector --help");
+  assertStringIncludes(result.message!, "lq help selectors");
 });
 
 Deno.test("CLI - unknown command recommends global help", { timeout: 10000 }, async () => {

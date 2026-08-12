@@ -865,6 +865,9 @@ export const HELP_PAGES: HelpPage[] = [
   },
 ];
 
+/** The home page (id "home"), reached by `lq help` and `lq --help`. */
+export const HOME_PAGE: HelpPage = HELP_PAGES[0];
+
 const PAGES_BY_ID = new Map(HELP_PAGES.map((p) => [p.id, p]));
 
 /** Look up a page by its full prefixed ID, e.g. "commands/read". */

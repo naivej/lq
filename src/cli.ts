@@ -38,6 +38,8 @@ import {
 } from "./tracked_changes.ts";
 import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
+import { HOME_PAGE, findByAlias, findByReach } from "./help.ts";
+import { renderPage, type RichMode } from "./help_render.ts";
 
 /**
  * Map every text node in the tree to its parent children list + index.
@@ -150,279 +152,6 @@ const DEFAULT_HEADING_HIERARCHY = [
   { layout: "Paragraph", tocLevel: 4 },
   { layout: "Subparagraph", tocLevel: 5 },
 ];
-
-const HELP_TEXTS: Record<string, string> = {
-  global: `lq - A CLI Tool for Editing LyX Files
-
-Usage:
-  lq <command> [options] [arguments]
-
-Commands:
-  init      Initialize or view project-local configuration.
-  schema    Return a list of all semantically valid layouts.
-  dump      Output the document structure.
-  read      Output matching nodes and text content.
-  bib       Extract available citation keys from linked bibliography files.
-  set       Overwrite the targeted nodes with new text content.
-  delete    Delete targeted nodes or mark them deleted when tracking is enabled.
-  insert    Insert new blocks or properties relative to matched nodes.
-  undo      Revert edits: snapshot restore (1-level, any mutation) or
-            replay (unlimited, tracked changes by same author).
-
-Commands return JSON. Help text is plain text.
-Run 'lq <command> --help' for more information on a specific command.`,
-
-  selector: `lq selector - CSS-like selector to traverse the LyX document.
-
-Tag[args]: substitute a value from 'lq schema <file>' (these are categories, not literal queries)
-  layout[Section]              a document layout from documentLayouts
-  inset[Formula]               an inset type from insets
-  inset[CommandInset citation] a CommandInset subtype from commandInsetSubtypes
-  property[family]             an inline property key from inlineProperties
-  text                         text nodes (no [args])
-  
-Combinators:
-  Space for descendant  e.g. layout[Section] inset[Formula]
-  ~ for sibling         e.g. layout[Section] ~ layout[Standard]
-  , for OR group        e.g. layout[Section], inset[Foot]
-
-Chainable pseudo-classes: must follow a tag
-  :first, :last, :nth-match(an+b/even/odd),
-  :contains("text"),
-  :not(selector), :adjacent(selector),
-  :until(selector) bounds a ~ range to stop before the next matching sibling
-  :change(current|inserted|deleted)   nodes by tracked-change region
-  :property(key[=value])              nodes under an inline style state
-  :note([Note|Comment])               nodes inside a private note (Note Note /
-                                      Note Comment); opts into note prose
-  :change()/:property() in a selector also scope set --find / split-after
-  (union via ',', conjunction via ':' chaining)
-  One rule, two axes (private notes: Note Note / Note Comment are invisible
-  to content matching by default):
-    Content  (:contains, bare text, --find, split-after, --text-only):
-             visible-only by default — note prose excluded unless note-scoped
-             (:note part or an explicit inset[Note ...] path, per ',' group).
-    State    (:change, :property): always see note prose.
-    Structure(tags, ~, CST views, --toc): lossless; the TOC never surfaces
-             note headings or note text. Greyedout is visible output.`,
-
-  read: `lq read - Output matching nodes and text content.
-
-Usage:
-  lq read <file> <selector> [options]
-
-Arguments:
-  <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
-
-Options:
-  --count     Return match counts by type.
-  --text-only Output the text content of matched nodes with structural annotations.
-              Each matched node gets a tag[args] prefix (e.g. layout[Standard]),
-              with double newline between nodes.
-              Insets appear as inline markers (e.g. inset[Foot])
-              Tracked changes appear as '\change_deleted{...}' and '\change_inserted{...}' inline markers.
-
-Output is several times larger than the .lyx file (quotes, tags, indentation;
-100KB+ gets truncated by the terminal). Check the file size first (ls -l) and
-zoom in with a narrower selector for large documents.`,
-
-  dump: `lq dump - Output the document structure.
-
-Usage:
-  lq dump <file> [<selector>] [options]
-
-Arguments:
-  <file>      The path to the .lyx file.
-  <selector>  Scope the dump to nodes matching a CSS-like selector.
-              Omit to dump the whole document.
-              Run 'lq selector --help' for selector syntax.
-Options:
-  --toc       Output a hierarchical heading tree (table of contents) instead
-              of the raw document tree. Heading levels come from the document
-              class's .layout file (LaTeX's standard hierarchy as fallback).
-              Mutually exclusive with <selector>.
-  --depth <n> Limit the output depth. Meaning depends on the mode:
-              - Raw document tree (default or <selector>): parse-tree nesting.
-                0 = root node only; 1 = direct children; N = descend N levels.
-                Omit --depth for full depth.
-              - With --toc: absolute LyX TocLevel up to any integer
-                Typically --depth 1 = Sections in the document.
-
-Output is several times larger than the .lyx file (quotes, tags, indentation;
-100KB+ gets truncated by the terminal). Check the file size first (ls -l) and
-zoom in with a narrower selector for large documents.`,
-
-  bib: `lq bib - Search and extract citation keys from linked .bib bibliography files.
-
-Usage:
-  lq bib <file> [options]
-
-Arguments:
-  <file>      The path to a .lyx document (its linked .bib files are resolved)
-              or a .bib file (parsed directly).
-
-Options:
-  --search <term>           Filter citations by a case-insensitive substring match across
-                            key, author, title, and year. Multiple words are AND'd — all
-                            must match.
-                            Omit for all citations.`,
-
-  set: `lq set - Overwrite the targeted nodes with new text content.
-
-Usage:
-  lq set <file> <selector> <new text> [options]
-
-Arguments:
-  <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
-  <new text>  The new text content to apply to the matched nodes.
-
-lq set replaces text content and preserves insets as current content. Inline
-properties around the replaced text stay inside the change region when tracking
-is on (reject restores formatting) and are dropped when tracking is off (no dead
-markup).
-Options to change the default behaviour:
-  --find <substring>        Replace all case-sensitive occurrences of <substring> within the matched
-                            nodes' text, instead of replacing the entire text content.
-                            Matches ALL text by default, including \change_deleted
-                            (rejected) text; scope with :change(current|inserted|deleted)
-                            and/or :property(...) in the selector (union via ',',
-                            conjunction via ':' chaining).
-  --replace-all             Replace ALL children of the target block, not just text nodes.
-                            Mutually exclusive with --find.
-
-For tracked edits, target the child layout inside an inset (e.g.
-'inset[Foot] layout[Plain Layout]'), not the inset node itself — tracking
-markers cannot wrap inset metadata.`,
-
-  delete: `lq delete - Delete targeted nodes or mark them deleted when tracking is enabled.
-
-Usage:
-  lq delete <file> <selector>
-
-Arguments:
-  <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.`,
-
-  init: `lq init - Initialize or view project-local or global configuration.
-
-Usage:
-  lq init              Read the nearest local config, or create
-                       '<cwd>/.lq/config.json' when no local marker exists.
-  lq init --global     Read or update the global '~/.lq/config.json'.
-  lq init [options]    Create or update the selected config with the given options.
-
-State scope:
-  Commands use the nearest ancestor containing '.lq' as local state.
-  If no local marker exists, commands use the global '~/.lq' state.
-  Local config, cache, and undo are isolated from global state.
-  '--global' changes only the init target; all other options apply to either scope.
-
-Config precedence:
-  New config: built-in defaults, then explicit options.
-  Existing config: existing values, then explicit options; omitted values persist.
-  A no-option init with an existing config only reads it.
-
-Options:
-  --global                  Select the global '~/.lq' target for init.
-  --layouts-dir <path>     Set the LyX layouts directory.
-                           Default: auto-detect the highest installed version.
-  --refresh <mode>         Configure automatic refresh after mutations.
-                           none (default): No refresh. LyX detects changes via polling.
-                           reload:         Reload and discards unsaved in-LyX edits. 
-                                           Requires LyXServer.
-                           save-reload:    Save unsaved edits first before reload; aborts
-                                           if LyX is unreachable. Requires LyXServer.
-  --track-changes <on|off> Enable or disable tracked changes for all mutation commands.
-                           On (default): set wraps old text in \\change_deleted + new in \\change_inserted,
-                                         delete wraps removed nodes in \\change_deleted,
-                                         insert wraps new content in \\change_inserted.
-  --author-name <name>     Set the author name used in tracked changes.
-                           Default: "lq user".
-  --max-cache-entries <n>  Set the maximum number of file caches kept in the
-                           selected state's cache directory. Default: 50.
-                           Must be a complete non-negative integer.
-
-Successful init responses include 'scope', 'configPath', 'action' (read,
-created, or updated), and the configuration under 'data'.`,
-
-  schema: `lq schema - Return all semantically valid layouts across 6 categories:
-  documentLayouts      Styles valid for the document class (e.g. Section, Standard).
-  insetLayouts         Layouts valid inside insets (e.g. Plain Layout).
-  insets               Valid inset types (e.g. Formula, Foot, CommandInset).
-  commandInsetSubtypes Valid CommandInset subtypes (e.g. citation, ref, label).
-  inlineProperties     Valid inline property keys (e.g. family, lang).
-  headingHierarchy     Heading layouts with their TocLevel values.
-
-Usage:
-  lq schema <file>
-
-Arguments:
-  <file>      The path to the .lyx file.`,
-
-  insert: `lq insert - Insert new blocks or properties relative to a selector.
-
-Usage:
-  lq insert <file> <selector> <position> [options]
-
-Arguments:
-  <file>      The path to the .lyx file.
-  <selector>  A CSS-like selector. Run 'lq selector --help' for syntax.
-  <position>  Where to insert relative to each matched target:
-              'before' / 'after'   Insert as a sibling of the target (for layouts).
-              'prepend' / 'append' Insert as a child of the target (for insets, text
-                                   inside a layout, etc.).
-              'split-after <text>' Split the target's text right after the exact,
-                                   case-sensitive <text> substring and insert new
-                                   content at the split point. The target must be a
-                                   block (such as layout or inset), and <text> must
-                                   appear exactly once. All text is visible by default,
-                                   including \\change_deleted; scope with
-                                   :change(current|inserted|deleted) or :property(...).
-
-Options (provide exactly one generation helper):
-  --layout <name> --text <content>  Insert a layout block with the given name and text.
-                               --text requires --layout, except with 'split-after' 
-                               where bare --text inserts inline text.
-  --raw-file <path>            Read and parse raw LyX syntax from a file.
-                               Example: \\begin_layout Standard\\nHello\\n\\end_layout
-  --cite <key> [--cite-cmd <cmd>]  Insert a CommandInset citation for the given BibTeX key.
-                               --cite-cmd (optional): citet (default), cite, citep,
-                               citeauthor, citeyear, citeyearpar, citebyear,
-                               footcite, autocite, citetitle, fullcite, footfullcite,
-                               nocite, keyonly.
-  --ref <label> [--ref-cmd <cmd>]  Insert a CommandInset cross-reference for the given label.
-                               --ref-cmd (optional): ref (default), eqref,
-                               pageref, vpageref, vref, nameref, formatted, labelonly.
-  --label <name>               Insert a CommandInset label with the given name.
-  --footnote <text>            Insert a Foot inset containing a Plain Layout with <text>.`,
-
-  undo: `lq undo - Revert edits.
-
-Two modes, distinguished by the presence of a selector argument:
-
-  lq undo <file>                         Snapshot restore (1-level, any mutation).
-                                         Consume the snapshot stored in the selected
-                                         local or global state to revert the last
-                                         (tracked or plain) mutation as one unit,
-                                         even when the mutation deleted matched nodes.
-
-  lq undo <file> <selector> [<substring>]
-                                         Replay undo (unlimited levels).
-                                         Removes tracked-change blocks
-                                         (change_deleted/change_inserted) in the
-                                         matched nodes that were made by the current
-                                         author; with <substring>, only blocks whose
-                                         text contains it. A paired set edit is not
-                                         restored as one unit; use snapshot restore
-                                         for that. Can be reverted by snapshot restore.
-
-Arguments:
-  <file>       The path to the .lyx file.
-  <selector>   A CSS-like selector. Run 'lq selector --help' for syntax.
-  <substring>  Optional text inside the change_deleted or change_inserted block to revert.`
-};
 
 // Helper to load user config
 interface UserConfig {
@@ -1188,20 +917,54 @@ async function printBibFiles(bibPaths: string[], searchTerm: string | undefined)
   printJson({ data: uniqueCitations });
 }
 
+/** Parse `--rich=auto|always|never`. On an invalid value prints an error and returns undefined. */
+function parseRichFlag(value: string | undefined): RichMode | undefined {
+  if (value === undefined) return "auto";
+  if (value === "auto" || value === "always" || value === "never") return value;
+  printError("INVALID_FLAG", `--rich must be 'auto', 'always', or 'never', got: '${value}'`);
+  return undefined;
+}
+
+/** Render and print one help page. */
+function printHelpPage(page: (typeof HOME_PAGE), rich: RichMode): void {
+  console.log(renderPage(page, rich));
+}
+
 export async function runCli(args: string[]) {
 
-  const parsedHelp = parseArgs(args, { boolean: ["help", "h"] });
+  const parsedHelp = parseArgs(args, { boolean: ["help", "h"], string: ["rich"] });
   const showHelp = parsedHelp.help || parsedHelp.h;
-  
+
   // Clean command name (first non-flag argument)
   const commandArg = parsedHelp._[0] ? String(parsedHelp._[0]) : undefined;
 
-  if (showHelp || args.length === 0) {
-    if (commandArg && HELP_TEXTS[commandArg]) {
-      console.log(HELP_TEXTS[commandArg]);
+  // `lq help [<page>] [--rich=...]` — the help router.
+  if (commandArg === "help") {
+    const pageArg = parsedHelp._[1] ? String(parsedHelp._[1]) : undefined;
+    const rich = parseRichFlag(parsedHelp.rich as string | undefined);
+    if (rich === undefined) return;
+    if (pageArg === undefined) {
+      printHelpPage(HOME_PAGE, rich);
     } else {
-      console.log(HELP_TEXTS.global);
+      const page = findByReach(pageArg);
+      if (!page) {
+        printError(
+          "UNKNOWN_HELP_PAGE",
+          `Unknown help page '${pageArg}'. Run 'lq help' for the page map.`,
+        );
+      } else {
+        printHelpPage(page, rich);
+      }
     }
+    return;
+  }
+
+  // `lq --help`, `lq <command> --help`, or bare `lq` → home or the command page.
+  if (showHelp || args.length === 0) {
+    const rich = parseRichFlag(parsedHelp.rich as string | undefined);
+    if (rich === undefined) return;
+    const page = commandArg ? findByAlias(commandArg) ?? HOME_PAGE : HOME_PAGE;
+    printHelpPage(page, rich);
     return;
   }
 
@@ -1662,7 +1425,7 @@ function foldNegativeDepth(args: string[]): string[] {
   }
 
   if (!selector && command !== "undo") {
-    printError("MISSING_SELECTOR", "A CSS selector is required for this command. Run 'lq selector --help' for selector syntax.");
+    printError("MISSING_SELECTOR", "A CSS selector is required for this command. Run 'lq help selectors' for selector syntax.");
   }
 
   let nodes: Node[] = [];
