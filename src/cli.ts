@@ -1,6 +1,6 @@
 import { parse } from "./parser.ts";
 import { serialize } from "./serializer.ts";
-import { query, buildScopePredicate, buildTraversalStateIndex, selectorNoteScope, type ScopePredicate } from "./query.ts";
+import { query, parseSelector, buildScopePredicate, buildTraversalStateIndex, selectorNoteScope, type ScopePredicate, type SelectorPart } from "./query.ts";
 import { getSchemaForClass, INSET_LAYOUTS, INSETS, INLINE_PROPERTIES } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
@@ -591,6 +591,66 @@ function printError(code: string, message: string, details: Record<string, unkno
   _warnings.length = 0;
   printJson({ code, message, ...details });
   Deno.exit(1);
+}
+
+/**
+ * Selector mistake guards (DL112).
+ *
+ * 1. Misplaced `:until()`: `:until` only bounds the target of a `~` sibling
+ *    range (a part with combinator "sibling"). On any other part — no `~` in
+ *    the arm, or `:until` on the anchor side of `~` — the bound is silently
+ *    ignored and the command runs on the unbound match set. For mutations
+ *    that is a blast-radius mistake and fails closed; for read-only commands
+ *    it is a warning.
+ * 2. `text:contains(...)`: text nodes are never returned for `:contains`, so
+ *    this dead arm never matches in any command. Always a warning — a dead
+ *    arm in a union still leaves the other arms valid.
+ *
+ * The selector was already validated by query() before this runs, so
+ * parseSelector cannot throw here (the guard stays defensive). Inner
+ * selectors (inside :not(...) / :until(...) arguments) are intentionally not
+ * scanned (DL112 scope note).
+ *
+ * Returns a hint about a dead text:contains(...) arm ("" if none). The hint
+ * is also pushed as a warning, but warnings are dropped by printError when a
+ * command ends in NO_MATCH (errors never carry warnings — DL88 D4-a), so call
+ * sites append the return value to their NO_MATCH messages to keep the hint
+ * visible for every command.
+ */
+function warnSelectorMistakes(selector: string | undefined, isMutation: boolean): string {
+  if (!selector) return "";
+  let groups: SelectorPart[][];
+  try {
+    groups = parseSelector(selector);
+  } catch {
+    return ""; // already reported by query(); don't double-error
+  }
+  let deadTextContains = false;
+  for (const group of groups) {
+    for (const part of group) {
+      if (part.pseudos?.some((p) => p.name === "until") && part.combinator !== "sibling") {
+        const message =
+          `:until() has no effect here: it only bounds the target of a ~ sibling range. ` +
+          `Move it after a ~ (e.g. 'layout[A] ~ layout[B]:until(layout[C])') or drop ':until'.`;
+        if (isMutation) {
+          printError("INVALID_SELECTOR", message);
+        } else {
+          pushWarning(message);
+        }
+      }
+      if (part.tag === "text" && part.pseudos?.some((p) => p.name === "contains")) {
+        deadTextContains = true;
+        pushWarning(
+          `text:contains(...) never matches — text nodes are not returned for :contains. ` +
+          `Select the block instead (e.g. 'layout[Standard]:contains(foo)') or do content work ` +
+          `with 'set --find' / 'insert split-after'.`,
+        );
+      }
+    }
+  }
+  return deadTextContains
+    ? ` Note: 'text:contains(...)' never matches — select the block instead (e.g. 'layout[Standard]:contains(foo)') or use 'set --find' / 'insert split-after'.`
+    : "";
 }
 
 // Flags that only 'init' accepts. When a mutation command receives one, the
@@ -1469,8 +1529,11 @@ function foldNegativeDepth(args: string[]): string[] {
       } catch (e: Error | unknown) {
         printError("INVALID_SELECTOR", (e as Error).message);
       }
+      // DL112: dump is read-only — a misplaced :until() or a text:contains
+      // dead arm is a warning here, never a hard error.
+      const dumpHint = warnSelectorMistakes(dumpSelector, false);
       if (roots.length === 0) {
-        printError("NO_MATCH", `Selector matched no nodes to dump. Run 'lq read ${filePath} "${dumpSelector}" --count' to verify or refine the selector.`);
+        printError("NO_MATCH", `Selector matched no nodes to dump. Run 'lq read ${filePath} "${dumpSelector}" --count' to verify or refine the selector.${dumpHint}`);
       }
       useFullAst = false;
     }
@@ -1611,20 +1674,14 @@ function foldNegativeDepth(args: string[]): string[] {
     }
   }
 
-  // Warn if :until() is used without a preceding ~ combinator: without ~
-  // there is no anchor to check intervening siblings against, so :until()
-  // has no effect (all nodes pass through).
-  if (selector && selector.includes(":until(")) {
-    const parts = selector.split(",");
-    for (const part of parts) {
-      if (part.includes(":until(") && !part.includes("~")) {
-        pushWarning(
-          `:until() in "${part.trim()}" has no effect without a preceding ~ combinator. ` +
-          `Use 'layout[A] ~ layout[B]:until(layout[C])' to bound a sibling range.`
-        );
-      }
-    }
-  }
+  // Selector mistake guards (DL112): a misplaced :until() (no preceding ~,
+  // or on the anchor side of ~) is a silent no-op — warn for read-only
+  // commands, hard-error for mutations so the unbound set is never acted on;
+  // a text:contains(...) dead arm never matches — warn for every command.
+  const textContainsHint = warnSelectorMistakes(
+    selector,
+    command === "set" || command === "delete" || command === "insert" || command === "undo",
+  );
 
   if (command === "read") {
     const result: Record<string, unknown> = {} ;
@@ -1738,7 +1795,7 @@ function foldNegativeDepth(args: string[]): string[] {
     const findStr: string | undefined = typeof flags["find"] === "string" ? flags["find"] : undefined;
 
     if (nodes.length === 0) {
-      printError("NO_MATCH", `Selector matched no nodes to set. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
+      printError("NO_MATCH", `Selector matched no nodes to set. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.${textContainsHint}`);
     }
 
     // --find and --replace-all are mutually exclusive
@@ -2017,7 +2074,7 @@ function foldNegativeDepth(args: string[]): string[] {
         if (!selectorNoteScope(selector) && phraseOnlyInInvisibleContent(ast, findStr)) {
           noMatchMsg += ` The phrase exists only inside a private note (Note/Comment) — add ':note' to the selector to target note prose.`;
         }
-        printError("NO_MATCH", noMatchMsg);
+        printError("NO_MATCH", noMatchMsg + textContainsHint);
       }
       const plural = totalFindMatches === 1 ? "" : "s";
       const nodeList = Object.entries(findPerNode)
@@ -2047,7 +2104,7 @@ function foldNegativeDepth(args: string[]): string[] {
 
   if (command === "delete") {
     if (nodes.length === 0) {
-      printError("NO_MATCH", `Selector matched no nodes to delete. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
+      printError("NO_MATCH", `Selector matched no nodes to delete. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.${textContainsHint}`);
     }
 
     // Snapshot pre-mutation state for undo (before any mutation). Parent
@@ -2139,7 +2196,7 @@ function foldNegativeDepth(args: string[]): string[] {
 
   if (command === "insert") {
     if (nodes.length === 0) {
-      printError("NO_MATCH", `Selector matched no nodes to insert around. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
+      printError("NO_MATCH", `Selector matched no nodes to insert around. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.${textContainsHint}`);
     }
 
     const position = restArgs[0];
@@ -2885,7 +2942,7 @@ function foldNegativeDepth(args: string[]): string[] {
     // unlike snapshot restore, which addresses nodes by path and therefore
     // works even when the mutation removed the matched nodes entirely.
     if (nodes.length === 0) {
-      printError("NO_MATCH", `Selector matched no nodes to undo. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
+      printError("NO_MATCH", `Selector matched no nodes to undo. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.${textContainsHint}`);
     }
 
     // Snapshot pre-replay children so the replay itself can be undone —

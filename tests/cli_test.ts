@@ -942,3 +942,117 @@ Deno.test("CLI - untracked preamble set --find edits cleanly", { timeout: 10000 
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
+
+// ---------------------------------------------------------------------------
+// 32. DL112 — selector mistake guards: text:contains dead arm + misplaced
+//     :until() (anchorless or on the anchor side of ~)
+// ---------------------------------------------------------------------------
+Deno.test("DL112 - read warns on anchorless :until()", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl112_read_until.lyx");
+  try {
+    const result = await runCliTest(["read", tempFile, "layout[Standard]:until(layout[Section])", "--count"]);
+    assertEquals(result.code, undefined);
+    const warnings = result.warnings ?? [];
+    assert(warnings.some((w) => w.includes(":until()") && w.includes("has no effect")), JSON.stringify(warnings));
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL112 - dump warns on anchorless :until()", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl112_dump_until.lyx");
+  try {
+    const result = await runCliTest(["dump", tempFile, "layout[Standard]:until(layout[Section])"]);
+    assertEquals(result.code, undefined);
+    const warnings = result.warnings ?? [];
+    assert(warnings.some((w) => w.includes(":until()") && w.includes("has no effect")), JSON.stringify(warnings));
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL112 - set errors on anchorless :until(), file unchanged", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl112_set_until.lyx");
+  const before = await Deno.readTextFile(tempFile);
+  try {
+    const result = await runCliTest(["set", tempFile, "layout[Standard]:until(layout[Section])", "X"]);
+    assertEquals(result.code, "INVALID_SELECTOR");
+    assertStringIncludes(result.message!, "has no effect");
+    // Fail-closed: no commit.
+    assertEquals(await Deno.readTextFile(tempFile), before);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL112 - undo replay errors on anchorless :until()", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl112_undo_until.lyx");
+  try {
+    const result = await runCliTest(["undo", tempFile, "layout[Standard]:until(layout[Section])"]);
+    assertEquals(result.code, "INVALID_SELECTOR");
+    assertStringIncludes(result.message!, "has no effect");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL112 - anchor-side :until() warns on read, errors on set", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl112_anchor_until.lyx");
+  const before = await Deno.readTextFile(tempFile);
+  try {
+    const read = await runCliTest(["read", tempFile, "layout[Standard]:until(layout[Section]) ~ layout[Standard]", "--count"]);
+    assertEquals(read.code, undefined);
+    const warnings = read.warnings ?? [];
+    assert(warnings.some((w) => w.includes(":until()") && w.includes("has no effect")), JSON.stringify(warnings));
+
+    const set = await runCliTest(["set", tempFile, "layout[Standard]:until(layout[Section]) ~ layout[Standard]", "X"]);
+    assertEquals(set.code, "INVALID_SELECTOR");
+    assertEquals(await Deno.readTextFile(tempFile), before);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL112 - text:contains(x) warns on read", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl112_text_contains.lyx");
+  try {
+    const result = await runCliTest(["read", tempFile, "text:contains(world)"]);
+    assertEquals(result.code, undefined);
+    const warnings = result.warnings ?? [];
+    assert(warnings.some((w) => w.includes("text:contains") && w.includes("never matches")), JSON.stringify(warnings));
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL112 - set with text:contains(x) NO_MATCH carries the hint", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl112_set_text_contains.lyx");
+  const before = await Deno.readTextFile(tempFile);
+  try {
+    const result = await runCliTest(["set", tempFile, "text:contains(world)", "X"]);
+    assertEquals(result.code, "NO_MATCH");
+    assertStringIncludes(result.message!, "text:contains");
+    assertEquals(await Deno.readTextFile(tempFile), before);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL112 - negative: layout:contains(text) and bounded :until() do not warn", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl112_negative.lyx");
+  try {
+    // The word "text" inside the argument must not trigger the dead-arm check.
+    const a = await runCliTest(["read", tempFile, "layout:contains(text)"]);
+    assertEquals(a.code, undefined);
+    assertEquals((a.warnings ?? []).filter((w) => w.includes("text:contains")), []);
+
+    // The valid bounded form must neither warn nor error.
+    const b = await runCliTest(["read", tempFile, "layout[Section]:first ~ layout[Standard]:until(layout[Section])", "--count"]);
+    assertEquals(b.code, undefined);
+    const warnings = b.warnings ?? [];
+    assert(!warnings.some((w) => w.includes("has no effect")), JSON.stringify(warnings));
+    assert(!warnings.some((w) => w.includes("text:contains")), JSON.stringify(warnings));
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
