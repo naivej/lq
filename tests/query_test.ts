@@ -1,7 +1,10 @@
 import { assertEquals } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import { parse } from "../src/parser.ts";
 import { query, parseSelector } from "../src/query.ts";
 import { TextNode } from "../src/ast.ts";
+
+const FIXTURE = fromFileUrl(new URL("./fixtures/my_template.lyx", import.meta.url));
 
 Deno.test("Selector Parsing", () => {
   // Comma inside :contains() should NOT split into multiple selector groups
@@ -22,7 +25,7 @@ Deno.test("Selector Parsing", () => {
 });
 
 Deno.test("Query Engine on LyX Document", async () => {
-  const text = await Deno.readTextFile("tests/fixtures/my_template.lyx");
+  const text = await Deno.readTextFile(FIXTURE);
   const ast = parse(text);
 
   // Test 1: Query single properties
@@ -173,7 +176,7 @@ Deno.test("Query Engine on LyX Document", async () => {
 // --- Dev log 115: :not(:contains(...)) sees a block's own text ---
 
 Deno.test("DL115 - :contains/:not(:contains) partition; own text included", async () => {
-  const text = await Deno.readTextFile("tests/fixtures/my_template.lyx");
+  const text = await Deno.readTextFile(FIXTURE);
   const ast = parse(text);
   const allLayouts = query(ast, "layout");
 

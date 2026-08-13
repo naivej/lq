@@ -1,14 +1,16 @@
 /**
  * lq bench — Performance benchmarks for all lq CLI commands.
- * Run from the lq/ directory: deno bench -A --no-check tests/bench.ts
+ * Run from the repo root or lq/: deno bench -A --no-check tests/bench.ts
  *
  * Uses Deno.bench() for built-in warmup, statistical analysis, and reporting.
  * Mutation commands use temp file copies to avoid polluting fixtures.
  */
 
-// All paths are relative to cwd (lq/), matching the convention in mutation_test.ts
-const MAIN_TS = "main.ts";
-const FIXTURES = "tests/fixtures";
+import { fromFileUrl } from "@std/path";
+
+// Module-relative (cwd-independent) so bench runs from the repo root or lq/.
+const MAIN_TS = fromFileUrl(new URL("../main.ts", import.meta.url));
+const FIXTURES = fromFileUrl(new URL("./fixtures", import.meta.url));
 
 const SMALL = `${FIXTURES}/my_template.lyx`;
 const MEDIUM = `${FIXTURES}/Articles/Springer_Nature_Journals.lyx`;

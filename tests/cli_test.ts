@@ -7,14 +7,15 @@
  *   refresh: "none"
  *   trackChanges: false
  *
- * Run from lq/ directory: deno test -A tests/cli_test.ts
+ * Run from the repo root or lq/: deno test -A (fixture paths are cwd-independent)
  */
 
 import { assertEquals, assert, assertStringIncludes, assertMatch } from "@std/assert";
+import { fromFileUrl } from "@std/path";
 import { runCliTest, runCliRaw, runCliWithEnv, runCliWithConfig, createTempFixture } from "./helpers.ts";
 import { getUserHomeDir } from "../src/paths.ts";
 
-const FIXTURE = "tests/fixtures/my_template.lyx";
+const FIXTURE = fromFileUrl(new URL("./fixtures/my_template.lyx", import.meta.url));
 
 Deno.test("Paths - normalize Git Bash HOME on Windows", () => {
   if (Deno.build.os !== "windows") return;
@@ -242,7 +243,7 @@ Deno.test("CLI - bib search (no match)", { timeout: 10000 }, async () => {
 // ---------------------------------------------------------------------------
 // 7b. bib on a direct .bib file (dev log 109)
 // ---------------------------------------------------------------------------
-const BIB_FIXTURE = "tests/fixtures/biblioExample.bib";
+const BIB_FIXTURE = fromFileUrl(new URL("./fixtures/biblioExample.bib", import.meta.url));
 
 Deno.test("CLI - bib on .bib file returns all citations", { timeout: 10000 }, async () => {
   const result = await runCliTest(["bib", BIB_FIXTURE]);
@@ -720,7 +721,7 @@ Deno.test("CLI - schema fallback auto-detects layouts", { timeout: 10000 }, asyn
 // 25. T7: dump --toc on Beamer textclass
 // ---------------------------------------------------------------------------
 Deno.test("CLI - dump --toc on Beamer textclass", { timeout: 10000 }, async () => {
-  const beamerFixture = "tests/fixtures/Presentations/Beamer.lyx";
+  const beamerFixture = fromFileUrl(new URL("./fixtures/Presentations/Beamer.lyx", import.meta.url));
   const result = await runCliTest(["dump", beamerFixture, "--toc"]);
   const data = result.data as Array<{ layout: string; text: string }>;
   assertEquals(data.length > 0, true, "Beamer ToC should have entries");
@@ -733,7 +734,7 @@ Deno.test("CLI - dump --toc on Beamer textclass", { timeout: 10000 }, async () =
 // 25b. DL83: --toc heading text clean (no inset markers) + --depth = absolute TocLevel
 // ---------------------------------------------------------------------------
 Deno.test("CLI - dump --toc heading text clean + depth = absolute TocLevel", { timeout: 10000 }, async () => {
-  const fixture = "tests/fixtures/my_template.lyx";
+  const fixture = fromFileUrl(new URL("./fixtures/my_template.lyx", import.meta.url));
   const full = await runCliTest(["dump", fixture, "--toc"]);
   const fullData = full.data as Array<{ layout: string; text: string; children: unknown[] }>;
   assertEquals(fullData.length > 0, true, "TOC should have entries");
@@ -772,7 +773,7 @@ Deno.test("CLI - dump --toc heading text clean + depth = absolute TocLevel", { t
   assertEquals(bad.code, "INVALID_FLAG", "non-integer depth must be rejected");
 
   // Book: --depth 0 = TocLevel 0 = Chapter (the book's top-level anchor)
-  const book = "tests/fixtures/Books/KOMA-Script_Book.lyx";
+  const book = fromFileUrl(new URL("./fixtures/Books/KOMA-Script_Book.lyx", import.meta.url));
   const book0 = await runCliTest(["dump", book, "--toc", "--depth", "0"]);
   const book0Data = book0.data as Array<{ layout: string }>;
   assertEquals(book0Data.length > 0, true, "book depth 0 should show Chapters");
