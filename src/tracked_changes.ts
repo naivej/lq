@@ -51,12 +51,17 @@ export function parseChangeMarker(value: string | undefined): { authorId: number
  * region ends at the matching \change_unchanged that brings the open-region
  * depth back to 0; nested openers are counted.
  *
- * `terminateAtDifferentType = true` (replay undo): LyX's flat model ends a
- * region at the first \change_unchanged OR at the first different-type opener
- * (one active Change per position — dev log 84 F1), whichever comes first;
- * no nesting is possible in flat input.
+ * `terminateAtDifferentType = true` (replay undo / full replace): LyX's flat
+ * model keeps ONE region per (type, author) run — `Changes::merge()` /
+ * `isSimilarTo` (Changes.cpp:59) coalesce adjacent same-type same-author
+ * ranges, timestamp deliberately ignored (Changes.cpp:53 comment; dev log
+ * 120). A region therefore ends at the first \change_unchanged OR at the
+ * first opener whose type OR author differs from the region's own opener at
+ * `start - 1` — adjacent same-type regions by a different author are separate
+ * regions (test_report_53 Bug A). There is no nesting in flat input, so this
+ * branch tracks no depth.
  *
- * Returns the closer index (or -1) and the different-type opener index (or -1).
+ * Returns the closer index (or -1) and the next-opener index (or -1).
  */
 export function scanRegionEnd(
   children: Node[],
@@ -64,17 +69,34 @@ export function scanRegionEnd(
   markerKey: string,
   terminateAtDifferentType: boolean,
 ): { closer: number; nextOpener: number } {
+  if (terminateAtDifferentType) {
+    // The region's own opener sits at start - 1 (documented contract); guard
+    // the narrow so TypeScript is satisfied.
+    const openNode = children[start - 1];
+    const open = openNode.type === "property"
+      ? parseChangeMarker(openNode.value)
+      : { authorId: 0, ts: "0" };
+    for (let j = start; j < children.length; j++) {
+      const n = children[j];
+      if (n.type !== "property") continue;
+      if (isChangeOpener(n.key)) {
+        const cand = parseChangeMarker(n.value);
+        if (n.key !== markerKey || cand.authorId !== open.authorId) {
+          return { closer: -1, nextOpener: j };
+        }
+      } else if (isChangeCloser(n.key)) {
+        return { closer: j, nextOpener: -1 };
+      }
+    }
+    return { closer: -1, nextOpener: -1 };
+  }
   let depth = 1;
   for (let j = start; j < children.length; j++) {
     const n = children[j];
     if (n.type !== "property") continue;
     if (isChangeOpener(n.key)) {
-      if (terminateAtDifferentType && n.key !== markerKey) {
-        return { closer: -1, nextOpener: j };
-      }
       depth++;
     } else if (isChangeCloser(n.key)) {
-      if (terminateAtDifferentType) return { closer: j, nextOpener: -1 };
       depth--;
       if (depth === 0) return { closer: j, nextOpener: -1 };
     }

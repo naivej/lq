@@ -221,6 +221,21 @@ Deno.test("CLI - unknown command recommends home help", { timeout: 10000 }, asyn
   assertStringIncludes(result.message!, "lq help");
 });
 
+// test_report_53 D1: an unknown command with a single file arg used to fall
+// through to MISSING_SELECTOR; the KNOWN_COMMANDS guard (dev log 120 D3) now
+// rejects it up front.
+Deno.test("CLI - unknown command with one file arg reports UNKNOWN_COMMAND (not MISSING_SELECTOR)", { timeout: 10000 }, async () => {
+  const result = await runCliTest(["unknown", FIXTURE]);
+  assertEquals(result.code, "UNKNOWN_COMMAND");
+  assertStringIncludes(result.message!, "lq help");
+});
+
+Deno.test("CLI - unknown command alone reports UNKNOWN_COMMAND (not MISSING_ARGS)", { timeout: 10000 }, async () => {
+  const result = await runCliTest(["unknown"]);
+  assertEquals(result.code, "UNKNOWN_COMMAND");
+  assertStringIncludes(result.message!, "lq help");
+});
+
 // ---------------------------------------------------------------------------
 // 7. bib --search
 // ---------------------------------------------------------------------------

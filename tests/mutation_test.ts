@@ -15,6 +15,7 @@ import { query } from "../src/query.ts";
 import { serialize } from "../src/serializer.ts";
 import { BlockNode, Node, PropertyNode, TextNode } from "../src/ast.ts";
 import { advanceChangeDepths } from "../src/text_utils.ts";
+import { scanRegionEnd } from "../src/tracked_changes.ts";
 import { runCliTest, runCliWithConfig, createTempFixture } from "./helpers.ts";
 
 Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
@@ -884,6 +885,182 @@ Deno.test("DL106 B1 - same-author --find inside own \\change_deleted keeps the s
     assert(!text.includes("\\change_deleted 2") && !text.includes("\\change_inserted 2"),
       "no second author introduced");
     assertEquals(maxMarkerDepth(firstLayoutChildren(text)), 1, "flat, never nested");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- Dev log 120: adjacent same-type tracked regions (test_report_53 Bug A) ---
+// LyX writes a marker at every Change-state transition (Changes.cpp::lyxMarkChange),
+// including same-type different-author transitions — so `ci 1{...} ci 2{...} cu`
+// and `cd 1{...} cd 2{...} cu` are valid flat input. The flat-mode region scanner
+// used to treat the same-type opener as NESTED (depth++), merging the regions:
+// replay-undo then removed BOTH authors' text (A1) or was a false no-op (A2),
+// and the shared closer was dropped on the deleted variant (A3).
+
+const ADJACENT_CI_CI_BODY =
+  "\\begin_layout Standard\n" +
+  "\\change_inserted 1 1700000000\n" +
+  "Alice's text\n" +
+  "\\change_inserted 2 1700000001\n" +
+  "Bob's text\n" +
+  "\\change_unchanged\n" +
+  "\\end_layout\n";
+
+const ADJACENT_CI_CD_SPAN_BODY =
+  "\\begin_layout Standard\n" +
+  "\\change_inserted 2 1700000001\n" +
+  "Hi\n" +
+  "\\change_unchanged\n" +
+  "\\change_deleted 1 1700000000\n" +
+  "Hello\n" +
+  "\\change_deleted 2 1700000001\n" +
+  " world\n" +
+  "\\change_unchanged\n" +
+  "\\end_layout\n";
+
+Deno.test("DL120 A1 - first author's replay-undo on adjacent same-type inserts removes ONLY their own region (no data loss)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl120_a1.lyx", ADJACENT_CI_CI_BODY, '\\author 1 "Alice"\n\\author 2 "Bob"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.undone_changes, 1, "only Alice's insert is undone");
+    const text = await Deno.readTextFile(tempFile);
+    const children = firstLayoutChildren(text);
+    // Bob's region survives, self-contained: ci 2{Bob's text} cu
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_inserted", "change_unchanged"],
+      "Bob's region intact with its own closer",
+    );
+    assertEquals(changeMarkers(children)[0].value?.split(" ")[0], "2", "surviving region is Bob's (author 2)");
+    assertEquals(allText(children), "Bob's text", "Bob's inserted text is not lost");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL120 A2 - second author's replay-undo on adjacent same-type inserts undoes exactly their region (no false no-op)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl120_a2.lyx", ADJACENT_CI_CI_BODY, '\\author 1 "Alice"\n\\author 2 "Bob"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.undone_changes, 1, "Bob's insert is undone");
+    const text = await Deno.readTextFile(tempFile);
+    const children = firstLayoutChildren(text);
+    // Alice's kept region must be closed by a synthetic closer — not leak open.
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_inserted", "change_unchanged"],
+      "Alice's region survives, closed",
+    );
+    assertEquals(changeMarkers(children)[0].value?.split(" ")[0], "1", "surviving region is Alice's (author 1)");
+    assertEquals(allText(children), "Alice's text", "Alice's text survives");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL120 A3 - replay-undo on the DL106 spanning shape removes Bob's insert AND his deletion (world restored as plain)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl120_a3.lyx", ADJACENT_CI_CD_SPAN_BODY, '\\author 1 "Alice"\n\\author 2 "Bob"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.undone_changes, 2, "Bob's insert and his deletion both undone");
+    const text = await Deno.readTextFile(tempFile);
+    assert(!text.includes("change_inserted"), "Bob's insert removed");
+    // Only Alice's closed deleted region remains; Bob's " world" is plain
+    // current text AFTER that region's closer, not absorbed into it.
+    const cdPos = text.indexOf("\\change_deleted");
+    const worldPos = text.indexOf(" world");
+    const cuPos = text.indexOf("\\change_unchanged");
+    assert(cdPos !== -1 && worldPos !== -1 && cuPos !== -1, "markers and world present");
+    assert(cdPos < worldPos && worldPos > cuPos, "world must sit after the deleted region's closer (plain text)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL120 A4 - plain set consumes the author's own pending insert next to a co-author's (flat, no nesting)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl120_a4.lyx", ADJACENT_CI_CI_BODY, '\\author 1 "Alice"\n\\author 2 "Bob"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "Bob's replacement"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    const children = firstLayoutChildren(text);
+    // Alice's text re-authored as Bob's deletion; Bob's own pending insert consumed.
+    assertStringIncludes(text, "\\change_deleted 2", "Alice's text becomes Bob's deletion");
+    assert(!text.includes("\\change_deleted 1"), "no author-1 deletion remains (re-authored)");
+    assert(!text.includes("Bob's text"), "Bob's own pending insert consumed");
+    assertStringIncludes(text, "\\change_inserted 2", "replacement inserted by Bob");
+    assertStringIncludes(allText(children), "Bob's replacement");
+    // Flat, exact marker sequence — no nesting on the adjacent shape; the
+    // deleted region is self-contained with its own closer.
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_deleted", "change_unchanged", "change_inserted", "change_unchanged"],
+      "flat: Bob-deleted{Alice} cu ci 2{replacement} cu",
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL120 - scanRegionEnd flat mode keeps one region per (type, author) run (LyX reader merge semantics)", () => {
+  const mk = (key: string, value: string | undefined): PropertyNode => ({ type: "property", key, value });
+  const text = (t: string): TextNode => ({ type: "text", text: t });
+  const cu = mk("change_unchanged", undefined);
+
+  // ci 1 / Alice / ci 2 / Bob / cu — same-type different-author → boundary
+  const ciCi = [mk("change_inserted", "1 1700000000"), text("Alice"), mk("change_inserted", "2 1700000001"), text("Bob"), cu];
+  assertEquals(scanRegionEnd(ciCi, 1, "change_inserted", true), { closer: -1, nextOpener: 2 },
+    "same-type different-author opener ends the region");
+
+  // ci 1 / A / ci 1 <ts2> / B / cu — same author, newer timestamp → NOT a
+  // boundary: LyX merges same-author regions regardless of timestamp
+  // (Changes::merge/isSimilarTo — dev log 120 D2C)
+  const ciCiTs = [mk("change_inserted", "1 1700000000"), text("A"), mk("change_inserted", "1 1700000002"), text("B"), cu];
+  assertEquals(scanRegionEnd(ciCiTs, 1, "change_inserted", true), { closer: 4, nextOpener: -1 },
+    "same-type same-author opener (any timestamp) continues the region");
+
+  // cd 1 / Hello / cd 2 / world / cu — deleted variant
+  const cdCd = [mk("change_deleted", "1 1700000000"), text("Hello"), mk("change_deleted", "2 1700000001"), text(" world"), cu];
+  assertEquals(scanRegionEnd(cdCd, 1, "change_deleted", true), { closer: -1, nextOpener: 2 },
+    "same-type different-author deleted opener ends the region");
+
+  // Byte-identical repeated opener (same type+author+ts) is NOT a boundary (nested)
+  const identical = [mk("change_inserted", "1 1700000000"), mk("change_inserted", "1 1700000000"), text("x"), cu, cu];
+  assertEquals(scanRegionEnd(identical, 1, "change_inserted", true), { closer: 3, nextOpener: -1 },
+    "identical-state opener is not a boundary");
+
+  // Different-type opener still ends the region (DL84 F1 behavior preserved)
+  const ciCd = [mk("change_inserted", "1 1700000000"), text("A"), mk("change_deleted", "1 1700000001"), text("D")];
+  assertEquals(scanRegionEnd(ciCd, 1, "change_inserted", true), { closer: -1, nextOpener: 2 },
+    "different-type opener ends the region");
+});
+
+Deno.test("DL120 D4 - inserted_blocks counts payload blocks independent of tracking (restores DL26)", { timeout: 15000 }, async () => {
+  const body = "\\begin_layout Standard\nBase\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl120_d4.lyx", body);
+  try {
+    const untracked = await runCliTest(["insert", tempFile, "layout[Standard]", "append", "--label", "sec:probe"]);
+    const tracked = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "append", "--label", "sec:probe2"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(untracked.matched_nodes, 1);
+    assertEquals(tracked.matched_nodes, 1);
+    assertEquals(untracked.inserted_blocks, 1, "untracked single inset = 1 block");
+    assertEquals(tracked.inserted_blocks, 1, "tracked single inset = 1 block (DL26 contract, not 3)");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }

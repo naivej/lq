@@ -939,6 +939,12 @@ function printHelpPage(page: (typeof HOME_PAGE), rich: RichMode): void {
   console.log(renderPage(page, rich));
 }
 
+// The complete set of dispatchable commands. `help` and `--help`/bare `lq` are
+// handled earlier in runCli and never reach this set. Rejecting unknown
+// commands up front stops a bad command name from falling through to a
+// misleading per-command error (test_report_53 D1).
+const KNOWN_COMMANDS = new Set(["init", "dump", "bib", "schema", "read", "set", "delete", "insert", "undo"]);
+
 export async function runCli(args: string[]) {
 
   const parsedHelp = parseArgs(args, { boolean: ["help", "h"], string: ["rich"] });
@@ -979,6 +985,13 @@ export async function runCli(args: string[]) {
 
   // Filter out the help flags before passing to the rest of the app if they somehow got here
   const cleanArgs = args.filter(a => a !== "--help" && a !== "-h");
+
+  // Reject unknown commands up front, BEFORE the per-command arg-count and
+  // selector gates — otherwise `lq frobnicate file.lyx` reports a misleading
+  // MISSING_SELECTOR instead of UNKNOWN_COMMAND (test_report_53 D1).
+  if (commandArg !== undefined && !KNOWN_COMMANDS.has(commandArg)) {
+    printError("UNKNOWN_COMMAND", `Unknown command: ${commandArg}. Run 'lq help' for the page map.`);
+  }
 
   if (commandArg === "init") {
     const flags = parseArgs(
@@ -2608,8 +2621,12 @@ function foldNegativeDepth(args: string[]): string[] {
         if (position !== "split-after" && position !== "append") {
           insertedSoFar += isLayoutBlock ? 2 : 1;
         }
-        insertedBlocks++;
       }
+      // DL26 contract: inserted_blocks = matches × blocks-per-payload. Count
+      // payload blocks per target, NOT expanded tracking-wrapper nodes (which
+      // inflated tracked inset inserts from 1 to 3 — test_report_53 D2, dev
+      // log 120 D4).
+      insertedBlocks += newNodesToInsert.length;
       insertedCount++;
     }
 
@@ -2813,6 +2830,15 @@ function foldNegativeDepth(args: string[]): string[] {
                 newChildren.push({ type: "property", key: "change_unchanged" });
                 openInsertedRegion = false;
               }
+              if (openDeletedRegion) {
+                // A kept same-type change_deleted region was terminated by
+                // this deleted opener and has no closer of its own. Close it
+                // before restoring this region's text as plain, or the flat
+                // reader absorbs it into the open deletion (test_report_53
+                // A3 — the same-type mirror of the inserted-side handling).
+                newChildren.push({ type: "property", key: "change_unchanged" });
+                openDeletedRegion = false;
+              }
               // Restore: keep text nodes, drop the marker and terminator
               for (let k = i + 1; k < regionEnd; k++) newChildren.push(node.children[k]);
             }
@@ -2824,6 +2850,14 @@ function foldNegativeDepth(args: string[]): string[] {
               if (openDeletedRegion) {
                 newChildren.push({ type: "property", key: "change_unchanged" });
                 openDeletedRegion = false;
+              }
+              if (openInsertedRegion) {
+                // A kept same-type change_inserted region was terminated by
+                // this inserted opener and has no closer of its own. Close it
+                // before dropping this region, or the kept region leaks open
+                // (test_report_53 A2 — the same-type mirror).
+                newChildren.push({ type: "property", key: "change_unchanged" });
+                openInsertedRegion = false;
               }
             }
             // change_inserted: drop everything (marker, text, terminator)
@@ -2937,5 +2971,6 @@ function foldNegativeDepth(args: string[]): string[] {
     return;
   }
 
-  printError("UNKNOWN_COMMAND", `Unknown command: ${command}. Run 'lq help' for the page map.`);
+  // Unreachable: every command is either rejected by the KNOWN_COMMANDS guard
+  // at dispatch or handled by a branch above (each returns or printError's).
 }
