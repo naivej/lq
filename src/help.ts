@@ -71,10 +71,10 @@ export const HELP_PAGES: HelpPage[] = [
       sec(
         "",
         "lq is a standalone CLI for parsing, querying, and mutating LyX documents (`.lyx` files):\n\n" +
-          "1. **Parse**: reads a `.lyx` file into a Concrete Syntax Tree (CST).\n" +
-          "2. **Query**: queries the CST with a CSS-like selector engine to find specific nodes.\n" +
-          "3. **Mutate**: applies `set`, `delete`, `insert`, or `undo` to the matched nodes.\n" +
-          "4. **Serialize**: converts the modified CST back into a `.lyx` file with lossless fidelity.",
+          "1. Parse: reads a `.lyx` file into a Concrete Syntax Tree (CST).\n" +
+          "2. Query: queries the CST with a CSS-like selector engine to find specific nodes.\n" +
+          "3. Mutate: applies `set`, `delete`, `insert`, or `undo` to the matched nodes.\n" +
+          "4. Serialize: converts the modified CST back into a `.lyx` file with lossless fidelity.",
       ),
       sec(
         "Help commands",
@@ -250,8 +250,8 @@ export const HELP_PAGES: HelpPage[] = [
       sec(
         "Supporting-state behavior",
         "The cache and undo snapshots are conveniences, not the document. Neither can change a command's results:\n\n" +
-          "- **Cache** — the cache is write-through: after a mutation, it is updated with the new CST, so even back-to-back edits hit the cache after the first parse. A miss or failure only means the file is parsed again; the outcome is identical, and there is nothing to fix. A local cache miss never falls back to global state.\n" +
-          "- **Undo snapshots** — `lq undo <file>` restores the last mutation from a snapshot. Saving is best effort: a mutation is committed even when the snapshot cannot be saved, and the later `undo` reports `UNDO_SNAPSHOT_UNAVAILABLE`. It never falls back to replay on its own; replay requires an explicit selector (`lq undo <file> <selector>`). If the file was changed externally since the snapshot, pass a selector to replay tracked changes instead.",
+          "- Cache — the cache is write-through: after a mutation, it is updated with the new CST, so even back-to-back edits hit the cache after the first parse. A miss or failure only means the file is parsed again; the outcome is identical, and there is nothing to fix. A local cache miss never falls back to global state.\n" +
+          "- Undo snapshots — `lq undo <file>` restores the last mutation from a snapshot. Saving is best effort: a mutation is committed even when the snapshot cannot be saved, and the later `undo` reports `UNDO_SNAPSHOT_UNAVAILABLE`. It never falls back to replay on its own; replay requires an explicit selector (`lq undo <file> <selector>`). If the file was changed externally since the snapshot, pass a selector to replay tracked changes instead.",
       ),
     ],
     furtherReading: [
@@ -423,43 +423,43 @@ export const HELP_PAGES: HelpPage[] = [
           "Pseudo-classes fall into two kinds.\n\n" +
           "- `:contains()`, `:not()`, `:change()`, `:property()`, and `:note()` match each node independently, so their order in a chain does not matter.\n" +
           "- Positional filters `:first`, `:last`, `:nth-match()`, `:adjacent()`, and `:until()` filter the matched sequence and apply in the order written, so chaining order matters.\n\n" +
-          "**`:contains(text)`**\n\n" +
+          "`:contains(text)`\n\n" +
           "`:contains()` searches recursively and case-sensitively through descendant text, including inset metadata and tracked changes, to locate a layout by text. A private note's content is found only when the selector is note-scoped.\n\n" +
           "Example: `layout[Standard]:contains(some phrase)` selects the Standard paragraphs whose text contains the phrase.\n\n" +
           "`text:contains(...)` never matches: text nodes are not returned for `:contains` (lq would otherwise mutate each matched text node twice), so that selector form always yields an empty match. lq warns when a selector contains this dead arm.\n\n" +
           "The text may be given bare, or quoted with either single (`'...'`) or double (`\"...\"`) quotes. The quotes are stripped by the parser and exist only to allow a literal `'`, `\"`, `(`, or `)` inside the phrase. Prefer double quotes when the phrase itself contains an apostrophe.\n\n" +
-          "**`:not(selector)`**\n\n" +
+          "`:not(selector)`\n\n" +
           "`:not()` excludes a block whose subtree contains a match of the inner selector. A `:contains()` inner also matches the block's own text, so `:contains(x)` and `:not(:contains(x))` partition the document.\n\n" +
           "Example: `layout[Standard]:not(inset[Formula])` selects the Standard paragraphs that do not contain a Formula inset.\n\n" +
           "Text and property nodes have no descendants, so they always pass.\n\n" +
-          "**`:change(region)`**\n\n" +
+          "`:change(region)`\n\n" +
           "`:change(current|inserted|deleted)` filters nodes by tracked-change region: text nodes match their own region, and layouts and insets match when they sit in the parent's region or contain text in the requested region, including prose inside nested layouts of an atomically tracked inset.\n" +
           "Private-note prose is visible.\n" +
           "Property nodes and inset metadata do not match.\n\n" +
           "Example: `layout:change(deleted), inset:change(deleted)` selects the layouts and insets that sit in the deleted region or contain deleted text.\n\n" +
           "`:change()` also scopes `set --find` and `split-after`, so a phrase present in multiple regions can be disambiguated. Example: `set \"text:change(current)\" \"new phrase\" --find \"old phrase\"` replaces `old phrase` only in current text; `insert \"layout:change(deleted)\" split-after \"some phrase\" --text \"!\"` splits a paragraph inside its deleted region.\n\n" +
-          "**`:property(key[=value])`**\n\n" +
+          "`:property(key[=value])`\n\n" +
           "`:property(key[=value])` filters nodes under an inline style state: text nodes match by their own style, and layouts and insets match when they sit in the parent's style span or contain styled text, including prose inside nested layouts.\n" +
           "Without `=value`, any non-default value for the key matches; with `=value`, the comparison is case-insensitive and exact.\n" +
           "Private-note prose is visible.\n" +
           "Change markers and inset metadata do not match.\n\n" +
           "Example: `text:property(emph)` filters the text that is currently emphasized.\n" +
           "`:property()` also scopes `set --find` and `split-after`, so a phrase in a specific style span can be targeted.\n\n" +
-          "**`:note([Note|Comment])`**\n\n" +
+          "`:note([Note|Comment])`\n\n" +
           "`:note()` matches nodes inside a private note (`Note Note` / `Note Comment`) or the note inset itself. Bare `:note` = any private note; `:note(Note)` / `:note(Comment)` = a specific type.\n\n" +
           "Example: `text:note` selects the text nodes inside a private note, and `layout:note:contains(some phrase)` selects the note-scoped layouts whose text contains the phrase.\n\n" +
           "A `:note` part also makes its `,` group note-scoped on the content axis: content matching — `set --find` and `split-after` included — sees note prose, so `text, text:note` is \"visible text + note text\". An explicit `inset[Note …]` path (e.g. `inset[Note Note] layout[Plain Layout]`) is equally note-scoped.\n\n" +
-          "**`:first` and `:last`**\n\n" +
+          "`:first` and `:last`\n\n" +
           "These filter the matches in query traversal order.\n\n" +
           "Example: `layout[Section]:first` selects the first Section heading, and `layout[Standard]:last` selects the last Standard paragraph.\n\n" +
-          "**`:nth-match(an+b)`**\n\n" +
+          "`:nth-match(an+b)`\n\n" +
           "This filters the matches in query traversal order. Use CSS-style formulas such as `:nth-match(2)`, `:nth-match(odd)`, `:nth-match(even)`, or `:nth-match(2n+1)`.\n\n" +
           "Example: `layout[Section]:nth-match(2)` selects the second Section heading — the second match.\n\n" +
-          "**`:adjacent(selector)`**\n\n" +
+          "`:adjacent(selector)`\n\n" +
           "`:adjacent()` matches a node whose immediately preceding meaningful sibling matches the inner selector.\n\n" +
           "Example: `layout[Standard]:adjacent(layout[Quote])` selects the Standard paragraphs that directly follow a Quote layout.\n\n" +
           "Text and property nodes between the siblings are skipped: the CST interleaves blank-line text nodes between sibling layouts, so adjacency is judged between blocks, not literal child positions.\n\n" +
-          "**`:until(selector)`**\n\n" +
+          "`:until(selector)`\n\n" +
           "`:until()` bounds a `~` sibling range. It rejects a candidate when any node matching the inner selector appears in document order between the anchor and the candidate, inclusive. So the range stops before the next matching node, and that boundary node, its subtree, and everything after it are excluded.\n\n" +
           "Example: `layout[Section]:contains(some phrase):first ~ layout[Standard]:until(layout[Section])` selects the Standard paragraphs between the first section that contains `some phrase` and the next section, stopping before the next section's heading.\n\n" +
           "The check also covers descendant candidates: a bare arm such as `layout[Section]:contains(some phrase):first ~ layout:until(layout[Section])` stops the whole subtree before the next heading, so the next section's heading and its content are not pulled in.\n\n" +
