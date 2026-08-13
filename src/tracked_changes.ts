@@ -314,16 +314,23 @@ export function wrapInChangeMarkers(
  * \change_deleted inside \change_inserted is malformed. This function
  * post-processes children after a mutation to ensure flat, unnested markers.
  *
- * Rules (matching LyX's per-position Change model, dev log 78 Fix 1):
- * - \change_deleted inside \change_inserted: dropped entirely — deleting
- *   pending-inserted text removes it (it was never in the accepted document).
- * - \change_inserted inside \change_inserted, same author: merge — absorb
- *   the inner content into the outer block, timestamp becomes max(old, new).
- * - \change_inserted inside \change_inserted, different author: split into
- *   adjacent flat blocks (no \change_unchanged between them — LyX emits a
- *   marker only when the Change state differs — one closer at region end).
- * - Top-level \change_deleted regions pass through verbatim: their text is
- *   invisible to mutations, so they never acquire new nesting.
+ * Regions are scanned in LyX's flat mode (dev log 120 D2C — one region per
+ * (type, author) run): a region runs from its opener to its own
+ * \change_unchanged OR to the first opener whose type or author differs — a
+ * flat boundary, reprocessed as its own top-level region. No depth counting.
+ *
+ * Rules (dev log 121 item 15 / D-15A):
+ * - Same-author same-type opener inside a region: merge — absorb the inner
+ *   content, timestamp becomes max(old, new). (Different-type and
+ *   different-author openers never reach the inner loop — the flat scan
+ *   turns them into boundaries.)
+ * - Closing \change_unchanged is emitted only when the region has its OWN
+ *   closer or runs to the end of the list. A boundary-terminated region
+ *   stays open and shares the next region's closer — LyX's byte-exact form
+ *   (a marker fires only at a (type, author) transition). Pre-existing
+ *   adjacent shapes like `ci{X} cd{Z}` therefore pass through verbatim
+ *   (dev log 85 Finding 1) with no synthetic closer needed.
+ * - Top-level \change_deleted regions pass through verbatim.
  */
 export function flattenNestedChanges(children: Node[]): Node[] {
   const result: Node[] = [];
@@ -408,7 +415,8 @@ export function flattenNestedChanges(children: Node[]): Node[] {
               segments.push({ authorId: inner.authorId, ts: inner.ts, nodes: innerContent });
             }
           }
-          // change_deleted inside change_inserted: drop entirely
+          // change_deleted inside change_inserted: legacy drop rule —
+          // unreachable, the flat scan makes a cd opener a region boundary.
           k = closer === -1 ? content.length : closer + 1;
         } else {
           outerRun.push(n);
@@ -420,7 +428,17 @@ export function flattenNestedChanges(children: Node[]): Node[] {
       for (const seg of segments) {
         result.push({ type: "property", key: "change_inserted", value: `${seg.authorId} ${seg.ts}` }, ...seg.nodes);
       }
-      if (segments.length > 0) result.push({ type: "property", key: "change_unchanged" });
+      // D-15A (dev log 121): emit the closing \change_unchanged only when the
+      // region has its OWN closer (or runs to the end of the list). When it
+      // ends at a boundary opener — a pre-existing adjacent same-type
+      // different-author or different-type region sharing the closer — the
+      // opener follows directly and this region stays open: LyX's byte-exact
+      // shared-closer form (a marker fires only at a (type, author)
+      // transition). Emitting a closer here produced the old self-contained
+      // normalization (`ci{X} cu cd{Z} cu` instead of `ci{X} cd{Z} cu`).
+      if (closer !== -1 || end === children.length) {
+        result.push({ type: "property", key: "change_unchanged" });
+      }
       i = closer !== -1 ? closer + 1 : end;
       continue;
     }

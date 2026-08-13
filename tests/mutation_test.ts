@@ -15,7 +15,7 @@ import { query } from "../src/query.ts";
 import { serialize } from "../src/serializer.ts";
 import { BlockNode, Node, PropertyNode, TextNode } from "../src/ast.ts";
 import { advanceChangeDepths } from "../src/text_utils.ts";
-import { scanRegionEnd } from "../src/tracked_changes.ts";
+import { scanRegionEnd, flattenNestedChanges } from "../src/tracked_changes.ts";
 import { runCliTest, runCliWithConfig, createTempFixture } from "./helpers.ts";
 
 Deno.test("Mutation Engine - Insert Auto-Spacer", async () => {
@@ -857,8 +857,8 @@ Deno.test("DL106 B1 - --find spanning deleted->current keeps the deleted part's 
     // (advanceChangeDepths), so assert the exact marker sequence instead.
     assertEquals(
       changeMarkers(firstLayoutChildren(text)).map(m => m.key),
-      ["change_inserted", "change_unchanged", "change_deleted", "change_deleted", "change_unchanged"],
-      "flat: inserted{Hi}, Alice-deleted{Hello} adjacent Bob-deleted{ world}, final unchanged",
+      ["change_inserted", "change_deleted", "change_deleted", "change_unchanged"],
+      "byte-exact (D-15A): inserted{Hi} then Alice-deleted{Hello} adjacent Bob-deleted{ world}, shared closer, final unchanged",
     );
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
@@ -1046,6 +1046,68 @@ Deno.test("DL120 - scanRegionEnd flat mode keeps one region per (type, author) r
   const ciCd = [mk("change_inserted", "1 1700000000"), text("A"), mk("change_deleted", "1 1700000001"), text("D")];
   assertEquals(scanRegionEnd(ciCd, 1, "change_inserted", true), { closer: -1, nextOpener: 2 },
     "different-type opener ends the region");
+});
+
+// --- Dev log 121 item 15: flatten flat-model rework (D-15A) ---
+
+Deno.test("DL121 15 - flatten passes flat interleave sharing one closer through verbatim (byte-exact)", () => {
+  const mk = (key: string, value: string | undefined): PropertyNode => ({ type: "property", key, value });
+  const text = (t: string): TextNode => ({ type: "text", text: t });
+  const cu = mk("change_unchanged", undefined);
+  const keys = (nodes: Node[]): string[] => nodes.map(n => n.type === "property" ? n.key : "text");
+
+  // Pre-existing adjacent ci{X} cd{Z} (dev log 85 Finding 1): the inserted
+  // region is boundary-terminated by the different-type opener and must stay
+  // open (shared closer) — NOT be normalized into the old self-contained
+  // `ci{X} cu cd{Z} cu`.
+  const interleave: Node[] = [
+    mk("change_inserted", "1 1700000000"), text("X"),
+    mk("change_deleted", "2 1700000001"), text("Z"), cu,
+  ];
+  assertEquals(
+    keys(flattenNestedChanges(interleave)),
+    ["change_inserted", "text", "change_deleted", "text", "change_unchanged"],
+    "adjacent ci/cd flat interleave passes through byte-exact (no synthetic closer)",
+  );
+
+  // Same-type different-author adjacent inserts sharing one closer also pass
+  // through: ci 1{A} ci 2{B} cu — one region per (type, author) run (D2C).
+  const ciCiShared: Node[] = [
+    mk("change_inserted", "1 1700000000"), text("A"),
+    mk("change_inserted", "2 1700000001"), text("B"), cu,
+  ];
+  assertEquals(
+    keys(flattenNestedChanges(ciCiShared)),
+    ["change_inserted", "text", "change_inserted", "text", "change_unchanged"],
+    "same-type different-author adjacent regions pass through (no closer between)",
+  );
+});
+
+Deno.test("DL121 15 - flatten merges same-author nested opener (DL78 rule, ts = max)", () => {
+  const mk = (key: string, value: string | undefined): PropertyNode => ({ type: "property", key, value });
+  const text = (t: string): TextNode => ({ type: "text", text: t });
+  const cu = mk("change_unchanged", undefined);
+
+  // ci 1<100> / A / ci 1<200> / B / cu — same-author double opener (mutation
+  // artifact): merged into one region, ts = max(100, 200).
+  const nested: Node[] = [
+    mk("change_inserted", "1 1700000100"), text("A"),
+    mk("change_inserted", "1 1700000200"), text("B"), cu,
+  ];
+  const out = flattenNestedChanges(nested);
+  assertEquals(
+    out.map(n => n.type === "property" ? n.key : "text"),
+    ["change_inserted", "text", "text", "change_unchanged"],
+    "same-author double opener collapses to a single region",
+  );
+  const openers = out.filter((n): n is PropertyNode => n.type === "property" && n.key === "change_inserted");
+  assertEquals(openers.length, 1, "double opener collapsed to one");
+  assertEquals(openers[0].value, "1 1700000200", "timestamp becomes max(old, new)");
+  assertEquals(
+    out.filter(n => n.type === "text").map(n => (n as TextNode).text),
+    ["A", "B"],
+    "content absorbed in order",
+  );
 });
 
 Deno.test("DL120 D4 - inserted_blocks counts payload blocks independent of tracking (restores DL26)", { timeout: 15000 }, async () => {
@@ -2006,12 +2068,12 @@ Deno.test("DL78 Flatten - Different-Author Split (adjacent flat blocks)", { time
     const markers = changeMarkers(children);
     // Range-erase model (dev log 90): Bob's replacement is inserted at the
     // match start; Alice's pending text is marked DELETED by Bob (LyX
-    // eraseChars re-authors the erased range). The \cd region is terminated
-    // by the following \ci opener (flat model — one active Change per
-    // position, no closer between different types).
+    // eraseChars re-authors the erased range). Byte-exact (D-15A, dev log
+    // 121): no closer between the inserted replacement and the adjacent
+    // deleted region — LyX writes a marker only at a (type, author) transition.
     assertEquals(
       markers.map(m => m.key),
-      ["change_inserted", "change_unchanged", "change_deleted", "change_inserted", "change_unchanged"],
+      ["change_inserted", "change_deleted", "change_inserted", "change_unchanged"],
     );
     assertEquals((markers[0].value || "").split(" ")[0], "2", "Bob's replacement first (id 2)");
     const text = allText(children);
@@ -2807,8 +2869,8 @@ Deno.test("DL84 F3 - different-author full-consumption emits insert-then-delete 
     const markers = changeMarkers(children);
     assertEquals(
       markers.map(m => m.key),
-      ["change_inserted", "change_unchanged", "change_deleted", "change_unchanged"],
-      "insert-first (dev log 90): replacement at match start, old text deleted",
+      ["change_inserted", "change_deleted", "change_unchanged"],
+      "insert-first (dev log 90) byte-exact (D-15A): replacement at match start, old text deleted — shared closer",
     );
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
@@ -2989,8 +3051,8 @@ Deno.test("DL85 F1 - same-author --find on adjacent inserted→deleted shape pre
     const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
     assertEquals(
       changeMarkers(children).map(m => m.key),
-      ["change_inserted", "change_unchanged", "change_deleted", "change_unchanged"],
-      "inserted region must be closed before the pre-existing deleted region (no nesting)",
+      ["change_inserted", "change_deleted", "change_unchanged"],
+      "byte-exact (D-15A): inserted region stays open into the pre-existing deleted region (shared closer); flatten passes it through, no drop",
     );
     const text = allText(children);
     assertStringIncludes(text, "newValue", "replacement text must survive");
@@ -3280,8 +3342,9 @@ Deno.test("DL90 F3 - --find spanning a deleted region erases one contiguous rang
     assertEquals(result.modified_nodes, 1, "spanning match succeeds");
     const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
     const markers = changeMarkers(children);
-    // Insert-first: \ci{X} then the whole erased range as one \cd{A B C}.
-    assertEquals(markers.map(m => m.key), ["change_inserted", "change_unchanged", "change_deleted", "change_unchanged"]);
+    // Insert-first: \ci{X} then the whole erased range as one \cd{A B C},
+    // byte-exact shared-closer form (D-15A): no closer between them.
+    assertEquals(markers.map(m => m.key), ["change_inserted", "change_deleted", "change_unchanged"]);
     const text = allText(children);
     assertStringIncludes(text, "X");
     assertStringIncludes(text, "B", "interposed deleted text absorbed into the erased range");
@@ -3353,11 +3416,14 @@ Deno.test("DL90 - split-after inside a different-author inserted region emits ad
     );
     assertEquals(result.matched_nodes, 1);
     const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
-    // Bob's block between Alice's region halves: \ci{A} Tit \ci{B} X \cu \ci{A} le \cu
+    // Bob's block between Alice's region halves, LyX byte-exact form (dev log
+    // 121 D-C1): \ci{A} Tit \ci{B} X \ci{A} le \cu — no closer between the
+    // block and Alice's reopened region (LyX writes a marker only at the
+    // (type, author) transition).
     assertEquals(
       changeMarkers(children).map(m => m.key),
-      ["change_inserted", "change_inserted", "change_unchanged", "change_inserted", "change_unchanged"],
-      "adjacent flat blocks, never nested",
+      ["change_inserted", "change_inserted", "change_inserted", "change_unchanged"],
+      "byte-exact adjacent flat blocks, never nested",
     );
     assertStringIncludes(allText(children), "Tit Xle", "both parts present");
   } finally {
@@ -3384,6 +3450,128 @@ Deno.test("DL90 - split-after inside a deleted region splits flat (never nested)
     const children = firstLayoutChildren(text);
     assertEquals(maxMarkerDepth(children), 1, "flat, never nested");
     assertStringIncludes(allText(children), "This", "pre-split rejected text survives");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- Dev log 121: block payloads in split-after (test_report_37 N1 / backlog
+// item 16 + the audit's new finding). The block splice path used to emit a
+// same-author double opener and never reopened the region after the block —
+// the continuation escaped its region (for a deleted region it was resurrected
+// as current text). Fixed to the pinned canonical forms (dev log 121 D-C1:
+// LyX byte-exact shared-closer form). ---
+
+const DL121_SPLIT_BODY =
+  "\\begin_layout Standard\n" +
+  "\\change_inserted 1 1700000000\n" +
+  "edit here\n" +
+  "\\change_unchanged\n" +
+  "\\end_layout\n";
+
+const DL121_SPLIT_DEL_BODY =
+  "\\begin_layout Standard\n" +
+  "\\change_deleted 1 1700000000\n" +
+  "edit here\n" +
+  "\\change_unchanged\n" +
+  "\\end_layout\n";
+
+Deno.test("DL121 - block (--footnote) split-after inside a same-author inserted region merges into the region (no double opener)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl121_block_same.lyx", DL121_SPLIT_BODY, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "edit", "--footnote", "FN"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.matched_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    const children = firstLayoutChildren(text);
+    const markers = changeMarkers(children);
+    assertEquals(markers.map(m => m.key), ["change_inserted", "change_unchanged"],
+      "one merged region, no double opener");
+    assertEquals(markers[0].value?.split(" ")[0], "1", "region stays Alice's (author 1)");
+    assertStringIncludes(text, "\\begin_inset Foot", "footnote inside the region");
+    assertStringIncludes(allText(children), "edit", "pre-split text in region");
+    assertStringIncludes(allText(children), "here", "continuation stays inside the region");
+    assertEquals(maxMarkerDepth(children), 1, "flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL121 - block split-after inside a different-author inserted region reopens Alice's region (byte-exact, continuation stays inserted)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl121_block_diff.lyx", DL121_SPLIT_BODY, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "edit", "--footnote", "FN"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.matched_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_inserted", "change_inserted", "change_inserted", "change_unchanged"],
+      "byte-exact: ci(Alice) ci(Bob) ci(Alice-reopen) cu — no closer between the block and the reopen",
+    );
+    // The continuation " here" must sit inside the reopened Alice region
+    // (immediately after the third opener), not as plain text.
+    const hereIdx = children.findIndex(c => c.type === "text" && (c as TextNode).text.includes("here"));
+    assert(hereIdx >= 1 && children[hereIdx - 1].type === "property" &&
+      (children[hereIdx - 1] as PropertyNode).key === "change_inserted",
+      "continuation reopens Alice's inserted region");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL121 - block split-after inside a deleted region keeps the continuation deleted (no resurrection)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl121_block_del.lyx", DL121_SPLIT_DEL_BODY, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "edit", "--footnote", "FN"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.matched_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_deleted", "change_inserted", "change_deleted", "change_unchanged"],
+      "byte-exact: cd(Alice) ci(Bob) cd(Alice-reopen) cu",
+    );
+    // " here" must sit inside the reopened deleted region (immediately after a
+    // change_deleted opener) — NOT resurrected as plain current text.
+    const hereIdx = children.findIndex(c => c.type === "text" && (c as TextNode).text.includes("here"));
+    assert(hereIdx >= 1 && children[hereIdx - 1].type === "property" &&
+      (children[hereIdx - 1] as PropertyNode).key === "change_deleted",
+      "continuation stays inside the reopened deleted region");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL121 - replay after a block split inside a different-author region leaves no orphan closer", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl121_replay.lyx", DL121_SPLIT_BODY, '\\author 1 "Alice"\n');
+  try {
+    await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "edit", "--footnote", "FN"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    // Bob replays: his block is removed; Alice's two region halves survive, closed.
+    const undone = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(undone.undone_changes, 1, "only Bob's block undone");
+    const text = await Deno.readTextFile(tempFile);
+    assert(!text.includes("begin_inset Foot"), "footnote removed");
+    const children = firstLayoutChildren(text);
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_inserted", "change_unchanged", "change_inserted", "change_unchanged"],
+      "both Alice halves closed, no orphan closer",
+    );
+    assertStringIncludes(allText(children), "edit");
+    assertStringIncludes(allText(children), "here");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
@@ -3465,8 +3653,8 @@ Deno.test("DL90 - :change(inserted) scoped --find touches only the pending inser
     assertEquals((text.match(/and/g) || []).length, 2, "current + rejected 'and' both survive");
     assertEquals(
       changeMarkers(children).map(m => m.key),
-      ["change_inserted", "change_unchanged", "change_deleted", "change_unchanged"],
-      "replacement stays inside one flat inserted region (same-author merge)",
+      ["change_inserted", "change_deleted", "change_unchanged"],
+      "replacement stays inside one flat inserted region (same-author merge); shared closer with the rejected region (D-15A)",
     );
     assertEquals(maxMarkerDepth(children), 1, "flat, never nested");
   } finally {

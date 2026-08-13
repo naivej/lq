@@ -2449,12 +2449,14 @@ function foldNegativeDepth(args: string[]): string[] {
       // an inset payload must be wrapped as a WHOLE — markers around the inset,
       // never inside its metadata children (LatexCommand / key / name lines).
       // Expand each inset to its marker sequence so the loop below treats the
-      // markers and the inset as flat siblings.
+      // markers and the inset as flat siblings. EXCEPT split-after: the region
+      // logic there handles the block as a unit (merge / adjacent + reopen,
+      // dev log 121), so the inset must stay unwrapped.
       let loopPayload = payload;
       if (trackChanges) {
         const expanded: Node[] = [];
         for (const p of payload) {
-          if (p.type === "block" && (p as BlockNode).tag === "inset") {
+          if (p.type === "block" && (p as BlockNode).tag === "inset" && position !== "split-after") {
             expanded.push(...wrapWithTracking([p], "inserted", insertAuthorId, insertTs));
           } else {
             expanded.push(p);
@@ -2469,8 +2471,11 @@ function foldNegativeDepth(args: string[]): string[] {
           if (nodeToInsert.type === "block") {
             const payloadBlock = nodeToInsert as BlockNode;
             if (payloadBlock.tag === "inset") {
-              // Already atomically wrapped in the pre-pass above — never wrap
-              // an inset's metadata children.
+              // Never wrap an inset's metadata children. For non-split-after
+              // positions the inset was atomically wrapped in the pre-pass
+              // above; for split-after it stays unwrapped and the splice
+              // handles its markers inline against the region at the split
+              // point (dev log 121).
             } else {
               nodeToInsert.children = wrapWithTracking(nodeToInsert.children, "inserted", insertAuthorId, insertTs);
             }
@@ -2561,32 +2566,45 @@ function foldNegativeDepth(args: string[]): string[] {
           // splitInsertOffset tracks how many nodes from previous payload
           // iterations have already been inserted (fixes multi-block order).
           const insertIdx = splitTextIdx + 1 + splitInsertOffset;
-          if (trackChanges && nodeToInsert.type === "text") {
+          if (trackChanges && (nodeToInsert.type === "text" || nodeToInsert.type === "block")) {
             if (splitRegion === "inserted" && splitRegionInfo && splitRegionInfo.author === insertAuthorId) {
-              // Same author — merge into the pending insertion (bare text, no
-              // new markers, never nested). Bump the region's timestamp.
+              // Same author — merge into the pending insertion (bare text or
+              // block, no new markers, never nested). Bump the region's
+              // timestamp (dev log 90 §5.4).
               splitParentList.splice(insertIdx, 0, copy);
               splitInsertOffset++;
               const newTs = parseInt(insertTs, 10) || 0;
               const oldTs = parseInt(splitRegionInfo.ts, 10) || 0;
               if (newTs > oldTs) splitRegionInfo.node.value = `${insertAuthorId} ${insertTs}`;
-            } else {
-              // New tracked block. When the split point is inside a change
-              // region (different author, or deleted), the block must NOT
-              // nest: emit it as an adjacent flat block and REOPEN the region
-              // after it if it continues, so the surrounding region text stays
-              // in its region (dev log 90 §5.4).
-              const wrapped = wrapInChangeMarkers([copy], "inserted", insertAuthorId, insertTs);
-              splitParentList.splice(insertIdx, 0, ...wrapped);
-              splitInsertOffset += wrapped.length;
-              if (splitRegion !== "current" && splitRegionContinues && splitRegionInfo) {
-                splitParentList.splice(insertIdx + wrapped.length, 0, {
+            } else if (splitRegion !== "current" && splitRegionInfo) {
+              // Different-author inserted, or deleted, region: emit the payload
+              // as an adjacent flat block. When the region reopens after it,
+              // use LyX's byte-exact shared-closer form — the block carries NO
+              // trailing closer (LyX writes a marker only at the (type, author)
+              // transition; dev log 121 D-C1). When the region does not
+              // continue, the block closes itself.
+              const marker: PropertyNode = {
+                type: "property",
+                key: "change_inserted",
+                value: `${insertAuthorId} ${insertTs}`,
+              };
+              if (splitRegionContinues) {
+                splitParentList.splice(insertIdx, 0, marker, copy, {
                   type: "property",
                   key: splitRegionInfo.key,
                   value: `${splitRegionInfo.author} ${splitRegionInfo.ts}`,
                 });
-                splitInsertOffset++;
+                splitInsertOffset += 3;
+              } else {
+                splitParentList.splice(insertIdx, 0, marker, copy, { type: "property", key: "change_unchanged" });
+                splitInsertOffset += 3;
               }
+            } else {
+              // Current text (no region at the split point): self-contained
+              // tracked block.
+              const wrapped = wrapInChangeMarkers([copy], "inserted", insertAuthorId, insertTs);
+              splitParentList.splice(insertIdx, 0, ...wrapped);
+              splitInsertOffset += wrapped.length;
             }
           } else {
             splitParentList.splice(insertIdx, 0, copy);
