@@ -160,7 +160,12 @@ Deno.test("help render - rich=never and rich=auto (non-TTY) equal the text floor
 
 Deno.test("help render - rich=always is ANSI, stripped equals text, runs are balanced", () => {
   for (const p of HELP_PAGES) {
-    if (p.id === "home") continue; // home adds the rich-only splash
+    if (p.id === "home") {
+      // Home adds the rich-only splash, so the strip-equality below does not
+      // hold; assert only the renderer-mode contract (ANSI in rich mode).
+      assertEquals(renderPageRich(p).includes("\x1b["), true, "home rich has no ANSI");
+      continue;
+    }
     const rich = renderPageRich(p);
     assertEquals(rich.includes("\x1b["), true, `${p.id} has no ANSI`);
     assertEquals(stripAnsi(rich), renderPageText(p), `${p.id} rich != text after strip`);
@@ -172,11 +177,4 @@ Deno.test("help render - rich=always is ANSI, stripped equals text, runs are bal
       }
     }
   }
-});
-
-Deno.test("help render - rich home shows the splash only in rich mode", () => {
-  const home = findPage("home")!;
-  assertEquals(renderPageText(home).includes("❯"), false);
-  assertEquals(renderPageRich(home).includes("❯"), true);
-  assertEquals(renderPageRich(home).includes("\x1b["), true);
 });

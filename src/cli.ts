@@ -186,7 +186,7 @@ async function configFileExists(statePaths: StatePaths): Promise<boolean> {
 
 // Helper to get default layouts dir based on OS.
 // Scans for installed LyX versions instead of hardcoding a version number.
-async function getDefaultLayoutsDir(): Promise<string> {
+export async function getDefaultLayoutsDir(): Promise<string> {
   if (Deno.build.os === "windows") {
     const bases = [
       Deno.env.get("PROGRAMFILES"),

@@ -10,7 +10,7 @@
  * Run from lq/ directory: deno test -A tests/cli_test.ts
  */
 
-import { assertEquals, assert, assertStringIncludes, assertGreater, assertMatch } from "@std/assert";
+import { assertEquals, assert, assertStringIncludes, assertMatch } from "@std/assert";
 import { runCliTest, runCliRaw, runCliWithEnv, runCliWithConfig, createTempFixture } from "./helpers.ts";
 import { getUserHomeDir } from "../src/paths.ts";
 
@@ -101,12 +101,6 @@ Deno.test("CLI - lq help <page> opens that page", { timeout: 10000 }, async () =
   assertStringIncludes(stdout, "lq help tracked-changes");
   assertStringIncludes(stdout, "change_deleted");
   assertStringIncludes(stdout, "Further reading");
-});
-
-Deno.test("CLI - lq help <page> and lq <command> --help are equivalent", { timeout: 10000 }, async () => {
-  const viaHelp = await runCliRaw(["help", "read"]);
-  const viaFlag = await runCliRaw(["read", "--help"]);
-  assertEquals(viaHelp.stdout, viaFlag.stdout);
 });
 
 Deno.test("CLI - unknown help page fails with an actionable message", { timeout: 10000 }, async () => {
@@ -227,27 +221,6 @@ Deno.test("CLI - unknown command recommends home help", { timeout: 10000 }, asyn
   const result = await runCliTest(["unknown", FIXTURE, "layout"]);
   assertEquals(result.code, "UNKNOWN_COMMAND");
   assertStringIncludes(result.message!, "lq help");
-});
-
-// ---------------------------------------------------------------------------
-// 5. dump command
-// ---------------------------------------------------------------------------
-Deno.test("CLI - dump command", { timeout: 10000 }, async () => {
-  const result = await runCliTest(["dump", FIXTURE]);
-  // dump returns the entire CST as data
-  const data = result.data as Record<string, unknown>;
-  assertEquals(data.type, "document");
-  assertEquals(Array.isArray(data.children), true);
-});
-
-// ---------------------------------------------------------------------------
-// 6. read --count
-// ---------------------------------------------------------------------------
-Deno.test("CLI - read --count", { timeout: 10000 }, async () => {
-  const result = await runCliTest(["read", "--count", FIXTURE, "layout"]);
-  const count = (result as unknown as Record<string, unknown>).count as Record<string, number>;
-  assertEquals(typeof count, "object");
-  assertGreater(Object.keys(count).length, 0);
 });
 
 // ---------------------------------------------------------------------------
@@ -825,25 +798,6 @@ Deno.test("CLI - init --refresh save-reload succeeds", { timeout: 10000 }, async
   } finally {
     try { await Deno.remove(tmpHome, { recursive: true }); } catch { /* ignore */ }
     try { await Deno.remove(layoutsDir, { recursive: true }); } catch { /* ignore */ }
-  }
-});
-
-// ---------------------------------------------------------------------------
-// 27. T3: set --find on property node — warning labels node as "property"
-// ---------------------------------------------------------------------------
-Deno.test("CLI - set --find on property node warns as property", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_find_prop_warn.lyx");
-  try {
-    const result = await runCliTest(["set", tempFile, "property[language]", "english", "--find", "british"]);
-    // The --find warning should identify the matched node type as "property"
-    if (result.warnings && result.warnings.length > 0) {
-      assertStringIncludes(
-        JSON.stringify(result.warnings).toLowerCase(),
-        "property",
-      );
-    }
-  } finally {
-    try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
 

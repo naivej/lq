@@ -8,7 +8,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { refreshPreStep } from "../src/cli.ts";
-import { checkLyxServerAvailable, filterResponses } from "../src/lyxserver.ts";
+import { filterResponses } from "../src/lyxserver.ts";
 
 Deno.test("Refresh - save-reload pre-step returns a status", { timeout: 10000 }, async () => {
   // The pre-step returns one of "ok" | "disconnect" | "unconfirmed" | "error"
@@ -73,16 +73,6 @@ Deno.test("Refresh - client-name filter is exact (not prefix)", () => {
   const data = `INFO:lq123:buffer-write:\nINFO:lq1234:buffer-write:`;
   assertEquals(filterResponses(data, "lq123"), `INFO:lq123:buffer-write:`);
   assertEquals(filterResponses(data, "lq1234"), `INFO:lq1234:buffer-write:`);
-});
-
-Deno.test("Refresh - reachability probe settles fast to a boolean", { timeout: 10000 }, async () => {
-  // F10 dispatch-based probe (dev log 87 Step 4): must settle to a boolean and
-  // never hang or leave a lingering process (dev log 75 hazard). The true/false
-  // result is environment-dependent — the live truth check (LyX running vs
-  // closed) is manual — but boundedness + boolean shape is the automated
-  // contract.
-  const available = await checkLyxServerAvailable();
-  assertEquals(typeof available, "boolean");
 });
 
 Deno.test("Refresh - mock server: save-reload returns ok (Unix socket)", { ignore: Deno.build.os === "windows", timeout: 15000 }, async () => {

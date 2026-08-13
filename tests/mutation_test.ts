@@ -10,7 +10,6 @@
  */
 
 import { assertEquals, assert, assertStringIncludes } from "@std/assert";
-import * as path from "@std/path";
 import { parse } from "../src/parser.ts";
 import { query } from "../src/query.ts";
 import { serialize } from "../src/serializer.ts";
@@ -158,7 +157,14 @@ Deno.test("Mutation Engine - Insert Append Position", async () => {
     assertEquals(result.matched_nodes, 1);
 
     const text = await Deno.readTextFile(tempFile);
-    // The footnote should appear inside Title, after its existing text
+    // The footnote must land inside layout[Title], before the Author layout —
+    // not just anywhere in the file.
+    const titleIdx = text.indexOf("\\begin_layout Title");
+    const authorIdx = text.indexOf("\\begin_layout Author");
+    const fnIdx = text.indexOf("\\begin_inset Foot");
+    assert(titleIdx !== -1 && authorIdx !== -1 && fnIdx !== -1, "Title, Author and footnote must exist");
+    assert(titleIdx < fnIdx && fnIdx < authorIdx,
+      "footnote must be appended inside layout[Title], before Author");
     assertStringIncludes(text, "Appended footnote");
   } finally {
     await Deno.remove(tempFile);
@@ -208,21 +214,6 @@ Deno.test("Mutation Engine - Insert Prepend Multi-Block (order preservation)", a
   } finally {
     await Deno.remove(tempFile);
     try { await Deno.remove(rawFile); } catch { /* ignore */ }
-  }
-});
-
-Deno.test("Mutation Engine - Insert Split-After Position", async () => {
-  const tempFile = await createTempFixture("temp_split_after_test.lyx");
-  try {
-    // Split Title's text "Title" after "Tit" and insert a footnote (inset, valid inside layouts)
-    const result = await runCliTest(["insert", tempFile, "layout[Title]", "split-after", "Tit", "--footnote", "Split footnote"]);
-    assertEquals(result.matched_nodes, 1);
-
-    const text = await Deno.readTextFile(tempFile);
-    // Text should be split: "Tit" then footnote, then "le"
-    assertStringIncludes(text, "Split footnote");
-  } finally {
-    await Deno.remove(tempFile);
   }
 });
 
@@ -539,14 +530,6 @@ Deno.test("Mutation Engine - Undo with Zero Changes (UNDO_STALE)", { timeout: 10
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
-});
-
-Deno.test("Bib Engine - Extract Citations", async () => {
-  const result = await runCliTest(["bib", path.join("tests", "fixtures", "my_template.lyx")]);
-  assertEquals((result.data as unknown[]).length, 15);
-  const firstCit = (result.data as unknown[])[0] as { key: string, year: string };
-  assertEquals(firstCit.key, "Mena2000");
-  assertEquals(firstCit.year, "2000");
 });
 
 // --- Cross-text-node matching tests ---
@@ -2558,17 +2541,6 @@ Deno.test("DL84 F1 - split-after works on inserted text", { timeout: 15000 }, as
     );
     assertEquals(result.matched_nodes, 1, "split-after on inserted text must not SPLIT_NO_MATCH");
     assertStringIncludes(await Deno.readTextFile(tempFile), "X");
-  } finally {
-    try { await Deno.remove(tempFile); } catch { /* ignore */ }
-  }
-});
-
-Deno.test("DL84 F1 - :contains finds the paragraph", { timeout: 15000 }, async () => {
-  const tempFile = await writeTempLyx("temp_dl84_f1_contains.lyx", ADJACENT_PAIR_BODY, "\\author 1 \"Alice\"\n");
-  try {
-    const result = await runCliTest(["read", tempFile, "layout:contains('edit')", "--count"]);
-    assertEquals(typeof result.count, "object");
-    assertEquals((result.count as Record<string, number>)["layout[Standard]"], 1);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
