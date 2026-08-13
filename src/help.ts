@@ -29,7 +29,7 @@ export interface FurtherReading {
 export interface HelpPage {
   /** Stable prefixed page ID, e.g. "commands/read"; "home" has no prefix. */
   id: string;
-  /** Short title shown in the home page map. */
+  /** Short descriptive title; rendered as the non-home page header. */
   title: string;
   /** Ordered sections (heading + body). */
   sections: HelpSection[];
@@ -464,7 +464,7 @@ export const HELP_PAGES: HelpPage[] = [
           "Example: `layout[Section]:contains(some phrase):first ~ layout[Standard]:until(layout[Section])` selects the Standard paragraphs between the first section that contains `some phrase` and the next section, stopping before the next section's heading.\n\n" +
           "The check also covers descendant candidates: a bare arm such as `layout[Section]:contains(some phrase):first ~ layout:until(layout[Section])` stops the whole subtree before the next heading, so the next section's heading and its content are not pulled in.\n\n" +
           "With several anchors (the left side matched more than one node), each candidate is bounded by its nearest preceding anchor: the range from one anchor is never cut by a boundary that belongs to a later anchor's range. With a bare left arm such as `layout ~ layout:until(layout[Section])` every matched node is itself an anchor, so each boundary re-opens the range after itself — anchor at one level with `:first` or a unique `:contains()` to keep the span predictable.\n\n" +
-          "`:until()` without `~` is rejected as an invalid selector on every command (`read` / `dump` / `set` / `delete` / `insert` / replay `undo`): the bound has nothing to bound.",
+          "`:until()` without `~` is rejected as an invalid selector on every command: the bound has nothing to bound.",
       ),
       sec(
         "Selector scope for mutations",

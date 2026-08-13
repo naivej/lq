@@ -13,6 +13,7 @@
 import { assertEquals, assert, assertStringIncludes, assertMatch } from "@std/assert";
 import { fromFileUrl } from "@std/path";
 import { runCliTest, runCliRaw, runCliWithEnv, runCliWithConfig, createTempFixture } from "./helpers.ts";
+import { findByReach } from "../src/help.ts";
 import { getUserHomeDir } from "../src/paths.ts";
 
 const FIXTURE = fromFileUrl(new URL("./fixtures/my_template.lyx", import.meta.url));
@@ -99,7 +100,7 @@ Deno.test("CLI - lq help opens the home page map", { timeout: 10000 }, async () 
 
 Deno.test("CLI - lq help <page> opens that page", { timeout: 10000 }, async () => {
   const { stdout } = await runCliRaw(["help", "tracked-changes"]);
-  assertStringIncludes(stdout, "lq help tracked-changes");
+  assertStringIncludes(stdout, "change regions and tracked behavior");
   assertStringIncludes(stdout, "change_deleted");
   assertStringIncludes(stdout, "Further reading");
 });
@@ -133,13 +134,9 @@ const TOPIC_REACHES = [
 const ALL_REACHES = [...COMMAND_REACHES, ...TOPIC_REACHES];
 
 Deno.test("CLI - every help page is reachable via lq help <page>", { timeout: 30000 }, async () => {
-  for (const reach of COMMAND_REACHES) {
+  for (const reach of ALL_REACHES) {
     const { stdout } = await runCliRaw(["help", reach]);
-    assertStringIncludes(stdout, `lq ${reach}`, `command page ${reach} not reachable`);
-  }
-  for (const reach of TOPIC_REACHES) {
-    const { stdout } = await runCliRaw(["help", reach]);
-    assertStringIncludes(stdout, `lq help ${reach}`, `topic page ${reach} not reachable`);
+    assertStringIncludes(stdout, findByReach(reach)!.title, `help page ${reach} not reachable`);
   }
 });
 
