@@ -536,8 +536,8 @@ export const HELP_PAGES: HelpPage[] = [
           "  persist, including 'layoutsDir'.\n\n" +
           "Setting a non-'none' refresh mode runs a fast reachability probe; a probe\n" +
           "warning does not abort init. On Windows, LyXServer can lose a response even\n" +
-          "though the command was dispatched, so an unconfirmed save proceeds with a\n" +
-          "warning rather than aborting.",
+          "after dispatch, so an unconfirmed save proceeds with a warning rather than\n" +
+          "aborting.",
       ),
     ],
     furtherReading: [

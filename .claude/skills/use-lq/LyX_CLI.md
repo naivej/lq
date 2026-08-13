@@ -123,6 +123,20 @@ Import formats for `-i` (any format with a converter chain to `.lyx`):
 
 `tex2lyx` is the dedicated TeX→LyX converter and is faster and more reliable than `lyx -batch -i`. For non-LaTeX formats, availability depends on what converters are installed on the system — test with a small file first.
 
+### Acceptance check and verification
+
+`deno test` verifies lq's parser, query engine, serializer, and mutation logic; only LyX confirms that a file is acceptable. The acceptance check is a headless export, run with a timeout:
+
+```text
+"<LyX>/bin/lyx.exe" -e latex document.lyx
+```
+
+Exit 0 with an output file means LyX parsed the document; a non-zero exit or a lingering process usually means LyX opened a modal parse-error dialog. `lyx.exe` is normally not on `PATH` — find the installation root through `lq init`.
+
+For high-risk changes, verify on a copy: apply the mutation to a temporary copy of the fixture or document, export under a bounded process timeout, inspect the generated output, and record the result in the relevant development log. Never use a repository fixture as a scratch file for manual mutation tests; restore or delete temporary files after verification.
+
+Generate ground-truth syntax with `"<LyX>/bin/tex2lyx.exe" -f input.tex output.lyx`; prefer LyX-generated examples over hand-written syntax for unfamiliar structures.
+
 ### Open GUI (for LyXServer refresh)
 
 ```bash
@@ -130,7 +144,7 @@ Import formats for `-i` (any format with a converter chain to `.lyx`):
 "{lyx}" -r doc.lyx                       # reuse running instance
 ```
 
-Omit `-batch`. The GUI is for LyXServer connection + human review. If LyXServer is unreachable after launch, stop and ask the user — do not invent LFUN workarounds.
+Omit `-batch`. The GUI is for LyXServer connection + human review. If LyXServer is unreachable after launch, stop and ask the user — do not invent LFUN workarounds. For refresh modes and can't-connect troubleshooting, see [`LyXServer.md`](LyXServer.md).
 
 ### Requirements & notes
 

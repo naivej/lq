@@ -2,7 +2,9 @@
 
 An inset is `\begin_inset <type> ... \end_inset`. What sits between the two markers is the **metadata** that controls how the inset behaves and how it is exported. This reference covers the metadata of the insets you will meet most often, grouped by how they serialize.
 
-All facts below are verified against LyX 2.5.1 source (`src/insets/*`) and real `.lyx` files.
+The LyX writer is more authoritative than a permissive reader: a lossless round trip should satisfy `serialize(parse(file_text)) === file_text`. Some conventions are cosmetic, but structural markers, inset status lines, header entries, and change regions must stay valid for LyX to open the file. Use `lq dump` on a LyX-generated fixture when the CST shape is uncertain; what looks like markup inside an ERT inset may be literal text.
+
+All facts below are verified against LyX 2.5.1 source (`src/insets/*`) and real `.lyx` files. The preamble serialization lives in [`LyX_preamble.md`](LyX_preamble.md).
 
 ## 1. Serialization families
 

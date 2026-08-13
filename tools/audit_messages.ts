@@ -13,6 +13,12 @@
  * src/. Dynamic expressions are retained as source expressions and marked
  * dynamic because static analysis cannot evaluate their runtime values.
  *
+ * Help content is harvested from the `HELP_PAGES` catalog in src/help.ts
+ * (dev log 113): every page title, section heading and body, and
+ * further-reading hint becomes a `help` entry, and the `renderPage` render
+ * path inside `printHelpPage` is treated as help output rather than generic
+ * stdout.
+ *
  * With no --output, reports are written below lq/audit/. That directory is
  * generated output; pass an explicit path when a report should be retained
  * somewhere else. The report is deterministic and contains no timestamp.
@@ -77,6 +83,25 @@ function staticText(expression: ts.Expression | undefined): string | undefined {
   return undefined;
 }
 
+/**
+ * Fold a chain of string literals joined by `+` into one string, so catalog
+ * section bodies (authored as concatenations) resolve to their full static
+ * text. Returns undefined when any operand is not a static string.
+ */
+function foldedStaticText(expression: ts.Expression | undefined): string | undefined {
+  if (expression === undefined) return undefined;
+  const unwrapped = unwrapExpression(expression);
+  if (ts.isStringLiteral(unwrapped) || ts.isNoSubstitutionTemplateLiteral(unwrapped)) {
+    return unwrapped.text;
+  }
+  if (ts.isBinaryExpression(unwrapped) && unwrapped.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const left = foldedStaticText(unwrapped.left);
+    const right = foldedStaticText(unwrapped.right);
+    return left !== undefined && right !== undefined ? left + right : undefined;
+  }
+  return undefined;
+}
+
 function expressionText(expression: ts.Expression, sourceFile: ts.SourceFile): string {
   return expression.getText(sourceFile).trim();
 }
@@ -116,7 +141,7 @@ function describeExpression(
   sourceFile: ts.SourceFile,
 ): { expression: string; message: string; dynamic: boolean } {
   const source = expressionText(expression, sourceFile);
-  const literal = staticText(expression);
+  const literal = foldedStaticText(expression);
   return {
     expression: source,
     message: literal ?? source,
@@ -152,14 +177,46 @@ function isErrorName(name: string | undefined): boolean {
 }
 
 function isHelpExpression(expression: ts.Expression): boolean {
-  return propertyAccessPath(expression)?.[0] === "HELP_TEXTS";
+  // A direct reference to the help catalog.
+  if (propertyAccessPath(expression)?.[0] === "HELP_PAGES") return true;
+  // The render path: `console.log(renderPage(page, rich))` inside printHelpPage.
+  const unwrapped = unwrapExpression(expression);
+  return ts.isCallExpression(unwrapped) && propertyAccessPath(unwrapped.expression)?.[0] === "renderPage";
 }
 
-function propertyName(propertyName: ts.PropertyName, sourceFile: ts.SourceFile): string {
-  if (ts.isIdentifier(propertyName) || ts.isStringLiteral(propertyName) || ts.isNumericLiteral(propertyName)) {
-    return propertyName.text;
+/** The initializer of the named property in an object literal, if any. */
+function propertyValue(
+  objectLiteral: ts.ObjectLiteralExpression,
+  name: string,
+): ts.Expression | undefined {
+  for (const property of objectLiteral.properties) {
+    if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === name) {
+      return property.initializer;
+    }
   }
-  return propertyName.getText(sourceFile);
+  return undefined;
+}
+
+/**
+ * The static string field of one catalog entry, whether authored as an object
+ * literal property (`{ heading, body }`) or a constructor call
+ * (`sec(heading, body)` / `fr(page, hint)`). Returns undefined when the field
+ * is absent or not a static string literal.
+ */
+function catalogField(
+  node: ts.Expression,
+  propertyName: string,
+  argumentIndex: number,
+): ts.Expression | undefined {
+  const unwrapped = unwrapExpression(node);
+  if (ts.isObjectLiteralExpression(unwrapped)) {
+    const value = propertyValue(unwrapped, propertyName);
+    return value !== undefined && staticText(value) !== undefined ? value : undefined;
+  }
+  if (ts.isCallExpression(unwrapped) && unwrapped.arguments.length > argumentIndex) {
+    return unwrapped.arguments[argumentIndex];
+  }
+  return undefined;
 }
 
 function collectHelpEntries(
@@ -168,25 +225,81 @@ function collectHelpEntries(
   packageRoot: string,
   entries: MessageRecord[],
 ): void {
-  if (!ts.isIdentifier(node.name) || node.name.text !== "HELP_TEXTS" || node.initializer === undefined) return;
+  if (!ts.isIdentifier(node.name) || node.name.text !== "HELP_PAGES" || node.initializer === undefined) return;
   const initializer = unwrapExpression(node.initializer);
-  if (!ts.isObjectLiteralExpression(initializer)) return;
+  if (!ts.isArrayLiteralExpression(initializer)) return;
 
-  for (const property of initializer.properties) {
-    if (!ts.isPropertyAssignment(property)) continue;
-    const value = property.initializer;
-    entries.push(
-      makeRecord(
-        sourceFile,
-        packageRoot,
-        property,
-        value,
-        "help",
-        "stdout",
-        `HELP_TEXTS.${propertyName(property.name, sourceFile)}`,
-      ),
-    );
-  }
+  initializer.elements.forEach((element) => {
+    const page = unwrapExpression(element);
+    if (!ts.isObjectLiteralExpression(page)) return;
+    const id = staticText(propertyValue(page, "id"));
+    if (id === undefined) return;
+
+    const title = propertyValue(page, "title");
+    if (title !== undefined && staticText(title) !== undefined) {
+      entries.push(makeRecord(sourceFile, packageRoot, title, title, "help", "stdout", `HELP_PAGES.${id}.title`));
+    }
+
+    const sections = propertyValue(page, "sections");
+    if (sections !== undefined) {
+      const list = unwrapExpression(sections);
+      if (ts.isArrayLiteralExpression(list)) {
+        list.elements.forEach((sectionElement, index) => {
+          const heading = catalogField(sectionElement, "heading", 0);
+          const body = catalogField(sectionElement, "body", 1);
+          if (heading !== undefined) {
+            entries.push(
+              makeRecord(
+                sourceFile,
+                packageRoot,
+                heading,
+                heading,
+                "help",
+                "stdout",
+                `HELP_PAGES.${id}.sections[${index}].heading`,
+              ),
+            );
+          }
+          if (body !== undefined) {
+            entries.push(
+              makeRecord(
+                sourceFile,
+                packageRoot,
+                body,
+                body,
+                "help",
+                "stdout",
+                `HELP_PAGES.${id}.sections[${index}].body`,
+              ),
+            );
+          }
+        });
+      }
+    }
+
+    const furtherReading = propertyValue(page, "furtherReading");
+    if (furtherReading !== undefined) {
+      const list = unwrapExpression(furtherReading);
+      if (ts.isArrayLiteralExpression(list)) {
+        list.elements.forEach((linkElement, index) => {
+          const hint = catalogField(linkElement, "hint", 1);
+          if (hint !== undefined) {
+            entries.push(
+              makeRecord(
+                sourceFile,
+                packageRoot,
+                hint,
+                hint,
+                "help",
+                "stdout",
+                `HELP_PAGES.${id}.furtherReading[${index}].hint`,
+              ),
+            );
+          }
+        });
+      }
+    }
+  });
 }
 
 function collectCallEntry(
@@ -230,9 +343,12 @@ function collectCallEntry(
 
   if (
     callee?.[0] === "Deno" &&
-    callee.length >= 3 &&
-    (callee[1] === "stdout" || callee[1] === "stderr")
+    callee.length === 3 &&
+    (callee[1] === "stdout" || callee[1] === "stderr") &&
+    (callee[2] === "write" || callee[2] === "writeSync")
   ) {
+    // Only actual stream writes are output. Property queries such as
+    // `Deno.stdout.isTerminal()` are not user-visible writes.
     const kind: MessageKind = callee[1];
     const channel: MessageChannel = callee[1];
     const expression = node.arguments[0] ?? node;
@@ -318,12 +434,22 @@ function emptyCounts<T extends string>(values: T[]): Record<T, number> {
   return Object.fromEntries(values.map(value => [value, 0])) as Record<T, number>;
 }
 
+function compareStrings(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
 function compareRecords(left: MessageRecord, right: MessageRecord): number {
   const kindDifference = MESSAGE_KINDS.indexOf(left.kind) - MESSAGE_KINDS.indexOf(right.kind);
   if (kindDifference !== 0) return kindDifference;
-  const leftKey = `${left.file}\0${left.line}\0${left.column}\0${left.sink}`;
-  const rightKey = `${right.file}\0${right.line}\0${right.column}\0${right.sink}`;
-  return leftKey < rightKey ? -1 : leftKey > rightKey ? 1 : 0;
+  // Line and column compare numerically, not lexicographically, so a page at
+  // line 69 sorts before one at line 100.
+  const fileDifference = compareStrings(left.file, right.file);
+  if (fileDifference !== 0) return fileDifference;
+  const lineDifference = left.line - right.line;
+  if (lineDifference !== 0) return lineDifference;
+  const columnDifference = left.column - right.column;
+  if (columnDifference !== 0) return columnDifference;
+  return compareStrings(left.sink, right.sink);
 }
 
 export async function auditPackage(packageRoot = DEFAULT_PACKAGE_ROOT): Promise<AuditReport> {
