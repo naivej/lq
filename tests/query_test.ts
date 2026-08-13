@@ -136,24 +136,24 @@ Deno.test("Query Engine on LyX Document", async () => {
   try { parseSelector('layout:adjacent()'); } catch { adjParseError = true; }
   assertEquals(adjParseError, true);
 
-  // :not() with a bare :contains inner: the inner selector matches only
-  // block descendants (text nodes never match :contains), so a layout's own
-  // text is invisible to it. 59 layouts; 2 hold inset metadata containing
-  // "Section" (the Section's label inset `name "sec:Section_label"` and the
-  // following Standard's ref inset) — both are excluded.
+  // :not() with a bare :contains inner (DL115): the inner also matches the
+  // node's own text, so :contains/:not(:contains) partition. 59 layouts; 2
+  // hold "Section" — the Section heading (own text + label inset) and the
+  // following Standard (ref inset) — both are excluded.
   const notContains = query(ast, 'layout:not(:contains("Section"))');
   assertEquals(notContains.length, 57);
 
   // :adjacent() with a bare :contains inner matches the previous sibling's
-  // FULL subtree (unlike :not), so the two layouts directly after a Section
-  // match — the same pair as the tagged afterSection check above.
+  // FULL subtree, so the two layouts directly after a Section match — the
+  // same pair as the tagged afterSection check above.
   const adjContains = query(ast, 'layout:adjacent(:contains("Section"))');
   assertEquals(adjContains.length, 2);
 
-  // :not() inner :contains never matches the node's own text: the phrase
-  // "tracked changes" lives in direct Standard text, so nothing is excluded.
+  // :not() inner :contains also matches the node's own text (DL115): the
+  // phrase "tracked changes" lives in one Standard's direct text, so that
+  // Standard is excluded — 10 of 11 remain.
   const notInnerContains = query(ast, 'layout[Standard]:not(:contains("tracked changes"))');
-  assertEquals(notInnerContains.length, 11);
+  assertEquals(notInnerContains.length, 10);
 
   // T6: Chained :contains() pseudo-classes work as AND
   // layout[Standard]:contains('writing'):contains('paper') matches only
@@ -168,6 +168,36 @@ Deno.test("Query Engine on LyX Document", async () => {
   assertEquals(dualParsed[0][0].pseudos!.length, 2);
   assertEquals(dualParsed[0][0].pseudos![0].name, "contains");
   assertEquals(dualParsed[0][0].pseudos![1].name, "contains");
+});
+
+// --- Dev log 115: :not(:contains(...)) sees a block's own text ---
+
+Deno.test("DL115 - :contains/:not(:contains) partition; own text included", async () => {
+  const text = await Deno.readTextFile("tests/fixtures/my_template.lyx");
+  const ast = parse(text);
+  const allLayouts = query(ast, "layout");
+
+  // :contains(x) and :not(:contains(x)) must partition all layouts.
+  // Phrases: own text only / inset metadata (+ heading own text) / absent.
+  for (const phrase of ["tracked changes", "Section", "sec:Section_label", "GDP", "nickel(0)"]) {
+    const pos = query(ast, `layout:contains("${phrase}")`);
+    const neg = query(ast, `layout:not(:contains("${phrase}"))`);
+    assertEquals(pos.length + neg.length, allLayouts.length, `partition size for ${phrase}`);
+    const posSet = new Set(pos);
+    assertEquals(neg.some((n) => posSet.has(n)), false, `overlap for ${phrase}`);
+  }
+
+  // Note-visibility guard: bare :contains cannot see private-note prose
+  // (DL99), so the bare negation must not exclude a layout inside a private
+  // note either — the note's inner Plain Layout carries the phrase in its
+  // own text and stays in the negation result.
+  const notePhrase = "I like to use lyx note";
+  assertEquals(query(ast, `layout:contains("${notePhrase}")`).length, 0);
+  const negNote = query(ast, `layout:not(:contains("${notePhrase}"))`);
+  const ownTextHolders = negNote.filter((n) =>
+    n.type === "block" && n.children.some((c) => c.type === "text" && c.text.includes(notePhrase))
+  );
+  assertEquals(ownTextHolders.length, 1);
 });
 
 // --- Dev log 90: :change(current|inserted|deleted) pseudo-class ---

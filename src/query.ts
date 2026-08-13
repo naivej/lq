@@ -575,6 +575,18 @@ function matchNode(
         if (node.type === "block") {
           const matches = findDescendants(node.children, innerPart, [], stateIndex, insideNoteIndex, noteScope);
           if (matches.length > 0) return false;
+          // DL115: a :contains inner also matches the node's OWN text (the
+          // positive form's nodeContainsText covers it), so check the node
+          // itself too — :contains(x) and :not(:contains(x)) partition.
+          // Non-:contains inners have no self dimension (tag inners fail the
+          // tag check; :note/:change/:property inherit to descendants), so
+          // the self-check is gated on :contains to keep them byte-identical
+          // (dev log 115 Option A vs rejected Option D).
+          const hasContains = innerPart.pseudos?.some((pp) => pp.name === "contains") ?? false;
+          if (hasContains &&
+              matchNode(node, innerPart, region, propState, stateIndex, insideNoteIndex, noteScope)) {
+            return false;
+          }
         }
         // For non-block nodes, :not() always passes (there are no descendants to check).
       }

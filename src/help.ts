@@ -429,7 +429,7 @@ export const HELP_PAGES: HelpPage[] = [
           "`text:contains(...)` never matches: text nodes are not returned for `:contains` (lq would otherwise mutate each matched text node twice), so that selector form always yields an empty match. lq warns when a selector contains this dead arm.\n\n" +
           "The text may be given bare, or quoted with either single (`'...'`) or double (`\"...\"`) quotes. The quotes are stripped by the parser and exist only to allow a literal `'`, `\"`, `(`, or `)` inside the phrase. Prefer double quotes when the phrase itself contains an apostrophe.\n\n" +
           "**`:not(selector)`**\n\n" +
-          "`:not()` excludes a block whose subtree contains a match of the inner selector.\n\n" +
+          "`:not()` excludes a block whose subtree contains a match of the inner selector. A `:contains()` inner also matches the block's own text, so `:contains(x)` and `:not(:contains(x))` partition the document.\n\n" +
           "Example: `layout[Standard]:not(inset[Formula])` selects the Standard paragraphs that do not contain a Formula inset.\n\n" +
           "Text and property nodes have no descendants, so they always pass.\n\n" +
           "**`:change(region)`**\n\n" +
