@@ -33,7 +33,7 @@ const SAFETY_TERMS = ["rejected", "hard error", "writes nothing", "cannot", "nev
  *  Keep in sync with brand/splash-ansi.sh. */
 const SPLASH =
   "\n" +
-  "  \x1b[1;38;5;202m❯\x1b[0m\x1b[1;38;5;220m❯\x1b[0m \x1b[38;5;230mlq\x1b[0m\x1b[38;5;33m ▉\x1b[0m\n" +
+  "  \x1b[38;2;194;65;12m❯\x1b[0m\x1b[38;2;255;255;0m❯\x1b[0m \x1b[38;2;247;244;236mlq\x1b[0m\x1b[38;2;31;111;235m ▉\x1b[0m\n" +
   "\n";
 
 /** Render a help page for stdout, honoring the `--rich` mode. */
