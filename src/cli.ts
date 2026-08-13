@@ -1168,7 +1168,8 @@ export async function runCli(args: string[]) {
         printError("REFRESH_PRE_ERROR",
           "save-reload: LyX reported an error saving the buffer, so unsaved edits " +
           "may not be on disk.\n" +
-          "Writing the file now would permanently destroy unsaved changes."
+          "Writing the file now would permanently destroy unsaved changes.\n" +
+          "Resolve the save error in LyX, then retry this command."
         );
         return;
       }
@@ -2280,7 +2281,7 @@ function foldNegativeDepth(args: string[]): string[] {
         if (targetNode.type !== "block") {
           const message = position === "split-after"
             ? "Cannot split-after to a non-block node. Select a layout or inset block and apply :change(...) or :property(...) to that block; text selectors cannot be split directly."
-            : `Cannot ${position} to a non-block node.`;
+            : `Cannot use position '${position}' on a non-block node.`;
           printError("INVALID_TARGET", message);
 
         }

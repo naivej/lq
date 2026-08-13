@@ -11,6 +11,10 @@ export function parse(text: string, isSnippet = false): DocumentNode {
   const lines = text.split(/\r?\n/);
   const root: DocumentNode = { type: "document", children: [] };
   const stack: BlockNode[] = [];
+  // Opening line (0-based, matching the 'at line N' convention of the
+  // mismatched-end-tag error) of each open block, so an unclosed block can be
+  // reported with a locatable line.
+  const stackLine: number[] = [];
 
   let inOpaqueBlock = false;
   let opaqueTag = "";
@@ -22,6 +26,7 @@ export function parse(text: string, isSnippet = false): DocumentNode {
       if (line === `\\end_${opaqueTag}`) {
         inOpaqueBlock = false;
         stack.pop();
+        stackLine.pop();
       } else {
         stack[stack.length - 1].children.push({ type: "text", text: line });
       }
@@ -40,6 +45,7 @@ export function parse(text: string, isSnippet = false): DocumentNode {
         root.children.push(block);
       }
       stack.push(block);
+      stackLine.push(i);
 
       if (tag === "preamble" || (tag === "inset" && (args === "Formula" || args === "ERT"))) {
         inOpaqueBlock = true;
@@ -55,6 +61,7 @@ export function parse(text: string, isSnippet = false): DocumentNode {
         throw new Error(`Mismatched end tag: expected ${stack[stack.length - 1]?.tag}, got ${tag} at line ${i}`);
       }
       stack.pop();
+      stackLine.pop();
       continue;
     }
 
@@ -72,6 +79,7 @@ export function parse(text: string, isSnippet = false): DocumentNode {
           root.children.push(block);
         }
         stack.push(block);
+        stackLine.push(i);
         continue;
       }
 
@@ -93,7 +101,9 @@ export function parse(text: string, isSnippet = false): DocumentNode {
   }
 
   if (stack.length > 0) {
-    throw new Error(`Unclosed tag: ${stack[stack.length - 1].tag}`);
+    throw new Error(
+      `Unclosed tag: ${stack[stack.length - 1].tag} (opened at line ${stackLine[stackLine.length - 1]})`,
+    );
   }
 
   return root;
