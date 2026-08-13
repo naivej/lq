@@ -99,10 +99,14 @@ function appendHomeMap(out: string[], emit: (line: string) => string): void {
   out.push("");
   out.push(emit("Pages"));
   out.push("-".repeat("Pages".length));
-  for (const group of groupedPages()) {
+  const groups = groupedPages();
+  const maxReach = Math.max(
+    ...groups.flatMap((g) => g.pages.map((p) => reachOf(p.id).length)),
+  );
+  for (const group of groups) {
     out.push(emit(`${group.group}/`));
     for (const p of group.pages) {
-      out.push(emit(`  ${reachOf(p.id)}    lq help ${reachOf(p.id)}`));
+      out.push(emit(`  ${reachOf(p.id).padEnd(maxReach)}    lq help ${reachOf(p.id)}`));
     }
   }
 }

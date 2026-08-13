@@ -32,8 +32,6 @@
   - **Confirmations are unreliable**: LyX's Windows pipe server can lose a command's *response* even though the command executed (a LyX server behavior — no client read strategy fixes it). `lq` therefore treats a command as dispatched once it is written to the pipe, and a lost confirmation only downgrades the outcome. **warnings mean "unconfirmed", not "failed"** — the command was dispatched and almost certainly executed. When warnings repeat, restart LyX to restore a healthy server.
   - **Refresh round-trips are slow (~4 s per mutation)**: recovering a lost confirmation re-sends the command on a fresh connection, so a refresh-enabled mutation averages two pipe round-trips (~2 s each) instead of one. **Turning off live GUI sync with `--refresh none` (the default) for almost instant `lq`**.
 
-## [User Manual](.claude/skills/use-lq/SKILL.md)
-
 ## Development
 
 Requires **Deno 2.8+**.

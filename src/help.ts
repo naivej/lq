@@ -146,7 +146,7 @@ export const HELP_PAGES: HelpPage[] = [
       ),
       sec(
         "Node scale and contents",
-        "The node's `type`, tag, and children tell you what the selection represents.\n\nEach CST scale is a different unit of selection:\n\n" +
+        "Each entry below names a node kind by its tag and lists what it contains — together they tell you what the selection represents.\n\nEach CST scale is a different unit of selection:\n\n" +
           "```text\n" +
           "document\n" +
           "  LyX source: \\begin_document ... \\end_document\n" +
