@@ -356,6 +356,38 @@ export function parseChangeArg(raw: string): "current" | "inserted" | "deleted" 
   return want;
 }
 
+/**
+ * Parse a :nth-match() formula — a plain integer, 'odd'/'even', or an `an+b`
+ * formula — into its { a, b } coefficients. Returns null for invalid
+ * formulas (e.g. 'abc', '2n+'), which match nothing. The CLI selector guard
+ * (dev log 118) rejects invalid formulas up front; the engine keeps the
+ * silent-empty behavior for them.
+ */
+function parseNthMatchFormula(raw: string): { a: number; b: number } | null {
+  let formula = raw;
+  if (formula === "odd") formula = "2n+1";
+  if (formula === "even") formula = "2n";
+  let a = 0, b = 0;
+  const num = parseInt(formula, 10);
+  if (!isNaN(num) && !formula.includes("n")) {
+    a = 0; b = num;
+  } else {
+    const match = formula.replace(/\s+/g, "").match(/^(?:([-+]?\d*)n)?([-+]\d+)?$/);
+    if (!match) return null;
+    const aRaw = match[1];
+    if (aRaw === "-" || aRaw === "+") a = parseInt(aRaw + "1", 10);
+    else if (aRaw) a = parseInt(aRaw, 10);
+    else a = 1;
+    if (match[2]) b = parseInt(match[2], 10);
+  }
+  return { a, b };
+}
+
+/** True when the :nth-match() formula is parseable (dev log 118 — the CLI guard). */
+export function isValidNthMatchFormula(raw: string): boolean {
+  return parseNthMatchFormula(raw) !== null;
+}
+
 export type ScopeState = "current" | "inserted" | "deleted";
 export type ScopePredicate = (region: ScopeState, props: Record<string, string | undefined>) => boolean;
 
@@ -899,31 +931,19 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
           } else if (p.name === "last" && nextNodes.length > 0) {
             nextNodes = [nextNodes[nextNodes.length - 1]];
           } else if (p.name === "nth-match" && p.argRaw !== undefined) {
-            let formula = p.argRaw;
-            if (formula === "odd") formula = "2n+1";
-            if (formula === "even") formula = "2n";
-            
-            let a = 0, b = 0;
-            const num = parseInt(formula, 10);
-            if (!isNaN(num) && !formula.includes('n')) {
-              a = 0; b = num;
+            const formula = parseNthMatchFormula(p.argRaw);
+            if (!formula) {
+              // Invalid formula (e.g. 'abc', '2n+') matches nothing. The CLI
+              // guard rejects such selectors up front (dev log 118).
+              nextNodes = [];
             } else {
-              const match = formula.replace(/\s+/g, "").match(/^(?:([-+]?\d*)n)?([-+]\d+)?$/);
-              if (match) {
-                const aRaw = match[1];
-                if (aRaw === "-" || aRaw === "+") a = parseInt(aRaw + "1", 10);
-                else if (aRaw) a = parseInt(aRaw, 10);
-                else a = 1;
-                
-                if (match[2]) b = parseInt(match[2], 10);
-              }
+              const { a, b } = formula;
+              nextNodes = nextNodes.filter((_, idx) => {
+                const n = idx + 1;
+                if (a === 0) return n === b;
+                return (n - b) % a === 0 && (n - b) / a >= 0;
+              });
             }
-            
-            nextNodes = nextNodes.filter((_, idx) => {
-              const n = idx + 1;
-              if (a === 0) return n === b;
-              return (n - b) % a === 0 && (n - b) / a >= 0;
-            });
           } else if (p.name === "adjacent" && p.argRaw !== undefined) {
             const innerPart = parseSelectorPart(p.argRaw, true);
             nextNodes = nextNodes.filter(n => {
@@ -952,7 +972,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
               // with an O(1) comparison instead of a per-candidate
               // sibling+descendant scan (DL105 F3 — `:until` was ~30x slower
               // than the equivalent query on large documents).
-              const anchorGroups = new Map<Node[], { anchor: Node; index: number; firstBoundary: number }[]>();
+              const anchorGroups = new Map<Node[], { index: number; firstBoundary: number }[]>();
               for (const anchor of siblingAnchors) {
                 const aCtx = getSiblingContextFast(anchor, rootChildren, parentIndex);
                 if (!aCtx) continue;
@@ -961,7 +981,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
                   list = [];
                   anchorGroups.set(aCtx.parentChildren, list);
                 }
-                list.push({ anchor, index: aCtx.index, firstBoundary: Infinity });
+                list.push({ index: aCtx.index, firstBoundary: Infinity });
               }
               for (const list of anchorGroups.values()) list.sort((a, b) => a.index - b.index);
               for (const [pc, list] of anchorGroups) {
@@ -974,7 +994,7 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
                   if (sib.type === "block" && findDescendants((sib as BlockNode).children, innerPart, [], stateIndex, insideNoteIndex, noteScope).length > 0) isB[i] = true;
                 }
                 // Backward pass: firstBoundary[anchor] = first boundary strictly after it.
-                const anchorAt = new Map<number, { anchor: Node; index: number; firstBoundary: number }>();
+                const anchorAt = new Map<number, { index: number; firstBoundary: number }>();
                 for (const e of list) anchorAt.set(e.index, e);
                 let nextB = Infinity;
                 for (let i = pc.length - 1; i >= 0; i--) {
@@ -985,9 +1005,13 @@ export function query(ast: DocumentNode, selectorStr: string): Node[] {
               }
               nextNodes = nextNodes.filter(n => {
                 // Walk up from n to the first ancestor-or-self whose parent's
-                // children contain an anchor preceding it — that node is the
-                // top-level sibling under that anchor's parent.  The deepest
-                // such level wins, matching the previous reverse-anchor scan.
+                // children contain an anchor preceding it.  The deepest such
+                // level holds the NEAREST preceding generating anchor a* in
+                // document order (a deeper anchor sits inside a following
+                // sibling of every shallower anchor).  Per the DL119 spec,
+                // a candidate is excluded exactly when a boundary sits in the
+                // document-order interval (a*, n]; the three checks below
+                // partition that interval without remainder.
                 let cur: Node = n;
                 while (true) {
                   const parent = parentMap.get(cur) ?? null;

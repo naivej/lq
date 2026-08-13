@@ -750,11 +750,79 @@ Deno.test("DL104 - :until(layout:contains(...)) boundary found via descendant te
   assertEquals(args.length, 3);
 });
 
-Deno.test("DL104 - :until without ~ is a no-op (DL55 path unchanged)", () => {
+Deno.test("DL104 - :until without ~ is a no-op in the engine (the CLI rejects it, DL118)", () => {
   const ast = dl104Ast();
   const all = query(ast, "layout[Standard]").length;
   const res = query(ast, "layout[Standard]:until(layout[Section])");
   assertEquals(res.length, all);
+});
+
+// --- DL119 (dev log 119): per-anchor span spec (SP2 accept-and-document).
+// A candidate is excluded exactly when a boundary sits in document order
+// between it and its NEAREST preceding generating anchor.  With a bare
+// multi-depth left arm every matched node is itself an anchor, so a boundary
+// heading re-opens the range after itself: candidates nested inside a block
+// that FOLLOWS the boundary survive.  This pins that documented behavior.
+
+const DL119_BODY =
+  "\\begin_layout Standard\n" +
+  "Anchor A\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Section\n" +
+  "Cut here\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Standard\n" +
+  "Before float\n" +
+  "\\begin_inset Float table\n" +
+  "status open\n" +
+  "\n" +
+  "\\begin_layout Plain Layout\n" +
+  "Nested N1\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\begin_layout Plain Layout\n" +
+  "Nested N2\n" +
+  "\\end_layout\n" +
+  "\n" +
+  "\\end_inset\n" +
+  "\n" +
+  "\\end_layout\n";
+
+function dl119Ast() {
+  return parse(
+    "#LyX 2.5 created this file.\n" +
+    "\\begin_document\n\\begin_header\n\\textclass article\n\\end_header\n\\begin_body\n" +
+    DL119_BODY +
+    "\\end_body\n\\end_document\n",
+  );
+}
+
+Deno.test("DL119 - bare multi-depth anchor: a boundary re-opens the range (nearest-anchor rule)", () => {
+  const ast = dl119Ast();
+  // Left arm `layout` matches at two depths (body + the float's Plain
+  // Layouts).  Candidates: "Cut here" (the boundary) is rejected; the
+  // float's Plain Layouts N1/N2 follow the boundary in document order but
+  // their nearest preceding anchor is the boundary Section itself (whose
+  // span has no Section after it), so they are KEPT.  "Before float" is a
+  // boundary-containing sibling... it is kept only up to its own start; its
+  // descendants are governed by the boundary anchor, not by "Anchor A".
+  const res = query(ast, "layout ~ layout:until(layout[Section])");
+  const args = dl104Args(res);
+  assertEquals(args.filter(a => a === "Section").length, 0, "the boundary heading is excluded");
+  assertEquals(args.filter(a => a === "Plain Layout").length, 2, "N1 and N2 survive under the boundary's own span");
+});
+
+Deno.test("DL119 - single-level anchor: nested candidates are cut by the boundary (contrast)", () => {
+  const ast = dl119Ast();
+  // Anchored at ONE level only ("Anchor A" is the unique match).  The next
+  // Section is the boundary: the float sibling follows it, so the float and
+  // its nested Plain Layouts are all excluded.
+  const res = query(ast, "layout[Standard]:contains('Anchor A'):first ~ layout:until(layout[Section])");
+  const args = dl104Args(res);
+  assertEquals(args.filter(a => a === "Section").length, 0);
+  assertEquals(args.filter(a => a === "Plain Layout").length, 0, "the float's descendants sit after the boundary");
 });
 
 // --- DL105 (dev log 105) F1: the :until() span scan must be bounded by the

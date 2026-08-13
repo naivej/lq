@@ -1,6 +1,6 @@
 import { parse } from "./parser.ts";
 import { serialize } from "./serializer.ts";
-import { query, parseSelector, buildScopePredicate, buildTraversalStateIndex, selectorNoteScope, type ScopePredicate, type SelectorPart } from "./query.ts";
+import { query, parseSelector, buildScopePredicate, buildTraversalStateIndex, selectorNoteScope, isValidNthMatchFormula, type ScopePredicate, type SelectorPart } from "./query.ts";
 import { getSchemaForClass, INSET_LAYOUTS, INSETS, INLINE_PROPERTIES } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
@@ -346,40 +346,51 @@ function printError(code: string, message: string, details: Record<string, unkno
  * sites append the return value to their NO_MATCH messages to keep the hint
  * visible for every command.
  */
-function warnSelectorMistakes(selector: string | undefined, isMutation: boolean): string {
-  if (!selector) return "";
+/**
+ * Selector mistake guards (DL112, tightened in DL118): a selector that can
+ * never produce a useful result is a hard INVALID_SELECTOR error on every
+ * command, before any query runs or any file write. Three classes:
+ * misplaced :until() (no preceding ~, or on the anchor side), a
+ * text:contains(...) arm (text nodes are never returned for :contains), and
+ * an invalid :nth-match() formula. printError aborts the command, so a
+ * mutation can never act on such a selector.
+ */
+function assertNoSelectorMistakes(selector: string | undefined): void {
+  if (!selector) return;
   let groups: SelectorPart[][];
   try {
     groups = parseSelector(selector);
   } catch {
-    return ""; // already reported by query(); don't double-error
+    return; // syntax already reported by query(); don't double-error
   }
-  let deadTextContains = false;
   for (const group of groups) {
     for (const part of group) {
       if (part.pseudos?.some((p) => p.name === "until") && part.combinator !== "sibling") {
-        const message =
+        printError(
+          "INVALID_SELECTOR",
           `:until() has no effect here: it only bounds the target of a ~ sibling range. ` +
-          `Move it after a ~ (e.g. 'layout[A] ~ layout[B]:until(layout[C])') or drop ':until'.`;
-        if (isMutation) {
-          printError("INVALID_SELECTOR", message);
-        } else {
-          pushWarning(message);
-        }
+          `Move it after a ~ (e.g. 'layout[A] ~ layout[B]:until(layout[C])') or drop ':until'.`,
+        );
       }
       if (part.tag === "text" && part.pseudos?.some((p) => p.name === "contains")) {
-        deadTextContains = true;
-        pushWarning(
+        printError(
+          "INVALID_SELECTOR",
           `text:contains(...) never matches — text nodes are not returned for :contains. ` +
           `Select the block instead (e.g. 'layout[Standard]:contains(foo)') or do content work ` +
           `with 'set --find' / 'insert split-after'.`,
         );
       }
+      for (const p of part.pseudos ?? []) {
+        if (p.name === "nth-match" && p.argRaw !== undefined && !isValidNthMatchFormula(p.argRaw)) {
+          printError(
+            "INVALID_SELECTOR",
+            `:nth-match(${p.argRaw}) has an invalid formula — it would match nothing. ` +
+            `Use an integer, 'odd', 'even', or a formula like '2n+1'.`,
+          );
+        }
+      }
     }
   }
-  return deadTextContains
-    ? ` Note: 'text:contains(...)' never matches — select the block instead (e.g. 'layout[Standard]:contains(foo)') or use 'set --find' / 'insert split-after'.`
-    : "";
 }
 
 // Flags that only 'init' accepts. When a mutation command receives one, the
@@ -885,10 +896,8 @@ function assertTrackingHeader(ast: DocumentNode, trackChanges: boolean): void {
  */
 async function printBibFiles(bibPaths: string[], searchTerm: string | undefined): Promise<void> {
   const citations: Citation[] = [];
-  let bibFileCount = 0;
 
   for (const bibPath of bibPaths) {
-    bibFileCount++;
     try {
       const rawBib = await Deno.readTextFile(bibPath);
       const parsed = parseBibtex(rawBib);
@@ -898,7 +907,7 @@ async function printBibFiles(bibPaths: string[], searchTerm: string | undefined)
     }
   }
 
-  if (bibFileCount === 0) {
+  if (bibPaths.length === 0) {
     printError("NO_BIBFILE", "No .bib files are referenced by the bibliography inset. Add a .bib file in LyX, then rerun 'lq bib'.");
   }
 
@@ -1293,11 +1302,9 @@ function foldNegativeDepth(args: string[]): string[] {
       } catch (e: Error | unknown) {
         printError("INVALID_SELECTOR", (e as Error).message);
       }
-      // DL112: dump is read-only — a misplaced :until() or a text:contains
-      // dead arm is a warning here, never a hard error.
-      const dumpHint = warnSelectorMistakes(dumpSelector, false);
+      assertNoSelectorMistakes(dumpSelector);
       if (roots.length === 0) {
-        printError("NO_MATCH", `Selector matched no nodes to dump. Run 'lq read ${filePath} "${dumpSelector}" --count' to verify or refine the selector.${dumpHint}`);
+        printError("NO_MATCH", `Selector matched no nodes to dump. Run 'lq read ${filePath} "${dumpSelector}" --count' to verify or refine the selector.`);
       }
       useFullAst = false;
     }
@@ -1371,7 +1378,10 @@ function foldNegativeDepth(args: string[]): string[] {
           for (let bibFile of files) {
             // Skip files with a non-.bib extension (e.g. .bst style files).
             // Files without an extension follow LyX convention — append .bib.
-            const hasExt = bibFile.includes(".");
+            // Only the final path segment counts: a parent-relative
+            // reference like '../biblioExample' must not be mistaken for
+            // having an extension (test_report_52 B1).
+            const hasExt = (bibFile.split(/[\\/]/).pop() ?? "").includes(".");
             if (hasExt && !bibFile.toLowerCase().endsWith(".bib")) {
               continue;
             }
@@ -1438,14 +1448,9 @@ function foldNegativeDepth(args: string[]): string[] {
     }
   }
 
-  // Selector mistake guards (DL112): a misplaced :until() (no preceding ~,
-  // or on the anchor side of ~) is a silent no-op — warn for read-only
-  // commands, hard-error for mutations so the unbound set is never acted on;
-  // a text:contains(...) dead arm never matches — warn for every command.
-  const textContainsHint = warnSelectorMistakes(
-    selector,
-    command === "set" || command === "delete" || command === "insert" || command === "undo",
-  );
+  // Selector mistake guards (DL112, tightened in DL118): any misuse is a
+  // hard INVALID_SELECTOR on every command, before the command acts.
+  assertNoSelectorMistakes(selector);
 
   if (command === "read") {
     const result: Record<string, unknown> = {} ;
@@ -1559,7 +1564,7 @@ function foldNegativeDepth(args: string[]): string[] {
     const findStr: string | undefined = typeof flags["find"] === "string" ? flags["find"] : undefined;
 
     if (nodes.length === 0) {
-      printError("NO_MATCH", `Selector matched no nodes to set. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.${textContainsHint}`);
+      printError("NO_MATCH", `Selector matched no nodes to set. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
     }
 
     // --find and --replace-all are mutually exclusive
@@ -1838,7 +1843,7 @@ function foldNegativeDepth(args: string[]): string[] {
         if (!selectorNoteScope(selector) && phraseOnlyInInvisibleContent(ast, findStr)) {
           noMatchMsg += ` The phrase exists only inside a private note (Note/Comment) — add ':note' to the selector to target note prose.`;
         }
-        printError("NO_MATCH", noMatchMsg + textContainsHint);
+        printError("NO_MATCH", noMatchMsg);
       }
       const plural = totalFindMatches === 1 ? "" : "s";
       const nodeList = Object.entries(findPerNode)
@@ -1868,7 +1873,7 @@ function foldNegativeDepth(args: string[]): string[] {
 
   if (command === "delete") {
     if (nodes.length === 0) {
-      printError("NO_MATCH", `Selector matched no nodes to delete. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.${textContainsHint}`);
+      printError("NO_MATCH", `Selector matched no nodes to delete. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
     }
 
     // Snapshot pre-mutation state for undo (before any mutation). Parent
@@ -1960,7 +1965,7 @@ function foldNegativeDepth(args: string[]): string[] {
 
   if (command === "insert") {
     if (nodes.length === 0) {
-      printError("NO_MATCH", `Selector matched no nodes to insert around. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.${textContainsHint}`);
+      printError("NO_MATCH", `Selector matched no nodes to insert around. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
     }
 
     const position = restArgs[0];
@@ -2696,7 +2701,9 @@ function foldNegativeDepth(args: string[]): string[] {
 
       printError(
         "UNDO_SNAPSHOT_UNAVAILABLE",
-        `${snapshotFailure} Verify that the file was not changed externally, or provide a selector to replay tracked changes: ` +
+        `${snapshotFailure} Possibly because a previous 'undo' already consumed the snapshot ` +
+        `(snapshot restore is 1-level) or because the file was changed externally. ` +
+        `To replay tracked changes, provide a selector: ` +
         `'lq undo <file> <selector> [<substring>]'. Replay does not restore a paired set edit as one unit.`,
       );
     }
@@ -2706,7 +2713,7 @@ function foldNegativeDepth(args: string[]): string[] {
     // unlike snapshot restore, which addresses nodes by path and therefore
     // works even when the mutation removed the matched nodes entirely.
     if (nodes.length === 0) {
-      printError("NO_MATCH", `Selector matched no nodes to undo. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.${textContainsHint}`);
+      printError("NO_MATCH", `Selector matched no nodes to undo. Run 'lq read ${filePath} "${selector}" --count' to verify or refine the selector.`);
     }
 
     // Snapshot pre-replay children so the replay itself can be undone —

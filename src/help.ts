@@ -426,7 +426,7 @@ export const HELP_PAGES: HelpPage[] = [
           "`:contains(text)`\n\n" +
           "`:contains()` searches recursively and case-sensitively through descendant text, including inset metadata and tracked changes, to locate a layout by text. A private note's content is found only when the selector is note-scoped.\n\n" +
           "Example: `layout[Standard]:contains(some phrase)` selects the Standard paragraphs whose text contains the phrase.\n\n" +
-          "`text:contains(...)` never matches: text nodes are not returned for `:contains` (lq would otherwise mutate each matched text node twice), so that selector form always yields an empty match. lq warns when a selector contains this dead arm.\n\n" +
+          "`text:contains(...)` never matches: text nodes are not returned for `:contains` (lq would otherwise mutate each matched text node twice), so that selector form always yields an empty match. lq rejects any selector containing this dead arm as an invalid selector.\n\n" +
           "The text may be given bare, or quoted with either single (`'...'`) or double (`\"...\"`) quotes. The quotes are stripped by the parser and exist only to allow a literal `'`, `\"`, `(`, or `)` inside the phrase. Prefer double quotes when the phrase itself contains an apostrophe.\n\n" +
           "`:not(selector)`\n\n" +
           "`:not()` excludes a block whose subtree contains a match of the inner selector. A `:contains()` inner also matches the block's own text, so `:contains(x)` and `:not(:contains(x))` partition the document.\n\n" +
@@ -453,7 +453,7 @@ export const HELP_PAGES: HelpPage[] = [
           "These filter the matches in query traversal order.\n\n" +
           "Example: `layout[Section]:first` selects the first Section heading, and `layout[Standard]:last` selects the last Standard paragraph.\n\n" +
           "`:nth-match(an+b)`\n\n" +
-          "This filters the matches in query traversal order. Use CSS-style formulas such as `:nth-match(2)`, `:nth-match(odd)`, `:nth-match(even)`, or `:nth-match(2n+1)`.\n\n" +
+          "This filters the matches in query traversal order. Use CSS-style formulas such as `:nth-match(2)`, `:nth-match(odd)`, `:nth-match(even)`, or `:nth-match(2n+1)`. An invalid formula is rejected as an invalid selector (it would match nothing).\n\n" +
           "Example: `layout[Section]:nth-match(2)` selects the second Section heading — the second match.\n\n" +
           "`:adjacent(selector)`\n\n" +
           "`:adjacent()` matches a node whose immediately preceding meaningful sibling matches the inner selector.\n\n" +
@@ -463,7 +463,8 @@ export const HELP_PAGES: HelpPage[] = [
           "`:until()` bounds a `~` sibling range. It rejects a candidate when any node matching the inner selector appears in document order between the anchor and the candidate, inclusive. So the range stops before the next matching node, and that boundary node, its subtree, and everything after it are excluded.\n\n" +
           "Example: `layout[Section]:contains(some phrase):first ~ layout[Standard]:until(layout[Section])` selects the Standard paragraphs between the first section that contains `some phrase` and the next section, stopping before the next section's heading.\n\n" +
           "The check also covers descendant candidates: a bare arm such as `layout[Section]:contains(some phrase):first ~ layout:until(layout[Section])` stops the whole subtree before the next heading, so the next section's heading and its content are not pulled in.\n\n" +
-          "`:until()` is a no-op without `~`: Read-only commands (`read` / `dump`) still run and warn that the bound is ignored; mutations (`set` / `delete` / `insert` / replay `undo`) reject the selector and make no change.",
+          "With several anchors (the left side matched more than one node), each candidate is bounded by its nearest preceding anchor: the range from one anchor is never cut by a boundary that belongs to a later anchor's range. With a bare left arm such as `layout ~ layout:until(layout[Section])` every matched node is itself an anchor, so each boundary re-opens the range after itself — anchor at one level with `:first` or a unique `:contains()` to keep the span predictable.\n\n" +
+          "`:until()` without `~` is rejected as an invalid selector on every command (`read` / `dump` / `set` / `delete` / `insert` / replay `undo`): the bound has nothing to bound.",
       ),
       sec(
         "Selector scope for mutations",

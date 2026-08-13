@@ -301,6 +301,80 @@ Deno.test("CLI - bib rejects non-.lyx non-.bib files", { timeout: 10000 }, async
 });
 
 // ---------------------------------------------------------------------------
+// 7c. bib .lyx route — references with a path dot (test_report_52 B1)
+// ---------------------------------------------------------------------------
+// NOTE: the fixture filename contains a literal '%26' — fromFileUrl decodes
+// URL percent-encoding, so this path must not round-trip through a URL.
+const ASTRONOMY_FIXTURE =
+  `${import.meta.dirname}/fixtures/Articles/Astronomy_%26_Astrophysics.lyx`;
+
+Deno.test("CLI - bib resolves a ../ relative bibfiles reference", { timeout: 10000 }, async () => {
+  const result = await runCliTest(["bib", ASTRONOMY_FIXTURE]);
+  const data = result.data as Array<Record<string, string>>;
+  assertEquals(data.length, 15);
+});
+
+Deno.test("CLI - bib resolves a reference through a dotted directory", { timeout: 10000 }, async () => {
+  const tmpDir = await Deno.makeTempDir();
+  try {
+    const subDir = `${tmpDir}/dir.with.dot`;
+    await Deno.mkdir(subDir);
+    await Deno.writeTextFile(`${subDir}/refs.bib`,
+      "@article{pathdot2024,\n" +
+      "  author = {P. Dot},\n" +
+      "  title = {Dotted directory reference},\n" +
+      "  year = {2024}\n" +
+      "}\n"
+    );
+    const docPath = `${tmpDir}/doc.lyx`;
+    await Deno.writeTextFile(docPath,
+      "#LyX 2.5 created this file.\n" +
+      "\\begin_document\n\\begin_header\n\\end_header\n" +
+      "\\begin_body\n" +
+      "\\begin_layout Standard\n" +
+      "A citation.\n" +
+      "\\begin_inset CommandInset bibtex\n" +
+      "LatexCommand bibtex\n" +
+      "btprint \"btPrintAll\"\n" +
+      "bibfiles \"dir.with.dot/refs\"\n" +
+      "\\end_inset\n" +
+      "\\end_layout\n" +
+      "\\end_body\n\\end_document\n"
+    );
+    const result = await runCliTest(["bib", docPath]);
+    const data = result.data as Array<Record<string, string>>;
+    assertEquals(data.length, 1);
+    assertEquals(data[0].key, "pathdot2024");
+  } finally {
+    try { await Deno.remove(tmpDir, { recursive: true }); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - bib skips a non-.bib reference (extension guard)", { timeout: 10000 }, async () => {
+  const tempFile = await Deno.makeTempFile({ suffix: ".lyx" });
+  try {
+    await Deno.writeTextFile(tempFile,
+      "#LyX 2.5 created this file.\n" +
+      "\\begin_document\n\\begin_header\n\\end_header\n" +
+      "\\begin_body\n" +
+      "\\begin_layout Standard\n" +
+      "A citation.\n" +
+      "\\begin_inset CommandInset bibtex\n" +
+      "LatexCommand bibtex\n" +
+      "btprint \"btPrintAll\"\n" +
+      "bibfiles \"style.bst\"\n" +
+      "\\end_inset\n" +
+      "\\end_layout\n" +
+      "\\end_body\n\\end_document\n"
+    );
+    const result = await runCliTest(["bib", tempFile]);
+    assertEquals(result.code, "NO_BIBFILE");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// ---------------------------------------------------------------------------
 // 8. set command success
 // ---------------------------------------------------------------------------
 Deno.test("CLI - set command success", { timeout: 10000 }, async () => {
@@ -1010,40 +1084,39 @@ Deno.test("CLI - untracked preamble set --find edits cleanly", { timeout: 10000 
 });
 
 // ---------------------------------------------------------------------------
-// 32. DL112 — selector mistake guards: text:contains dead arm + misplaced
-//     :until() (anchorless or on the anchor side of ~)
+// 32. DL118 — selector mistake guards tightened to hard errors on EVERY
+//     command: text:contains dead arm, misplaced :until(), invalid
+//     :nth-match formulas (DL112 originally warned on read-only commands)
 // ---------------------------------------------------------------------------
-Deno.test("DL112 - read warns on anchorless :until()", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_dl112_read_until.lyx");
+Deno.test("DL118 - read errors on anchorless :until()", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_read_until.lyx");
   try {
     const result = await runCliTest(["read", tempFile, "layout[Standard]:until(layout[Section])", "--count"]);
-    assertEquals(result.code, undefined);
-    const warnings = result.warnings ?? [];
-    assert(warnings.some((w) => w.includes(":until()") && w.includes("has no effect")), JSON.stringify(warnings));
+    assertEquals(result.code, "INVALID_SELECTOR");
+    assertStringIncludes(result.message!, ":until()");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
 
-Deno.test("DL112 - dump warns on anchorless :until()", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_dl112_dump_until.lyx");
+Deno.test("DL118 - dump errors on anchorless :until()", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_dump_until.lyx");
   try {
     const result = await runCliTest(["dump", tempFile, "layout[Standard]:until(layout[Section])"]);
-    assertEquals(result.code, undefined);
-    const warnings = result.warnings ?? [];
-    assert(warnings.some((w) => w.includes(":until()") && w.includes("has no effect")), JSON.stringify(warnings));
+    assertEquals(result.code, "INVALID_SELECTOR");
+    assertStringIncludes(result.message!, ":until()");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
 
-Deno.test("DL112 - set errors on anchorless :until(), file unchanged", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_dl112_set_until.lyx");
+Deno.test("DL118 - set errors on anchorless :until(), file unchanged", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_set_until.lyx");
   const before = await Deno.readTextFile(tempFile);
   try {
     const result = await runCliTest(["set", tempFile, "layout[Standard]:until(layout[Section])", "X"]);
     assertEquals(result.code, "INVALID_SELECTOR");
-    assertStringIncludes(result.message!, "has no effect");
+    assertStringIncludes(result.message!, ":until()");
     // Fail-closed: no commit.
     assertEquals(await Deno.readTextFile(tempFile), before);
   } finally {
@@ -1051,25 +1124,24 @@ Deno.test("DL112 - set errors on anchorless :until(), file unchanged", { timeout
   }
 });
 
-Deno.test("DL112 - undo replay errors on anchorless :until()", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_dl112_undo_until.lyx");
+Deno.test("DL118 - undo replay errors on anchorless :until()", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_undo_until.lyx");
   try {
     const result = await runCliTest(["undo", tempFile, "layout[Standard]:until(layout[Section])"]);
     assertEquals(result.code, "INVALID_SELECTOR");
-    assertStringIncludes(result.message!, "has no effect");
+    assertStringIncludes(result.message!, ":until()");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
 
-Deno.test("DL112 - anchor-side :until() warns on read, errors on set", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_dl112_anchor_until.lyx");
+Deno.test("DL118 - anchor-side :until() errors on read and set", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_anchor_until.lyx");
   const before = await Deno.readTextFile(tempFile);
   try {
     const read = await runCliTest(["read", tempFile, "layout[Standard]:until(layout[Section]) ~ layout[Standard]", "--count"]);
-    assertEquals(read.code, undefined);
-    const warnings = read.warnings ?? [];
-    assert(warnings.some((w) => w.includes(":until()") && w.includes("has no effect")), JSON.stringify(warnings));
+    assertEquals(read.code, "INVALID_SELECTOR");
+    assertStringIncludes(read.message!, ":until()");
 
     const set = await runCliTest(["set", tempFile, "layout[Standard]:until(layout[Section]) ~ layout[Standard]", "X"]);
     assertEquals(set.code, "INVALID_SELECTOR");
@@ -1079,33 +1151,66 @@ Deno.test("DL112 - anchor-side :until() warns on read, errors on set", { timeout
   }
 });
 
-Deno.test("DL112 - text:contains(x) warns on read", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_dl112_text_contains.lyx");
+Deno.test("DL118 - text:contains(x) errors on read", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_text_contains.lyx");
   try {
     const result = await runCliTest(["read", tempFile, "text:contains(world)"]);
-    assertEquals(result.code, undefined);
-    const warnings = result.warnings ?? [];
-    assert(warnings.some((w) => w.includes("text:contains") && w.includes("never matches")), JSON.stringify(warnings));
+    assertEquals(result.code, "INVALID_SELECTOR");
+    assertStringIncludes(result.message!, "text:contains");
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
 
-Deno.test("DL112 - set with text:contains(x) NO_MATCH carries the hint", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_dl112_set_text_contains.lyx");
+Deno.test("DL118 - set with text:contains(x) errors, file unchanged", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_set_text_contains.lyx");
   const before = await Deno.readTextFile(tempFile);
   try {
     const result = await runCliTest(["set", tempFile, "text:contains(world)", "X"]);
-    assertEquals(result.code, "NO_MATCH");
-    assertStringIncludes(result.message!, "text:contains");
+    assertEquals(result.code, "INVALID_SELECTOR");
+    assertStringIncludes(result.message!, "never matches");
     assertEquals(await Deno.readTextFile(tempFile), before);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
 
-Deno.test("DL112 - negative: layout:contains(text) and bounded :until() do not warn", { timeout: 10000 }, async () => {
-  const tempFile = await createTempFixture("temp_dl112_negative.lyx");
+Deno.test("DL118 - a union with one dead arm errors (strict)", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_dead_arm.lyx");
+  try {
+    const result = await runCliTest(["read", tempFile, "text:contains(world) | layout[Standard]", "--count"]);
+    assertEquals(result.code, "INVALID_SELECTOR");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL118 - invalid :nth-match formulas error", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_nth_invalid.lyx");
+  try {
+    for (const formula of ["abc", "2n+"]) {
+      const result = await runCliTest(["read", tempFile, `layout[Standard]:nth-match(${formula})`, "--count"]);
+      assertEquals(result.code, "INVALID_SELECTOR", formula);
+      assertStringIncludes(result.message!, ":nth-match");
+    }
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL118 - :nth-match(0) is a valid formula matching nothing", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_nth_zero.lyx");
+  try {
+    const result = await runCliTest(["read", tempFile, "layout[Standard]:nth-match(0)", "--count"]);
+    assertEquals(result.code, undefined);
+    assertEquals(result.count, {});
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL118 - negative: valid selectors neither warn nor error", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_negative.lyx");
   try {
     // The word "text" inside the argument must not trigger the dead-arm check.
     const a = await runCliTest(["read", tempFile, "layout:contains(text)"]);
@@ -1118,6 +1223,26 @@ Deno.test("DL112 - negative: layout:contains(text) and bounded :until() do not w
     const warnings = b.warnings ?? [];
     assert(!warnings.some((w) => w.includes("has no effect")), JSON.stringify(warnings));
     assert(!warnings.some((w) => w.includes("text:contains")), JSON.stringify(warnings));
+
+    // Valid :nth-match formulas must not error.
+    const c = await runCliTest(["read", tempFile, "layout[Standard]:nth-match(2n+1)", "--count"]);
+    assertEquals(c.code, undefined);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL118 - second snapshot undo names the consumed-snapshot possibility", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl118_undo_twice.lyx");
+  try {
+    await runCliWithConfig(["set", tempFile, "layout[Title]", "First edit"], { trackChanges: true });
+    await runCliWithConfig(["set", tempFile, "layout[Title]", "Second edit"], { trackChanges: true });
+    const first = await runCliWithConfig(["undo", tempFile], { trackChanges: true });
+    assertEquals(first.method, "snapshot");
+    const second = await runCliWithConfig(["undo", tempFile], { trackChanges: true });
+    assertEquals(second.code, "UNDO_SNAPSHOT_UNAVAILABLE");
+    assertStringIncludes(second.message!, "Possibly because a previous 'undo' already consumed the snapshot");
+    assert(!second.message!.includes("Verify"), second.message!);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
