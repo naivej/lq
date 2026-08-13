@@ -61,8 +61,8 @@ export function renderPageText(page: HelpPage): string {
     out.push(toPlainText(section.body));
   }
 
-  if (page.id === "home") appendHomeMap(out, (line) => line);
-  appendFurtherReading(out, page, (line) => line);
+  if (page.id === "home") appendHomeMap(out, (line) => line, (line) => line);
+  appendFurtherReading(out, page, (line) => line, (line) => line);
 
   return out.join("\n") + "\n";
 }
@@ -88,16 +88,20 @@ export function renderPageRich(page: HelpPage): string {
     out.push(toStyledText(section.body));
   }
 
-  if (page.id === "home") appendHomeMap(out, (line) => styleCodeSpan(line));
-  appendFurtherReading(out, page, (line) => styleCodeSpan(line));
+  if (page.id === "home") appendHomeMap(out, styleCodeSpan, styleHeading);
+  appendFurtherReading(out, page, styleCodeSpan, styleHeading);
 
   return out.join("\n") + "\n";
 }
 
-/** The home page map (generated from the catalog), each line via `emit`. */
-function appendHomeMap(out: string[], emit: (line: string) => string): void {
+/** The home page map (generated from the catalog): content via `emit`, heading via `emitHeading`. */
+function appendHomeMap(
+  out: string[],
+  emit: (line: string) => string,
+  emitHeading: (line: string) => string,
+): void {
   out.push("");
-  out.push(emit("Pages"));
+  out.push(emitHeading("Pages"));
   out.push("-".repeat("Pages".length));
   const groups = groupedPages();
   const maxReach = Math.max(
@@ -111,11 +115,16 @@ function appendHomeMap(out: string[], emit: (line: string) => string): void {
   }
 }
 
-/** The further-reading list, each line via `emit`. */
-function appendFurtherReading(out: string[], page: HelpPage, emit: (line: string) => string): void {
+/** The further-reading list: content via `emit`, heading via `emitHeading`. */
+function appendFurtherReading(
+  out: string[],
+  page: HelpPage,
+  emit: (line: string) => string,
+  emitHeading: (line: string) => string,
+): void {
   if (page.furtherReading.length === 0) return;
   out.push("");
-  out.push(emit("Further reading"));
+  out.push(emitHeading("Further reading"));
   out.push("-".repeat("Further reading".length));
   for (const link of page.furtherReading) {
     out.push(emit(`  lq help ${reachOf(link.page)} - ${link.hint}`));
@@ -181,4 +190,9 @@ function emphasizeSafety(text: string): string {
 /** Wrap the `lq help <page>` fragment in a line with the code color. */
 function styleCodeSpan(line: string): string {
   return line.replace(/(lq help \S+)/g, `${ANSI.code}$1${ANSI.reset}`);
+}
+
+/** Style a generated heading ("Pages", "Further reading") like a section heading. */
+function styleHeading(line: string): string {
+  return `${ANSI.heading}${line}${ANSI.reset}`;
 }
