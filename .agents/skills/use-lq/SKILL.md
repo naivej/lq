@@ -4,7 +4,7 @@ description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Us
 allowed-tools: Bash(lq *)
 ---
 
-Run `lq help` for the authoritative manual of how to parse, query, and mutate LyX documents. The installed help is the floor; this skill is the accelerant — help carries every fact, the skill compresses trial and error into judgment. Deep reference lives in the sibling files listed in [Reference](#reference), reached when its branch comes up.
+Run `lq help` for the authoritative manual of how to parse, query, and mutate LyX documents. The installed help is the floor; this skill is the accelerant — help carries every fact, the skill compresses trial and error into judgment. Deep reference lives in the `references/` files listed in [Reference](#reference), reached when its branch comes up.
 
 # Mental model
 
@@ -68,7 +68,7 @@ Pick the workflow up front — it chooses the author name, the selection scale, 
 
 ## Ground-up writing and autonomous drafting
 
-Structural work. Set the per-task author name so the whole draft is one review unit, check `lq schema`, and confirm the layouts directory resolves. Build the skeleton first — headings and blocks with `insert --layout` — then fill in with `--text`, `split-after`, and `--raw-file` for citations, references, and math. Verify each section with `read --text-only`; run a LyX export at milestones as the structural acceptance check. The payload recipes behind `--ref`, `--cite`, and `--raw-file` live in `Domain_recipes.md`; opaque formula, ERT, and preamble payloads are covered in `Inset_data.md`.
+Structural work. Set the per-task author name so the whole draft is one review unit, check `lq schema`, and confirm the layouts directory resolves. Build the skeleton first — headings and blocks with `insert --layout` — then fill in with `--text`, `split-after`, and `--raw-file` for citations, references, and math. Verify each section with `read --text-only`; run a LyX export at milestones as the structural acceptance check. The payload recipes behind `--ref`, `--cite`, and `--raw-file` live in `references/Domain_recipes.md`; opaque formula, ERT, and preamble payloads are covered in `references/Inset_data.md`.
 
 ## Proofreading and surgical typo fixes
 
@@ -91,23 +91,23 @@ Pinning the location:
 4. **Read the occurrence count.** `--find` reports how many occurrences it matched in its result warning; a count larger than expected means the scope is too broad, and `lq undo file.lyx` reverts the over-match as one unit.
 5. **Respect the limits.** `--find` swaps one contiguous substring; a non-contiguous change needs two passes or a full `set` — which rewrites the whole matched node, never for a one-token fix. If the match stays ambiguous even with context, split the operation or edit the whole node.
 
-When every occurrence should change — a terminology or style pass over a section — every-match is the desired behavior, not a hazard; just confirm the scope with `--count` first. Deep reach rules — what `--find` crosses and what stops it — live in `Reach.md`.
+When every occurrence should change — a terminology or style pass over a section — every-match is the desired behavior, not a hazard; just confirm the scope with `--count` first. Deep reach rules — what `--find` crosses and what stops it — live in `references/Reach.md`.
 
 ## Draft review and paragraph-level revision
 
-Review at the paragraph scale: read a section range (`layout[Section]:contains(Intro):first ~ layout[Standard]:until(layout[Section]) --text-only`) so prose, structure, and tracked markers stay together. Rewrite a paragraph with a tracked `set` on the layout — old paragraph in `change_deleted`, new in `change_inserted`, insets preserved — and use `--replace-all` only for deliberate structural rewrites. Because the review pass has its own `--author-name`, `lq undo file.lyx "<section selector>"` later reverts exactly the reviewer's edits and leaves the author's tracked changes intact; `lq read file.lyx "text:change(current), text:change(deleted)" --text-only` shows the diff-style review view. The tracked-change rules this workflow leans on live in `Tracked_changes.md`.
+Review at the paragraph scale: read a section range (`layout[Section]:contains(Intro):first ~ layout[Standard]:until(layout[Section]) --text-only`) so prose, structure, and tracked markers stay together. Rewrite a paragraph with a tracked `set` on the layout — old paragraph in `change_deleted`, new in `change_inserted`, insets preserved — and use `--replace-all` only for deliberate structural rewrites. Because the review pass has its own `--author-name`, `lq undo file.lyx "<section selector>"` later reverts exactly the reviewer's edits and leaves the author's tracked changes intact; `lq read file.lyx "text:change(current), text:change(deleted)" --text-only` shows the diff-style review view. The tracked-change rules this workflow leans on live in `references/Tracked_changes.md`.
 
 # Reference
 
-Deep reference lives in sibling files, read on demand when its branch comes up:
+Deep reference lives in the `references/` folder, read on demand when its branch comes up:
 
 | File | Covers | Reach when |
 | --- | --- | --- |
-| [`Reach.md`](Reach.md) | The four reach questions, per-command reach, the selection-scale table, private notes | a mutation's reach is uncertain, or a mutation does not change what the selector matched |
-| [`Tracked_changes.md`](Tracked_changes.md) | Tracked-change operational rules: regions, editing rejected text, tracking surfaces, undo modes | tracking is on, or the document is under review |
-| [`Domain_recipes.md`](Domain_recipes.md) | Cross-references, citations, lists, multi-pass insertion | the task involves those content types or a complex payload |
-| [`Inset_data.md`](Inset_data.md) | Editing formula, ERT, and preamble payloads | the edit target is an opaque inset payload or preamble |
-| [`LyX_inset.md`](LyX_inset.md) · [`LyX_preamble.md`](LyX_preamble.md) | LyX file-format ground truth: inset and preamble serialization | hand-writing structure, or the CST shape of an unfamiliar structure is uncertain |
-| [`LyX_CLI.md`](LyX_CLI.md) | Driving the LyX binary: create, import, export, acceptance check, verification | generating ground truth, or verifying a mutated document against LyX |
-| [`LyXServer.md`](LyXServer.md) | LyXServer and refresh: modes, Windows confirmation limits, can't-connect order | LyX holds unsaved work, or refresh misbehaves |
+| [`Reach.md`](references/Reach.md) | The four reach questions, per-command reach, the selection-scale table, private notes | a mutation's reach is uncertain, or a mutation does not change what the selector matched |
+| [`Tracked_changes.md`](references/Tracked_changes.md) | Tracked-change operational rules: regions, editing rejected text, tracking surfaces, undo modes | tracking is on, or the document is under review |
+| [`Domain_recipes.md`](references/Domain_recipes.md) | Cross-references, citations, lists, multi-pass insertion | the task involves those content types or a complex payload |
+| [`Inset_data.md`](references/Inset_data.md) | Editing formula, ERT, and preamble payloads | the edit target is an opaque inset payload or preamble |
+| [`LyX_inset.md`](references/LyX_inset.md) · [`LyX_preamble.md`](references/LyX_preamble.md) | LyX file-format ground truth: inset and preamble serialization | hand-writing structure, or the CST shape of an unfamiliar structure is uncertain |
+| [`LyX_CLI.md`](references/LyX_CLI.md) | Driving the LyX binary: create, import, export, acceptance check, verification | generating ground truth, or verifying a mutated document against LyX |
+| [`LyXServer.md`](references/LyXServer.md) | LyXServer and refresh: modes, Windows confirmation limits, can't-connect order | LyX holds unsaved work, or refresh misbehaves |
 
