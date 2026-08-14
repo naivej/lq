@@ -2,6 +2,8 @@
 
 LyXServer is optional; disk is the primary integration point. For automatic refresh: `lq init --refresh reload` (fast, but discards unsaved in-LyX edits) or `lq init --refresh save-reload` (preserves unsaved edits; requires LyXServer and is slower). Use `save-reload` when LyX has unsaved work that must be preserved; use `none` for ordinary fast, Git-backed edits when LyX can reload externally changed files.
 
+To use `save-reload`, start LyXServer yourself: open the target file in the GUI with `"{lyx}" <file>` (omit `-batch`; see [`LyX_GUI.md`](LyX_GUI.md) "Open GUI and LyXServer"). No human is required — a window appears on the user's screen, which is expected. LyXServer is on by default; a cleared `\serverpipe` preference (enable once in Preferences, then restart) is the only way it stays off.
+
 On Windows, LyXServer's response delivery is unreliable: a lost confirmation does not mean the command failed — lq distinguishes dispatched, confirmed, and errored outcomes and treats an unconfirmed refresh as a warning when it is safe to proceed. Do not diagnose repeated confirmation loss by adding more blocking reads — LyX executes a command even when its response is lost, and stale responses linger in the server's shared reply buffer (`outbuf_`) until the next flush cycle, so no client-side read strategy is reliable. Restart LyX to restore a healthy server.
 
 Genuine can't-connect, in order of likelihood:

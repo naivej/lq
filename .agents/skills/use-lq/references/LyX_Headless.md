@@ -145,15 +145,6 @@ For high-risk changes, verify on a copy: apply the mutation to a temporary copy 
 
 Generate ground-truth syntax with `"<LyX>/bin/tex2lyx.exe" -f input.tex output.lyx`; prefer LyX-generated examples over hand-written syntax for unfamiliar structures.
 
-### Open GUI (for LyXServer refresh)
-
-```bash
-"{lyx}" doc.lyx                          # open in GUI, start LyXServer
-"{lyx}" -r doc.lyx                       # reuse running instance
-```
-
-Omit `-batch`. The GUI is for LyXServer connection + human review. If LyXServer is unreachable after launch, stop and ask the user — do not invent LFUN workarounds. For refresh modes and can't-connect troubleshooting, see [`LyXServer.md`](LyXServer.md).
-
 ### Requirements & notes
 
 - **LyX must be installed and configured once** before batch use. Open the GUI at least once to complete initial setup.
@@ -161,4 +152,4 @@ Omit `-batch`. The GUI is for LyXServer connection + human review. If LyXServer 
 - **Batch is slow** (~10-30s+). Use for create/import/export only.
 - **Quote paths with spaces** on all platforms.
 - **Binary name**: `LyX.exe` on Windows, `lyx` on Unix.
-- **`-batch` vs GUI**: `-batch` runs headless and exits; omit `-batch` to open the GUI and start LyXServer.
+- **`-batch` vs GUI**: `-batch` runs headless and exits; omit `-batch` to open the GUI and start LyXServer — see [`LyX_GUI.md`](LyX_GUI.md).
