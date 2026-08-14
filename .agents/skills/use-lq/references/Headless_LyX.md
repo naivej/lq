@@ -33,23 +33,12 @@ ls "{installRoot}/Resources/templates/"**/*.lyx
 
 Templates are organized into subdirectories: `Articles/`, `Books/`, `Letters/`, `Presentations/`, `Posters/`, `Scripts/`, `Theses/`, plus locale folders (`ar/`, `ca/`, `de/`, `es/`, `fr/`, `ja/`). Template filenames use underscores and URI-encoding (e.g. `American_Astronomical_Society_%28AASTeX_v._6.3.1%29.lyx`).
 
-**Via headless LyX (preferred):**
+**Write the minimal document directly (reliable):**
+
+Writing the minimal document by hand is the reliable way to create a new `.lyx` from scratch — it needs no GUI and no batch commands, and it is the same document `buffer-new` produces:
 
 ```bash
-# Minimal new document:
-"{lyx}" -batch -x "buffer-new /abs/path/doc.lyx" -x buffer-write
-
-# From an official template (absolute path required):
-"{lyx}" -batch -x "buffer-new-template /abs/path/doc.lyx \"{installRoot}/Resources/templates/Articles/APA.lyx\"" -x buffer-write
-```
-
-`buffer-new` works with no file loaded (`NoBuffer` flag). `buffer-new-template` needs an absolute template path in batch mode (no GUI file dialog). Both commands queue via `-x` and execute sequentially. Slow (~10-30s); use the minimal fallback below if LyX is not installed.
-
-**Minimal fallback (no LyX installed):**
-
-If LyX is unavailable, write this minimal article document directly:
-
-```
+cat > doc.lyx <<'EOF'
 #LyX 2.5 created this file. For more info see https://www.lyx.org/
 \lyxformat 643
 \begin_document
@@ -65,9 +54,28 @@ If LyX is unavailable, write this minimal article document directly:
 
 \end_body
 \end_document
+EOF
 ```
 
-This is the same document `buffer-new` produces. It contains a single empty `Standard` paragraph in the `article` class. After creating the file, all further edits go through `lq`.
+It contains a single empty `Standard` paragraph in the `article` class. To start from an official template instead, copy one into place and edit it with `lq` (templates are ordinary `.lyx` files):
+
+```bash
+cp "{installRoot}/Resources/templates/Articles/APA.lyx" doc.lyx
+```
+
+After creating the file, all further edits go through `lq`.
+
+**Via `buffer-new` (headless — NOT reliable):**
+
+```bash
+# Minimal new document:
+"{lyx}" -batch -x "buffer-new /abs/path/doc.lyx" -x buffer-write
+
+# From an official template (absolute path required):
+"{lyx}" -batch -x "buffer-new-template /abs/path/doc.lyx \"{installRoot}/Resources/templates/Articles/APA.lyx\"" -x buffer-write
+```
+
+Both LFUNs queue via `-x` and execute sequentially; `buffer-new-template` needs an absolute template path (no GUI file dialog). **In headless batch mode (`-batch`) they are unreliable (verified on LyX 2.5.1 Windows)**: LyX refuses to start headless without a file argument (`init()` aborts with "Missing filename for this operation."), and even with a dummy file loaded the batch `buffer-write` is dispatched to the command-line buffer, never the new buffer — so no file is written. Prefer the direct minimal document above, or `cp` an official template.
 
 ### Export
 

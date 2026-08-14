@@ -46,8 +46,8 @@ Work inside Git when possible: stage before mutating, review the staged diff. Th
 | Find by multiple words | `lq read file.lyx "layout:contains(climate):contains(policy)" --text-only` |
 | Get the first paragraph in a section | `lq read file.lyx "layout[Section]:contains(Intro):first ~ layout[Standard]:until(layout[Section]):first" --text-only` |
 | Traverse multiple heading ranges | `lq read file.lyx "layout[Section] ~ layout[Subsection]:contains(Methods) ~ layout[Standard]:until(layout[Section])" --text-only` |
-| Exclude footnotes | `lq read file.lyx "layout[Standard]:not(inset[Foot]):until(layout[Section])" --text-only` |
-| Find a paragraph after a quote | `lq read file.lyx "layout[Standard]:until(layout[Section]):adjacent(layout[Quote])" --text-only` |
+| Exclude footnotes in a section | `lq read file.lyx "layout[Section]:contains(Intro):first ~ layout[Standard]:not(inset[Foot]):until(layout[Section])" --text-only` |
+| Find a paragraph after a quote | `lq read file.lyx "layout[Section]:contains(Intro):first ~ layout[Standard]:until(layout[Section]):adjacent(layout[Quote])" --text-only` |
 | Check selector blast radius | `lq read file.lyx "<selector>" --count` |
 | Inspect exact CST | `lq read file.lyx "<precise selector>"` |
 | Deep-debug a node | `lq dump file.lyx "<selector>"` |

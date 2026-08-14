@@ -21,7 +21,7 @@
 
 - `lq` mutates `.lyx` files in the same way as LyX (verified by LyX source code).
 - CLI + skill designed for **autonomous agents**.
-  - The skill also covers how to use the LyX binary to create, import, and export LyX documents, allowing the user to work with LaTeX (and other supported formats) using LyX as the translator.
+  - The skill also covers how to use the headless LyX to create, import, and export LyX documents, allowing the user to work with LaTeX (and other supported formats) using LyX as the translator.
 - Collaborate with agents in an **auto-refreshed** LyX GUI through [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
 - Agents make **tracked changes**, allowing easy review.
 
