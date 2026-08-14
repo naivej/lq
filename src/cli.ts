@@ -31,6 +31,7 @@ import {
   hasTrackedChanges,
   isChangeCloser,
   isChangeOpener,
+  isContentNode,
   parseChangeMarker,
   resolveAuthorId,
   scanRegionEnd,
@@ -1572,16 +1573,37 @@ function foldNegativeDepth(args: string[]): string[] {
     for (const node of nodes) {
       if (node.type === "property") {
         if (command === "delete") {
+          // Dev log 126 F3: interpolate the actual key, and for header /
+          // preamble properties (no layout ancestor) drop the inapplicable
+          // text-targeting example and lead with the tracking-off option.
+          const inLayout = hasLayoutAncestor(node, ast);
+          const alternatives = inLayout
+            ? `  - Target the text the property formats, e.g. '${filePath}' "layout[Standard] text:property(${node.key})"\n` +
+              `  - Disable tracking first ('lq init --track-changes off'), then re-run this command\n`
+            : `  - Disable tracking first ('lq init --track-changes off'), then re-run this command to remove the property\n`;
           printError("TRACKING_ERROR",
             `LyX cannot track-delete a property node ('${nodeLabel(node)}') — change tracking applies to text, not to inline properties or header values.\n` +
-            `Alternatives:\n` +
-            `  - Target the text the property formats, e.g. '${filePath}' "layout[Standard] text:property(emph)"\n` +
-            `  - Disable tracking first ('lq init --track-changes off'), then re-run this command\n` +
+            `Alternatives:\n` + alternatives +
             `Run 'lq read ${filePath} "${selector}" --count' to verify the target.`);
         }
         continue;
       }
       if (node.type === "block" && (node as BlockNode).tag === "inset") continue;
+      // Dev log 126 F1: a matched layout with no content node (text or
+      // inset) has nothing a change region can wrap — LyX drops char-less
+      // regions on read (Changes::merge()), so the whole-layout delete
+      // would be a silent no-op that still reports tracked_deleted_nodes.
+      // Refuse, fail closed (D5's "delete never silently no-ops").
+      if (command === "delete" && node.type === "block" &&
+          (node as BlockNode).tag === "layout" &&
+          !(node as BlockNode).children.some(isContentNode)) {
+        printError("TRACKING_ERROR",
+          `LyX cannot track-delete a layout with no trackable content ('${nodeLabel(node)}') — change markers wrap text or inset content, and this layout holds none.\n` +
+          `Alternatives:\n` +
+          `  - Disable tracking first ('lq init --track-changes off'), then re-run this command to remove the layout\n` +
+          `  - Target text inside a layout paragraph instead\n` +
+          `Run 'lq read ${filePath} "${selector}" --count' to verify the target.`);
+      }
       if (!hasLayoutAncestor(node, ast)) {
         printError("TRACKING_ERROR",
           `LyX cannot track changes to '${nodeLabel(node)}' — change markers are only valid inside a layout's text.\n` +
@@ -1966,9 +1988,10 @@ function foldNegativeDepth(args: string[]): string[] {
       // model (current/co-author content → the deleter's deletion, the
       // deleter's own pending insert consumed, already-deleted content a
       // no-op, emptied regions dropped, adjacent same-author deletions merged,
-      // byte-exact transition emission). Whole-layout and nested-structural
-      // deletes keep the wrap, canonicalized (D4) to drop emptied regions and
-      // redundant closers.
+      // byte-exact transition emission). Whole-layout deletes route the whole
+      // paragraph through the same pass with every content node matched
+      // (dev log 125 D1-B); matched text in nested structural (non-paragraph)
+      // context keeps the wrap (dev log 111 caveat).
       const markAsDeleted = (children: Node[], inParagraphContext: boolean): Node[] => {
         if (inParagraphContext) {
           children = applyTrackedDeleteToChildren(

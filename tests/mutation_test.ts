@@ -4173,6 +4173,189 @@ Deno.test("DL125 E1 - unrelated delete leaves a truly-empty pre-existing region 
   }
 });
 
+// --- Dev log 126: content-less whole-layout delete refuses (F1),
+// foldProperties defers across region boundaries (F2), header-property
+// refusal message variant (F3). test_report_57 F1–F4.
+
+/** Compact structural render: change markers as cd:<author>/cu, other
+ * properties as key=value, text as its value. Pins byte-exact child order. */
+function renderSequence(children: Node[]): string[] {
+  return children.map(c => {
+    if (c.type === "property") {
+      const p = c as PropertyNode;
+      if (p.key === "change_deleted") return `cd:${(p.value || "").split(" ")[0]}`;
+      if (p.key === "change_unchanged") return "cu";
+      return `${p.key}=${p.value}`;
+    }
+    return (c as TextNode).text;
+  });
+}
+
+Deno.test("DL126 F1a - whole-layout delete of a props-only layout REFUSES (no silent no-op)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\emph on\n" +
+    "\\emph default\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl126_f1a.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const before = await Deno.readTextFile(tempFile);
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.code, "TRACKING_ERROR", "refuses with TRACKING_ERROR");
+    assert(
+      (result.message || "").includes("no trackable content"),
+      "message names the gap: " + (result.message || ""),
+    );
+    assertEquals(result.tracked_deleted_nodes, undefined, "no false success count");
+    const after = await Deno.readTextFile(tempFile);
+    assertEquals(after.replace(/\r\n/g, "\n"), before.replace(/\r\n/g, "\n"), "file untouched");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL126 F1b - whole-layout delete of an empty-region-only layout REFUSES (no silent no-op)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl126_f1b.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const before = await Deno.readTextFile(tempFile);
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.code, "TRACKING_ERROR", "refuses with TRACKING_ERROR");
+    assert(
+      (result.message || "").includes("no trackable content"),
+      "message names the gap: " + (result.message || ""),
+    );
+    assertEquals(result.tracked_deleted_nodes, undefined, "no false success count");
+    const after = await Deno.readTextFile(tempFile);
+    assertEquals(after.replace(/\r\n/g, "\n"), before.replace(/\r\n/g, "\n"), "file untouched");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL126 F1c - mixed content-ful + content-less layouts refuse ATOMICALLY (no partial delete)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "Real text\n" +
+    "\\end_layout\n" +
+    "\n" +
+    "\\begin_layout Standard\n" +
+    "\\emph on\n" +
+    "\\emph default\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl126_f1c.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const before = await Deno.readTextFile(tempFile);
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.code, "TRACKING_ERROR", "refuses with TRACKING_ERROR");
+    assertEquals(result.tracked_deleted_nodes, undefined, "no false success count");
+    const after = await Deno.readTextFile(tempFile);
+    assertEquals(after.replace(/\r\n/g, "\n"), before.replace(/\r\n/g, "\n"), "BOTH layouts byte-unchanged (fail closed)");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL126 F2a - leading property before a change-region opener folds INSIDE the deleted region", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\emph on\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "alpha\n" +
+    "\\change_unchanged\n" +
+    "\\emph default\n" +
+    "plain\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl126_f2a.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.tracked_deleted_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    assertEquals(
+      renderSequence(children),
+      ["cd:2", "emph=on", "alpha", "emph=default", "plain", "cu"],
+      "LyX-canonical: the leading \\emph on rides INSIDE Bob's deleted region",
+    );
+    assertEquals(maxMarkerDepth(children), 1, "flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL126 F2b - leading property before a pre-existing deletion rides inside ALICE's region", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\emph on\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "old\n" +
+    "\\change_unchanged\n" +
+    " current\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl126_f2b.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.tracked_deleted_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    assertEquals(
+      renderSequence(children),
+      ["cd:1", "emph=on", "old", "cd:2", " current", "cu"],
+      "the property folds inside Alice's pre-existing deletion; adjacent different-author regions share one closer (byte-exact transitions)",
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL126 F3a - header-property refusal names the actual key and leads with tracking-off", { timeout: 15000 }, async () => {
+  const header = '\\author 1 "Alice"\n\\use_hyperref false\n';
+  const body =
+    "\\begin_layout Standard\n" +
+    "Plain text\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl126_f3a.lyx", body, header);
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "property[use_hyperref]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.code, "TRACKING_ERROR", "refuses with TRACKING_ERROR");
+    assert(
+      (result.message || "").includes("property[use_hyperref]"),
+      "message names the actual property key: " + (result.message || ""),
+    );
+    assert(
+      !(result.message || "").includes("text:property"),
+      "no inapplicable text-targeting example for a header property",
+    );
+    const alts = (result.message || "").split("Alternatives:")[1] || "";
+    assert(
+      alts.trim().startsWith("- Disable tracking first"),
+      "header variant leads with the tracking-off option: " + (result.message || ""),
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("DL125 P1 - tracked delete of a property node REFUSES with guidance (no false success)", { timeout: 15000 }, async () => {
   const body =
     "\\begin_layout Standard\n" +

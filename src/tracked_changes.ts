@@ -508,6 +508,16 @@ export function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted", au
   return result;
 }
 
+/** Is `n` a content node — paragraph text or an inset block? Content
+ * nodes are what change regions wrap; property, layout and other block
+ * nodes are not content. Shared by the D2 byte-identity guard, the pass
+ * loop, and the cli.ts content-less whole-layout refusal (dev log 126
+ * F1/F4). */
+export function isContentNode(n: Node): boolean {
+  return n.type === "text" ||
+    (n.type === "block" && (n as BlockNode).tag === "inset");
+}
+
 /**
  * Apply LyX's tracked-deletion model (`Paragraph::eraseChar`, lyx-2.5.1
  * src/Paragraph.cpp:872) to a paragraph's children for the matched content
@@ -559,10 +569,7 @@ export function applyTrackedDeleteToChildren(
   // truly-empty pre-existing region (an opener immediately followed by its
   // closer, with no content between — the parser produces no content node for
   // it), violating the DL123 §8 "no matched content → byte-identical" rule.
-  const hasMatchedContent = children.some((n) =>
-    (n.type === "text" ||
-      (n.type === "block" && (n as BlockNode).tag === "inset")) && isMatched(n)
-  );
+  const hasMatchedContent = children.some((n) => isContentNode(n) && isMatched(n));
   if (!hasMatchedContent) return children;
 
   // Pass 1 — assign each content node its output state (LyX's per-position
@@ -572,12 +579,16 @@ export function applyTrackedDeleteToChildren(
   type Item = { state: RegionState; node: Node };
   const items: Item[] = [];
   let regionState: RegionState = { kind: "current" };
-  // Dev log 125 F4 (`foldProperties`, whole-layout delete): inline properties
-  // fold into the run of the content they format — LyX writes font properties
-  // inside the change region (Paragraph::write), so rejecting the change
-  // restores the original formatting. A property is deferred until the next
-  // content node (or a region boundary / list end) and adopts that content's
-  // output state; a trailing property adopts the last content's state.
+  // Dev log 125 F4 + 126 F2 (`foldProperties`, whole-layout delete): inline
+  // properties fold into the run of the content they format — LyX writes
+  // font properties inside the change region (Paragraph::write), so
+  // rejecting the change restores the original formatting. A property is
+  // deferred until the next content node and adopts that content's output
+  // state; at a region boundary it stays deferred and rides PAST the
+  // boundary (a leading property before an opener would otherwise flush
+  // with the pre-boundary 'current' state and land outside the region —
+  // dev log 126 F2). At list end a trailing property adopts the last
+  // content's state.
   let pendingProps: Node[] = [];
   let lastState: RegionState = { kind: "current" };
   const push = (state: RegionState, node: Node) => {
@@ -591,7 +602,9 @@ export function applyTrackedDeleteToChildren(
   for (const child of children) {
     if (child.type === "property") {
       if (isChangeOpener(child.key)) {
-        flushPendingProps(lastState);
+        // Defer pending properties across the boundary (dev log 126 F2):
+        // they adopt the following content's output state, not the
+        // pre-boundary one.
         const m = parseChangeMarker(child.value);
         regionState = child.key === "change_inserted"
           ? { kind: "inserted", author: m.authorId, ts: m.ts }
@@ -599,7 +612,8 @@ export function applyTrackedDeleteToChildren(
         continue;
       }
       if (isChangeCloser(child.key)) {
-        flushPendingProps(lastState);
+        // Defer pending properties across the boundary (dev log 126 F2) —
+        // see the opener branch.
         regionState = { kind: "current" };
         continue;
       }
@@ -608,8 +622,7 @@ export function applyTrackedDeleteToChildren(
         continue;
       }
     }
-    const isContent = child.type === "text" ||
-      (child.type === "block" && (child as BlockNode).tag === "inset");
+    const isContent = isContentNode(child);
     if (isContent && isMatched(child)) {
       if (regionState.kind === "current") {
         // current text → deleter's deletion
