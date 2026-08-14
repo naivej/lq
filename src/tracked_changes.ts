@@ -121,15 +121,24 @@ export function resolveAuthorId(ast: DocumentNode, authorName: string): number {
   const header = getHeader(ast);
   if (!header) return 0;
 
-  // Parse existing \author <id> "<name>" entries
+  // Parse existing \author <id> "<name>" [<email>] entries. LyX's author ID is
+  // a Bernstein hash of name+email cast to int — so it can be NEGATIVE — and
+  // an email is appended after the closing quote when set (Author.cpp
+  // operator<<). Dev log 124 F1: the previous ^\d+ ... "$ regex silently
+  // skipped such lines, so an existing author was not recognized and a
+  // duplicate \author entry was added. Matching is name-only (dev log 124
+  // D2-A): lq's config has no email concept, and a first-quoted-token parse
+  // with an ignored trailing email keeps the recognized line's ID.
   let maxId = 0;
   for (const c of header.children) {
     if (c.type !== "property" || c.key !== "author" || !c.value) continue;
-    const m = c.value.match(/^(\d+)\s+"(.+)"$/);
+    const m = c.value.match(/^(-?\d+)\s+"([^"]+)"(?:\s+.*)?$/);
     if (!m) continue;
     const id = parseInt(m[1], 10);
     const name = m[2];
     if (name === authorName) return id;
+    // Only positive IDs can collide with the sequential new-ID scheme; a
+    // negative hash ID needs recognition for name matching, not maxId.
     if (id > maxId) maxId = id;
   }
 

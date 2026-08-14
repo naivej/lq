@@ -363,7 +363,8 @@ export const HELP_PAGES: HelpPage[] = [
           "- replay `undo`: removes the configured author's tracked change markers.\n\n" +
           "These markers are LyX properties. They delimit tracked regions — runs of text in one change state. A marker value records an author ID and timestamp: `\\change_<type> <author ID> <timestamp>`.\n\n" +
           "A region closes at the next marker because LyX keeps one active change per position: a region opened by `change_deleted` is closed when the next region, opened by `change_inserted`, begins, with no `change_unchanged` between them. `change_unchanged` ends the open region and returns to current text.\n\n" +
-          "A tracked mutation also adds or updates the document header's tracking state and author table. A header-less document cannot safely receive tracked markers and is rejected before mutation.",
+          "A tracked mutation also adds or updates the document header's tracking state and author table. A header-less document cannot safely receive tracked markers and is rejected before mutation.\n\n" +
+          "Authors are matched by name: an existing `\\author <id> \"<name>\"` line with an optional trailing email, or a negative LyX hash ID, is still recognized and reused, so a mutation never adds a duplicate `\\author` entry or mis-attributes markers to a fresh ID. A new name gets the next sequential ID above the largest positive ID already present.",
       ),
       sec(
         "Locating tracked changes",

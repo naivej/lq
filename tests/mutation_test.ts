@@ -4518,3 +4518,235 @@ Deno.test("DL92 B - split-after under the union scope works in any listed region
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }
 });
+
+// --- Dev log 124: Rule 0 fixes (author-line parsing + generated-inset bytes) ---
+
+/** Lines in the header that are \author entries. */
+function authorLines(text: string): string[] {
+  return text.split("\n").filter(l => l.startsWith("\\author "));
+}
+
+Deno.test("DL124 A1 - email-bearing author line is recognized and reused", { timeout: 15000 }, async () => {
+  // LyX writes \author <id> "<name>" <email> when an email is set (Author.cpp
+  // operator<<). The old regex required the line to end at the closing quote,
+  // so this line was invisible and a duplicate \author 1 was added. Dev log
+  // 124 F1: parse a first-quoted name with an optional trailing email.
+  const tempFile = await writeTempLyx("temp_dl124_a1_email.lyx",
+    "\\begin_layout Standard\nHello\n\\end_layout\n",
+    "\\author 236438948 \"lq user\" lquser@example.com\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "Goodbye"],
+      { trackChanges: true, authorName: "lq user" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    const authors = authorLines(text);
+    assertEquals(authors.length, 1, "no duplicate \\author entry may be added");
+    assertEquals(authors[0], "\\author 236438948 \"lq user\" lquser@example.com");
+    assertStringIncludes(text, "\\change_deleted 236438948", "markers reuse the existing author ID");
+    assertStringIncludes(text, "\\change_inserted 236438948", "markers reuse the existing author ID");
+    assertEquals(text.includes("\\author 1"), false, "no fresh sequential author may be injected");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL124 A2 - negative-hash author line is recognized and reused", { timeout: 15000 }, async () => {
+  // LyX's author ID is a Bernstein hash cast to int — often negative (LyX's
+  // own tex2lyx fixtures: \author -443692588 "Hans Wurst"). The old regex
+  // ^\d+ required digits-only IDs. Dev log 124 F1: accept -?\d+.
+  const tempFile = await writeTempLyx("temp_dl124_a2_negid.lyx",
+    "\\begin_layout Standard\nHello\n\\end_layout\n",
+    "\\author -443692588 \"Hans Wurst\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "Bye"],
+      { trackChanges: true, authorName: "Hans Wurst" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    const authors = authorLines(text);
+    assertEquals(authors.length, 1, "no duplicate \\author entry may be added");
+    assertEquals(authors[0], "\\author -443692588 \"Hans Wurst\"");
+    assertStringIncludes(text, "\\change_deleted -443692588", "markers reuse the negative existing ID");
+    assertStringIncludes(text, "\\change_inserted -443692588", "markers reuse the negative existing ID");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL124 A3 - mixed header, new author gets maxId+1 over parsed positives", { timeout: 15000 }, async () => {
+  // No name match for "Bob": the new ID must be max parsed positive + 1.
+  // The email-bearing line is recognized, so its positive ID (236438948)
+  // counts for maxId — Bob gets 236438949, no collision with Alice's 5 or
+  // "me"'s 236438948. Dev log 124 D1 + maxId note (A3).
+  const tempFile = await writeTempLyx("temp_dl124_a3_mixed.lyx",
+    "\\begin_layout Standard\nHello\n\\end_layout\n",
+    "\\author 236438948 \"me\" me@example.com\n\\author 5 \"Alice\"\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "X"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    const authors = authorLines(text);
+    assertEquals(authors.length, 3);
+    assertStringIncludes(text, "\\author 236438949 \"Bob\"", "new ID = max parsed positive + 1");
+    assertStringIncludes(text, "\\change_deleted 236438949");
+    assertStringIncludes(text, "\\change_inserted 236438949");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL124 A4 - email-only header, new author still sequential past email ID", { timeout: 15000 }, async () => {
+  // Header has only an email-bearing author. Its positive ID is parsed and
+  // counts for maxId, so the first new author is 236438949 — never a
+  // collision with 236438948 (dev log 124 maxId note).
+  const tempFile = await writeTempLyx("temp_dl124_a4_seq.lyx",
+    "\\begin_layout Standard\nHello\n\\end_layout\n",
+    "\\author 236438948 \"me\" me@example.com\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "X"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    const authors = authorLines(text);
+    assertEquals(authors.length, 2);
+    assertStringIncludes(text, "\\author 236438949 \"Bob\"", "new ID = email line's positive ID + 1 (no collision)");
+    assertStringIncludes(text, "\\change_deleted 236438949");
+    assertStringIncludes(text, "\\change_inserted 236438949");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL124 A5 - negative-ID email line: recognized but not counted for maxId", { timeout: 15000 }, async () => {
+  // A negative hash ID never counts toward the positive sequential new-ID
+  // scheme (dev log 124 D1), even on an email-bearing line. It only needs to
+  // be recognized for name matching, so a non-matching name gets \author 1.
+  const tempFile = await writeTempLyx("temp_dl124_a5_negemail.lyx",
+    "\\begin_layout Standard\nHello\n\\end_layout\n",
+    "\\author -443692588 \"me\" me@example.com\n");
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "X"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    const authors = authorLines(text);
+    assertEquals(authors.length, 2);
+    assertStringIncludes(text, "\\author 1 \"Bob\"", "negative IDs never count for maxId; new ID starts at 1");
+    assertStringIncludes(text, "\\change_deleted 1");
+    assertStringIncludes(text, "\\change_inserted 1");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL124 B1 - --cite emits the canonical blank line before \\end_inset", { timeout: 15000 }, async () => {
+  // LyX's Paragraph::write (META_INSET) emits <last>\n\n\end_inset for every
+  // non-directWrite inset (dev log 124 F2). Byte-verified in tex2lyx fixtures.
+  const tempFile = await createTempFixture("temp_dl124_b1_cite.lyx");
+  try {
+    await runCliTest(["insert", tempFile, "layout[Standard]:first", "append", "--cite", "K1"]);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, 'literal "false"\n\n\\end_inset',
+      "citation inset must carry the blank line LyX writes before \\end_inset");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL124 B2 - --ref emits the canonical blank line before \\end_inset", { timeout: 15000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl124_b2_ref.lyx");
+  try {
+    await runCliTest(["insert", tempFile, "layout[Standard]:first", "append", "--ref", "sec:x"]);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, 'tuple "list"\n\n\\end_inset',
+      "ref inset must carry the blank line LyX writes before \\end_inset");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL124 B3 - --label emits the canonical blank line before \\end_inset", { timeout: 15000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl124_b3_label.lyx");
+  try {
+    await runCliTest(["insert", tempFile, "layout[Standard]:first", "append", "--label", "sec:x"]);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, 'name "sec:x"\n\n\\end_inset',
+      "label inset must carry the blank line LyX writes before \\end_inset");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL124 B4 - --footnote emits the canonical blank line before \\end_inset", { timeout: 15000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl124_b4_footnote.lyx");
+  try {
+    await runCliTest(["insert", tempFile, "layout[Standard]:first", "append", "--footnote", "note"]);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\end_layout\n\n\\end_inset",
+      "footnote inset must carry the blank line LyX writes before \\end_inset");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL124 B5 - tracked --cite keeps markers outside and the blank line inside", { timeout: 15000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl124_b5_tracked_cite.lyx");
+  try {
+    await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]:first", "append", "--cite", "K1"],
+      { trackChanges: true },
+    );
+    const text = await Deno.readTextFile(tempFile);
+    const insetMatch = text.match(/\\begin_inset CommandInset citation\n([\s\S]*?)\\end_inset/);
+    assert(insetMatch, "citation inset should be present");
+    assert(!insetMatch[1].includes("\\change_"), "no markers inside the inset body (atomic wrap, DL81)");
+    assertStringIncludes(insetMatch[1], 'literal "false"\n\n', "blank line preserved inside the tracked body");
+    const beforeIdx = text.indexOf("\\begin_inset CommandInset citation");
+    const afterIdx = text.indexOf("\\end_inset", beforeIdx);
+    const insertedIdx = text.lastIndexOf("\\change_inserted", beforeIdx);
+    const unchangedIdx = text.indexOf("\\change_unchanged", afterIdx);
+    assert(insertedIdx !== -1 && insertedIdx < beforeIdx, "change_inserted must precede the inset");
+    assert(unchangedIdx !== -1 && unchangedIdx > afterIdx, "change_unchanged must follow the inset");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL124 B6 - --raw-file passes through byte-identical (no synthesized blank line)", { timeout: 15000 }, async () => {
+  // F2 touches only the generators. --raw-file must stay verbatim: a raw
+  // CommandInset written WITHOUT the trailing blank line must round-trip
+  // untouched, proving lq never adds the blank line to user-provided bytes.
+  // The assertion is scoped to the inserted inset via a unique key, because
+  // the my_template fixture already contains citation insets that DO carry
+  // the canonical blank line.
+  const tempFile = await createTempFixture("temp_dl124_b6_raw.lyx");
+  const rawFile = await Deno.makeTempFile({ suffix: ".raw" });
+  const rawContent =
+    "\\begin_inset CommandInset citation\n" +
+    "LatexCommand citet\n" +
+    'key "DL124B6"\n' +
+    'literal "false"\n' +
+    "\\end_inset\n";
+  try {
+    await Deno.writeTextFile(rawFile, rawContent);
+    await runCliTest(["insert", tempFile, "layout[Standard]:first", "append", "--raw-file", rawFile]);
+    const text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, 'key "DL124B6"\nliteral "false"\n\\end_inset',
+      "raw-file content must pass through verbatim (no synthesized blank line)");
+    assertEquals(text.includes('key "DL124B6"\nliteral "false"\n\n\\end_inset'), false,
+      "raw-file must not gain the generator's blank line");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+    try { await Deno.remove(rawFile); } catch { /* ignore */ }
+  }
+});

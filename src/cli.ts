@@ -2158,6 +2158,9 @@ function foldNegativeDepth(args: string[]): string[] {
           { type: "text", text: `LatexCommand ${citeCmd}` },
           { type: "text", text: `key "${flags.cite}"` },
           { type: "text", text: `literal "false"` },
+          // LyX's Paragraph::write emits a blank line before \end_inset
+          // (dev log 124 F2) — match the canonical byte form.
+          { type: "text", text: "" },
         ],
       });
     } else if (flags.ref) {
@@ -2181,6 +2184,9 @@ function foldNegativeDepth(args: string[]): string[] {
           { type: "text", text: `noprefix "false"` },
           { type: "text", text: `nolink "false"` },
           { type: "text", text: `tuple "list"` },
+          // LyX's Paragraph::write emits a blank line before \end_inset
+          // (dev log 124 F2) — match the canonical byte form.
+          { type: "text", text: "" },
         ],
       });
     } else if (flags.label) {
@@ -2192,6 +2198,9 @@ function foldNegativeDepth(args: string[]): string[] {
         children: [
           { type: "text", text: "LatexCommand label" },
           { type: "text", text: `name "${flags.label}"` },
+          // LyX's Paragraph::write emits a blank line before \end_inset
+          // (dev log 124 F2) — match the canonical byte form.
+          { type: "text", text: "" },
         ],
       });
     } else if (flags.footnote) {
@@ -2213,6 +2222,9 @@ function foldNegativeDepth(args: string[]): string[] {
             isBeginVariant: true,
             children: [{ type: "text", text: flags.footnote }],
           },
+          // LyX's Paragraph::write emits a blank line before \end_inset
+          // (dev log 124 F2) — match the canonical byte form.
+          { type: "text", text: "" },
         ],
       });
     } else if (flags.text) {
