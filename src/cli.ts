@@ -22,7 +22,6 @@ import {
   annotateChangesInPlace,
   applyCrossNodeReplace,
   applyTrackedDeleteToChildren,
-  canonicalizeDeleteWrap,
   ensureTrackingChangesInHeader,
   extractAllText,
   flattenNestedChanges,
@@ -1560,12 +1559,28 @@ function foldNegativeDepth(args: string[]): string[] {
   // DL111: LyX only accepts change markers inside a layout's text. A tracked
   // mutation whose target is not in a layout's text stream (preamble lines,
   // `#` comments, header text, inset status/parameter lines) would silently
-  // emit markers LyX reads as literal content — fail closed instead.
-  // Property targets are never wrapped (plain value edits; no-op deletes) and
-  // inset blocks have their own guards below, so both are skipped here.
+  // emit markers LyX reads as literal content — fail closed instead. Inset
+  // blocks have their own guards below, so they are skipped here.
+  //
+  // Dev log 125 F3 (D3-b): a property node has no tracked-deletion form — LyX
+  // tracks changes on character positions, not on inline properties or header
+  // values (Text::setFont records no Change), and a char-less change region is
+  // dropped by Changes::merge(). `delete` therefore refuses property targets;
+  // `set` keeps its plain value-edit path (an untracked physical edit, exactly
+  // what LyX does for formatting/header values) and stays skipped.
   if (trackChanges && ["set", "delete"].includes(command)) {
     for (const node of nodes) {
-      if (node.type === "property") continue;
+      if (node.type === "property") {
+        if (command === "delete") {
+          printError("TRACKING_ERROR",
+            `LyX cannot track-delete a property node ('${nodeLabel(node)}') — change tracking applies to text, not to inline properties or header values.\n` +
+            `Alternatives:\n` +
+            `  - Target the text the property formats, e.g. '${filePath}' "layout[Standard] text:property(emph)"\n` +
+            `  - Disable tracking first ('lq init --track-changes off'), then re-run this command\n` +
+            `Run 'lq read ${filePath} "${selector}" --count' to verify the target.`);
+        }
+        continue;
+      }
       if (node.type === "block" && (node as BlockNode).tag === "inset") continue;
       if (!hasLayoutAncestor(node, ast)) {
         printError("TRACKING_ERROR",
@@ -1979,16 +1994,25 @@ function foldNegativeDepth(args: string[]): string[] {
                 // Matched paragraph insets were already handled by the
                 // region-aware pass above (dev log 123 F1).
               } else {
-                // Layout or other non-inset block: wrap children, then
-                // canonicalize (dev log 123 D4 — drop emptied regions and
-                // redundant closers).
-                block.children = canonicalizeDeleteWrap(
-                  wrapWithTracking(block.children, "deleted", authorId, deleteTs),
+                // Layout or other non-inset block (dev log 125 D1-B): route
+                // the whole children list through the region-aware eraseChar
+                // model with every content node matched — LyX's
+                // whole-paragraph deletion. This merges adjacent same-author
+                // deleted runs into one region (the wrap+canonicalize path
+                // left un-merged `cd … cu cd … cu` where LyX writes one
+                // `cd … cu`), keeps already-deleted content under its
+                // original author (eraseChar no-op), and folds inline
+                // properties inside the region (F4). The pass's final-closer
+                // rule (no closer at a true paragraph end inside a region) is
+                // LyX-exact (verified headless 2026-08-14).
+                block.children = applyTrackedDeleteToChildren(
+                  block.children,
+                  () => true,
+                  authorId,
+                  deleteTs,
+                  { foldProperties: true },
                 );
               }
-            } else if (child.type === "property") {
-              const wrapped = wrapWithTracking([child], "deleted", authorId, deleteTs);
-              children.splice(i, 1, ...wrapped);
             } else if (child.type === "text" && !inParagraphContext) {
               // Matched text in paragraph context was handled by the
               // region-aware pass above; this branch covers matched text in

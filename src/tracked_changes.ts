@@ -542,6 +542,7 @@ export function applyTrackedDeleteToChildren(
   isMatched: (n: Node) => boolean,
   deleterId: number,
   ts: string,
+  opts: { foldProperties?: boolean } = {},
 ): Node[] {
   type RegionState =
     | { kind: "current" }
@@ -552,6 +553,18 @@ export function applyTrackedDeleteToChildren(
     return a.kind === b.kind && a.author === b.author;
   };
 
+  // Dev log 125 D2 (byte-identity contract): a list with no matched content
+  // is returned unchanged. LyX only touches the target paragraph during a
+  // delete — re-encoding an untouched paragraph here would silently drop a
+  // truly-empty pre-existing region (an opener immediately followed by its
+  // closer, with no content between — the parser produces no content node for
+  // it), violating the DL123 §8 "no matched content → byte-identical" rule.
+  const hasMatchedContent = children.some((n) =>
+    (n.type === "text" ||
+      (n.type === "block" && (n as BlockNode).tag === "inset")) && isMatched(n)
+  );
+  if (!hasMatchedContent) return children;
+
   // Pass 1 — assign each content node its output state (LyX's per-position
   // model): matched nodes move to the deleter's deleted run (or are consumed
   // / kept), non-matched nodes keep their region state. Region openers and
@@ -559,9 +572,26 @@ export function applyTrackedDeleteToChildren(
   type Item = { state: RegionState; node: Node };
   const items: Item[] = [];
   let regionState: RegionState = { kind: "current" };
+  // Dev log 125 F4 (`foldProperties`, whole-layout delete): inline properties
+  // fold into the run of the content they format — LyX writes font properties
+  // inside the change region (Paragraph::write), so rejecting the change
+  // restores the original formatting. A property is deferred until the next
+  // content node (or a region boundary / list end) and adopts that content's
+  // output state; a trailing property adopts the last content's state.
+  let pendingProps: Node[] = [];
+  let lastState: RegionState = { kind: "current" };
+  const push = (state: RegionState, node: Node) => {
+    items.push({ state, node });
+    lastState = state;
+  };
+  const flushPendingProps = (state: RegionState) => {
+    for (const p of pendingProps) push(state, p);
+    pendingProps = [];
+  };
   for (const child of children) {
     if (child.type === "property") {
       if (isChangeOpener(child.key)) {
+        flushPendingProps(lastState);
         const m = parseChangeMarker(child.value);
         regionState = child.key === "change_inserted"
           ? { kind: "inserted", author: m.authorId, ts: m.ts }
@@ -569,7 +599,12 @@ export function applyTrackedDeleteToChildren(
         continue;
       }
       if (isChangeCloser(child.key)) {
+        flushPendingProps(lastState);
         regionState = { kind: "current" };
+        continue;
+      }
+      if (opts.foldProperties) {
+        pendingProps.push(child);
         continue;
       }
     }
@@ -578,21 +613,30 @@ export function applyTrackedDeleteToChildren(
     if (isContent && isMatched(child)) {
       if (regionState.kind === "current") {
         // current text → deleter's deletion
-        items.push({ state: { kind: "deleted", author: deleterId, ts }, node: child });
+        flushPendingProps({ kind: "deleted", author: deleterId, ts });
+        push({ kind: "deleted", author: deleterId, ts }, child);
       } else if (regionState.kind === "inserted") {
         if (regionState.author !== deleterId) {
           // co-author's pending insert → deleter's deletion
-          items.push({ state: { kind: "deleted", author: deleterId, ts }, node: child });
+          flushPendingProps({ kind: "deleted", author: deleterId, ts });
+          push({ kind: "deleted", author: deleterId, ts }, child);
+        } else {
+          // the deleter's own pending insert → consumed (dropped); any
+          // deferred properties fall back to the last pushed state
+          flushPendingProps(lastState);
         }
-        // the deleter's own pending insert → consumed (dropped)
       } else {
         // already deleted → no-op: stays in its original deleted region
-        items.push({ state: regionState, node: child });
+        flushPendingProps(regionState);
+        push(regionState, child);
       }
     } else {
-      items.push({ state: regionState, node: child });
+      flushPendingProps(regionState);
+      push(regionState, child);
     }
   }
+  // Trailing deferred properties fold into the last content's state.
+  flushPendingProps(lastState);
 
   // Pass 2 — run-length encode (merge adjacent same-state runs; consumed
   // nodes were never added).
@@ -631,46 +675,6 @@ export function applyTrackedDeleteToChildren(
     out.push({ type: "property", key: "change_unchanged" });
   }
   return out;
-}
-
-/**
- * Canonicalize a tracked-delete wrapper output for whole-layout deletes
- * (dev log 123 D4): drop emptied change regions (an opener whose content was
- * removed) and collapse redundant consecutive \change_unchanged closers.
- * `wrapWithTracking` on a children list containing an open change region
- * leaves dead markup (`ci 1{} cd 2{alpha} cu cu`); this pass reduces it to
- * LyX's byte-exact form (`cd 2{alpha} cu`). The region-aware text path
- * (`applyTrackedDeleteToChildren`) already emits byte-exact output and does
- * not need this pass. Adjacent same-author regions are intentionally NOT
- * merged here — LyX's reader coalesces them on read; the wrap never produces
- * them.
- */
-export function canonicalizeDeleteWrap(children: Node[]): Node[] {
-  const out: Node[] = [];
-  let i = 0;
-  while (i < children.length) {
-    const child = children[i];
-    if (child.type === "property" && isChangeOpener(child.key)) {
-      const { closer, nextOpener } = scanRegionEnd(children, i + 1, child.key, true);
-      const end = closer !== -1 ? closer : (nextOpener !== -1 ? nextOpener : children.length);
-      const content = children.slice(i + 1, end);
-      const hasContent = content.some((n) => n.type === "text" || n.type === "block");
-      if (hasContent) {
-        out.push(child, ...content);
-        i = end; // the closer (if any) is processed next; a boundary opener reprocessed
-      } else {
-        // Emptied region: drop the opener and its closer together.
-        i = closer !== -1 ? closer + 1 : end;
-      }
-      continue;
-    }
-    out.push(child);
-    i++;
-  }
-  // Collapse redundant consecutive closers.
-  const isCu = (n: Node | undefined): boolean =>
-    n !== undefined && n.type === "property" && n.key === "change_unchanged";
-  return out.filter((n, idx) => !(isCu(n) && idx > 0 && isCu(out[idx - 1])));
 }
 
 /**
