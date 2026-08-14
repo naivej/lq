@@ -51,6 +51,12 @@ function parsePseudoClasses(suffix: string): PseudoClass[] {
       throw new Error(`:property() requires an argument, e.g. :property(emph) or :property(family=roman)`);
     }
 
+    if (pName === "nth-match" && !pArg) {
+      // DL127 F3: empty/whitespace-only arg used to match EVERYTHING
+      // (argRaw undefined → the pseudo was silently ignored, or a=1,b=0).
+      throw new Error(`:nth-match() requires an argument, e.g. :nth-match(2n+1)`);
+    }
+
     if (pName === "note" && pArg !== undefined) {
       // DL99: bare :note = any private type; :note(Note) / :note(Comment) = one.
       let noteType = pArg;
@@ -359,14 +365,16 @@ export function parseChangeArg(raw: string): "current" | "inserted" | "deleted" 
 /**
  * Parse a :nth-match() formula — a plain integer, 'odd'/'even', or an `an+b`
  * formula — into its { a, b } coefficients. Returns null for invalid
- * formulas (e.g. 'abc', '2n+'), which match nothing. The CLI selector guard
- * (dev log 118) rejects invalid formulas up front; the engine keeps the
- * silent-empty behavior for them.
+ * formulas (e.g. 'abc', '2n+', or empty), which match nothing. The CLI
+ * selector guard (dev log 118, tightened in DL127 for the empty case)
+ * rejects invalid formulas up front; the engine keeps the silent-empty
+ * behavior for them.
  */
 function parseNthMatchFormula(raw: string): { a: number; b: number } | null {
   let formula = raw;
   if (formula === "odd") formula = "2n+1";
   if (formula === "even") formula = "2n";
+  if (formula.replace(/\s+/g, "") === "") return null; // empty/whitespace-only: invalid (DL127 F3)
   let a = 0, b = 0;
   const num = parseInt(formula, 10);
   if (!isNaN(num) && !formula.includes("n")) {

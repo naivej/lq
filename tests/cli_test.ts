@@ -1244,6 +1244,21 @@ Deno.test("DL118 - negative: valid selectors neither warn nor error", { timeout:
   }
 });
 
+Deno.test("DL127 F3 - empty or whitespace :nth-match() formula errors instead of matching everything", { timeout: 10000 }, async () => {
+  const tempFile = await createTempFixture("temp_dl127_nthmatch_empty.lyx");
+  try {
+    for (const sel of ["layout[Standard]:nth-match()", "layout[Standard]:nth-match( )", "layout[Standard]:nth-match(  )"]) {
+      const r = await runCliTest(["read", tempFile, sel, "--count"]);
+      assertEquals(r.code, "INVALID_SELECTOR", `${sel} -> ${JSON.stringify(r)}`);
+    }
+    // Whitespace inside a non-empty formula stays valid.
+    const ok = await runCliTest(["read", tempFile, "layout[Standard]:nth-match(2n + 1)", "--count"]);
+    assertEquals(ok.code, undefined);
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("DL118 - second snapshot undo names the consumed-snapshot possibility", { timeout: 10000 }, async () => {
   const tempFile = await createTempFixture("temp_dl118_undo_twice.lyx");
   try {

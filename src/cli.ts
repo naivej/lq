@@ -164,17 +164,27 @@ interface UserConfig {
   authorName?: string;
 }
 
-async function loadUserConfig(statePaths: StatePaths): Promise<UserConfig> {
+interface LoadedUserConfig {
+  config: UserConfig;
+  exists: boolean;
+  unreadable: boolean;
+}
+
+async function loadUserConfig(statePaths: StatePaths): Promise<LoadedUserConfig> {
+  let stat: Deno.FileInfo | null = null;
   try {
-    const stat = await Deno.stat(statePaths.config);
-    if (stat.isFile) {
-      const text = await Deno.readTextFile(statePaths.config);
-      return JSON.parse(text);
-    }
-  } catch (_e) {
-    // Ignore config loading errors
+    stat = await Deno.stat(statePaths.config);
+  } catch {
+    return { config: {}, exists: false, unreadable: false }; // missing — defaults are fine
   }
-  return {};
+  if (!stat.isFile) return { config: {}, exists: false, unreadable: false };
+  try {
+    const text = await Deno.readTextFile(statePaths.config);
+    return { config: JSON.parse(text), exists: true, unreadable: false };
+  } catch (_e) {
+    // Present but unreadable — the mutation path warns (DL127 F5b).
+    return { config: {}, exists: true, unreadable: true };
+  }
 }
 
 async function configFileExists(statePaths: StatePaths): Promise<boolean> {
@@ -324,30 +334,6 @@ function printError(code: string, message: string, details: Record<string, unkno
   Deno.exit(1);
 }
 
-/**
- * Selector mistake guards (DL112).
- *
- * 1. Misplaced `:until()`: `:until` only bounds the target of a `~` sibling
- *    range (a part with combinator "sibling"). On any other part — no `~` in
- *    the arm, or `:until` on the anchor side of `~` — the bound is silently
- *    ignored and the command runs on the unbound match set. For mutations
- *    that is a blast-radius mistake and fails closed; for read-only commands
- *    it is a warning.
- * 2. `text:contains(...)`: text nodes are never returned for `:contains`, so
- *    this dead arm never matches in any command. Always a warning — a dead
- *    arm in a union still leaves the other arms valid.
- *
- * The selector was already validated by query() before this runs, so
- * parseSelector cannot throw here (the guard stays defensive). Inner
- * selectors (inside :not(...) / :until(...) arguments) are intentionally not
- * scanned (DL112 scope note).
- *
- * Returns a hint about a dead text:contains(...) arm ("" if none). The hint
- * is also pushed as a warning, but warnings are dropped by printError when a
- * command ends in NO_MATCH (errors never carry warnings — DL88 D4-a), so call
- * sites append the return value to their NO_MATCH messages to keep the hint
- * visible for every command.
- */
 /**
  * Selector mistake guards (DL112, tightened in DL118): a selector that can
  * never produce a useful result is a hard INVALID_SELECTOR error on every
@@ -1072,7 +1058,7 @@ export async function runCli(args: string[]) {
       );
     }
     const configExists = await configFileExists(statePaths);
-    const existing = await loadUserConfig(statePaths);
+    const existing = (await loadUserConfig(statePaths)).config;
 
     // If no flags and config exists, print it and exit
     if (!hasFlags && configExists) {
@@ -1185,7 +1171,8 @@ export async function runCli(args: string[]) {
   }
 
   // Load user config (shared by all commands: cache sizing, refresh, track-changes)
-  const userConfig = await loadUserConfig(statePaths);
+  const loadedConfig = await loadUserConfig(statePaths);
+  const userConfig = loadedConfig.config;
   setMaxCacheEntries(userConfig.maxCacheEntries ?? 50);
 
   // --- Refresh pre-step (save-reload only) ---
@@ -1199,6 +1186,23 @@ export async function runCli(args: string[]) {
     if (userConfig.refresh) refreshMode = userConfig.refresh;
     trackChanges = userConfig.trackChanges !== false;
     authorName = userConfig.authorName || "lq user";
+    // F5b (DL127): a local scope without a readable config.json silently
+    // applies built-in defaults (trackChanges on, author 'lq user'). Warn so
+    // the silent defaults are never a surprise. Global scope stays quiet — a
+    // fresh install with no global config is the normal state.
+    if (statePaths.scope === "local") {
+      if (!loadedConfig.exists) {
+        pushWarning(
+          "Local state '" + statePaths.root + "' has no config.json — lq defaults apply " +
+          "(trackChanges on, author 'lq user'). Run 'lq init' to set this project's options explicitly."
+        );
+      } else if (loadedConfig.unreadable) {
+        pushWarning(
+          "Local config '" + statePaths.config + "' could not be read — lq defaults apply " +
+          "(trackChanges on, author 'lq user'). Fix the file or run 'lq init' to rewrite it."
+        );
+      }
+    }
     if (refreshMode !== "none") {
       const preStep = await refreshPreStep(filePath, refreshMode);
       if (preStep === "disconnect") {
@@ -1440,7 +1444,7 @@ function foldNegativeDepth(args: string[]): string[] {
   }
 
   if (command === "schema") {
-    const config = await loadUserConfig(statePaths);
+    const config = (await loadUserConfig(statePaths)).config;
     const layoutsDir = await resolveLayoutsDir(config);
     if (!layoutsDir) {
       printError("NO_CONFIG", "No layouts directory found. Run 'lq init' to auto-detect and save your LyX layouts path.");
@@ -2158,7 +2162,7 @@ function foldNegativeDepth(args: string[]): string[] {
       // runtime auto-detect fallback the schema/dump commands use, so that
       // validation is not silently skipped when no layouts dir is configured
       // (DL105 issue 4 — fallback restored after a946bc5 removed it).
-      const config = await loadUserConfig(statePaths);
+      const config = (await loadUserConfig(statePaths)).config;
       const layoutsDir = await resolveLayoutsDir(config);
       if (layoutsDir) {
          const textclassNode = query(ast, "textclass")[0];
@@ -2314,7 +2318,7 @@ function foldNegativeDepth(args: string[]): string[] {
     // (DL105 issue 4 — fallback restored after a946bc5 removed it).
     let schema: Awaited<ReturnType<typeof getSchemaForClass>> | null = null;
     let textclassValue: string | null = null;
-    const config = await loadUserConfig(statePaths);
+    const config = (await loadUserConfig(statePaths)).config;
     const layoutsDir = await resolveLayoutsDir(config);
     if (layoutsDir) {
       const textclassNode = query(ast, "textclass")[0];

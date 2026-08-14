@@ -268,6 +268,18 @@ Deno.test("DL90 - :change() rejects invalid or missing arguments", () => {
   assertEquals(err.includes("requires an argument"), true, err);
 });
 
+Deno.test("DL127 F3 - empty or whitespace :nth-match() requires an argument (was: silently matches everything)", () => {
+  const ast = parse(TRACKED_QUERY_BODY);
+  for (const sel of ["layout[Standard]:nth-match()", "layout[Standard]:nth-match( )", "layout[Standard]:nth-match(  )"]) {
+    let err = "";
+    try { query(ast, sel); } catch (e) { err = (e as Error).message; }
+    assertEquals(err.includes("requires an argument"), true, `${sel} -> ${err}`);
+  }
+  // A non-empty formula with internal whitespace still parses and matches.
+  const sections = query(ast, "layout:nth-match(2n + 1)");
+  assertEquals(sections.length > 0, true, "2n + 1 formula still works");
+});
+
 Deno.test("DL91 - text[arg] hard-errors instead of silently matching all", () => {
   const ast = parse(TRACKED_QUERY_BODY);
   let directErr = "";

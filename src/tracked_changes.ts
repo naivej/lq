@@ -434,8 +434,6 @@ export function flattenNestedChanges(children: Node[]): Node[] {
               segments.push({ authorId: inner.authorId, ts: inner.ts, nodes: innerContent });
             }
           }
-          // change_deleted inside change_inserted: legacy drop rule —
-          // unreachable, the flat scan makes a cd opener a region boundary.
           k = closer === -1 ? content.length : closer + 1;
         } else {
           outerRun.push(n);

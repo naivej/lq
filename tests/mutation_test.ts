@@ -825,6 +825,83 @@ Deno.test("DL106 B1 - Bob's --find inside Alice's \\change_deleted keeps Alice's
   }
 });
 
+// --- DL127 F1: cross-author replay of an edit inside another author's
+// change_inserted must match LyX's reject chain (Rule-0 conformance pin).
+// ts58 called this a gap; the LyX 2.5.1 source shows otherwise: eraseChar
+// overwrites a co-author's INSERTED per-char change with the deleter's
+// DELETED at edit time, and rejectChanges restores DELETED to UNCHANGED with
+// no attribution memory — so LyX's own GUI reject chain (reject Bob's change,
+// then Alice's) ends at the same "very quick quick" state as lq's replay. ---
+
+Deno.test("DL127 F1 - cross-author replay of an edit inside another author's insert matches LyX's reject chain", { timeout: 20000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl127_f1_replay_chain.lyx",
+    "\\begin_layout Standard\n" +
+    "The quick brown fox\n" +
+    "\\end_layout\n",
+    '\\author 1 "Alice"\n');
+  try {
+    // 1. Alice: "quick" -> "very quick" (tracked replacement).
+    const step1 = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "very quick", "--find", "quick"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(step1.modified_nodes, 1);
+    let text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_inserted 1", "Alice's insert");
+    assertStringIncludes(text, "\\change_deleted 1", "Alice's deletion");
+
+    // 2. Bob replaces "very quick" inside Alice's insert: the consumed insert
+    // becomes Bob's deletion, Alice's original deletion survives (eraseChar).
+    const step2 = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "extremely quick", "--find", "very quick"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(step2.modified_nodes, 1);
+    text = await Deno.readTextFile(tempFile);
+    assertStringIncludes(text, "\\change_inserted 2", "Bob's insert");
+    assertStringIncludes(text, "\\change_deleted 2", "Bob's deletion of Alice's insert");
+    assertStringIncludes(text, "\\change_deleted 1", "Alice's original deletion survives");
+
+    // 3. Bob replays: his markers go, "very quick" is restored as PLAIN
+    // current text (rejectChanges: DELETED -> UNCHANGED, no insert memory).
+    const step3 = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(step3.code, undefined);
+    text = await Deno.readTextFile(tempFile);
+    assert(!text.includes("\\change_inserted 2"), "Bob's insert removed");
+    assert(!text.includes("\\change_deleted 2"), "Bob's deletion removed");
+    assertStringIncludes(text, "\\change_deleted 1", "Alice's deletion survives Bob's replay");
+    const veryQuickPos = text.indexOf("very quick");
+    const delAlice = text.indexOf("\\change_deleted 1");
+    assert(veryQuickPos !== -1 && delAlice !== -1 && veryQuickPos < delAlice,
+      "'very quick' must be CURRENT text sitting before Alice's surviving deletion");
+
+    // 4. Alice replays: her deletion restores "quick" — the accepted text
+    // becomes exactly what LyX's GUI reject chain produces (reject Bob's
+    // change, then Alice's): the flat per-position restore re-materializes
+    // the consumed text nodes in place. The replacement targeted the bare
+    // word "quick" (no trailing space), so the node sequence is
+    // "The " + "very quick" + "quick" + " brown fox".
+    const step4 = await runCliWithConfig(
+      ["undo", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(step4.code, undefined);
+    text = await Deno.readTextFile(tempFile);
+    assertEquals(changeMarkers(firstLayoutChildren(text)).length, 0,
+      "no change markers remain after both replays");
+    assertEquals(
+      firstLayoutChildren(text).filter((c) => c.type === "text").map((c) => (c as TextNode).text),
+      ["The ", "very quick", "quick", " brown fox"],
+      "final text-node sequence equals LyX's reject chain (Rule-0 conformance pin)",
+    );
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("DL106 B1 - --find spanning deleted->current keeps the deleted part's author, re-authors the current part", { timeout: 15000 }, async () => {
   const tempFile = await writeTempLyx("temp_dl106_b1_span.lyx",
     "\\begin_layout Standard\n" +

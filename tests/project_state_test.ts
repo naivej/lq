@@ -248,3 +248,123 @@ Deno.test("CLI - local cache and undo stay isolated from global state", { timeou
     await Deno.remove(path.dirname(filePath), { recursive: true });
   }
 });
+
+// --- DL127 F5b: a local scope without a readable config.json silently
+// applies built-in defaults — mutation commands warn (missing and unreadable
+// config alike); init and the global scope never warn. ---
+
+const DL127_MINI_DOC =
+  "#LyX 2.5 created this file.\n" +
+  "\\begin_document\n\\begin_header\n\\author 1 \"Alice\"\n\\end_header\n" +
+  "\\begin_body\n\\begin_layout Standard\nHello world\n\\end_layout\n\\end_body\n\\end_document\n";
+
+Deno.test("DL127 F5b - config-less local .lq warns on mutation; defaults apply", { timeout: 10000 }, async () => {
+  const project = await Deno.makeTempDir({ prefix: "lq_f5b_project" });
+  const globalHome = await Deno.makeTempDir({ prefix: "lq_f5b_home" });
+  try {
+    await Deno.mkdir(path.join(project, ".lq")); // marker without config.json
+    const filePath = path.join(project, "doc.lyx");
+    await Deno.writeTextFile(filePath, DL127_MINI_DOC);
+    const result = await runCliWithEnv(
+      ["set", filePath, "layout[Standard]", "Changed"],
+      { HOME: globalHome, USERPROFILE: globalHome },
+      project,
+    );
+    assertEquals(result.modified_nodes, 1);
+    const warnings = result.warnings ?? [];
+    assert(warnings.some((w) => w.includes("has no config.json")),
+      "expected missing-config warning, got: " + JSON.stringify(warnings));
+    assertStringIncludes(await Deno.readTextFile(filePath), "\\change_inserted",
+      "defaults applied: tracking on");
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(globalHome, { recursive: true });
+  }
+});
+
+Deno.test("DL127 F5b - configured local scope does not warn", { timeout: 10000 }, async () => {
+  const project = await Deno.makeTempDir({ prefix: "lq_f5b_configured" });
+  const globalHome = await Deno.makeTempDir({ prefix: "lq_f5b_home" });
+  try {
+    await Deno.mkdir(path.join(project, ".lq"), { recursive: true });
+    await Deno.writeTextFile(
+      path.join(project, ".lq", "config.json"),
+      JSON.stringify({ refresh: "none", trackChanges: true, authorName: "Local" }),
+    );
+    const filePath = path.join(project, "doc.lyx");
+    await Deno.writeTextFile(filePath, DL127_MINI_DOC);
+    const result = await runCliWithEnv(
+      ["set", filePath, "layout[Standard]", "Changed"],
+      { HOME: globalHome, USERPROFILE: globalHome },
+      project,
+    );
+    assertEquals(result.modified_nodes, 1);
+    assert(!(result.warnings ?? []).some((w) => w.includes("config.json")),
+      JSON.stringify(result.warnings));
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(globalHome, { recursive: true });
+  }
+});
+
+Deno.test("DL127 F5b - init in a config-less local scope does not warn and creates the config", { timeout: 10000 }, async () => {
+  const project = await Deno.makeTempDir({ prefix: "lq_f5b_init" });
+  try {
+    await Deno.mkdir(path.join(project, ".lq"));
+    const result = await runCliWithEnv(
+      ["init"],
+      { HOME: project, USERPROFILE: project },
+      project,
+    );
+    assertEquals(result.action, "created");
+    assert(!(result.warnings ?? []).some((w) => w.includes("config.json")),
+      JSON.stringify(result.warnings));
+  } finally {
+    await Deno.remove(project, { recursive: true });
+  }
+});
+
+Deno.test("DL127 F5b - global scope without a config does not warn (fresh-install norm)", { timeout: 10000 }, async () => {
+  const workdir = await Deno.makeTempDir({ prefix: "lq_f5b_workdir" });
+  const emptyHome = await Deno.makeTempDir({ prefix: "lq_f5b_emptyhome" });
+  try {
+    const filePath = path.join(workdir, "doc.lyx");
+    await Deno.writeTextFile(filePath, DL127_MINI_DOC);
+    const result = await runCliWithEnv(
+      ["set", filePath, "layout[Standard]", "Changed"],
+      { HOME: emptyHome, USERPROFILE: emptyHome },
+      workdir,
+    );
+    assertEquals(result.modified_nodes, 1);
+    assert(!(result.warnings ?? []).some((w) => w.includes("config.json")),
+      JSON.stringify(result.warnings));
+  } finally {
+    await Deno.remove(workdir, { recursive: true });
+    await Deno.remove(emptyHome, { recursive: true });
+  }
+});
+
+Deno.test("DL127 F5b - unreadable local config warns and defaults apply", { timeout: 10000 }, async () => {
+  const project = await Deno.makeTempDir({ prefix: "lq_f5b_corrupt" });
+  const globalHome = await Deno.makeTempDir({ prefix: "lq_f5b_home" });
+  try {
+    await Deno.mkdir(path.join(project, ".lq"), { recursive: true });
+    await Deno.writeTextFile(path.join(project, ".lq", "config.json"), "not valid json {{");
+    const filePath = path.join(project, "doc.lyx");
+    await Deno.writeTextFile(filePath, DL127_MINI_DOC);
+    const result = await runCliWithEnv(
+      ["set", filePath, "layout[Standard]", "Changed"],
+      { HOME: globalHome, USERPROFILE: globalHome },
+      project,
+    );
+    assertEquals(result.modified_nodes, 1);
+    const warnings = result.warnings ?? [];
+    assert(warnings.some((w) => w.includes("could not be read")),
+      "expected unreadable-config warning, got: " + JSON.stringify(warnings));
+    assertStringIncludes(await Deno.readTextFile(filePath), "\\change_inserted",
+      "defaults applied: tracking on");
+  } finally {
+    await Deno.remove(project, { recursive: true });
+    await Deno.remove(globalHome, { recursive: true });
+  }
+});
