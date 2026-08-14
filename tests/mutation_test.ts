@@ -1003,12 +1003,14 @@ Deno.test("DL120 A4 - plain set consumes the author's own pending insert next to
     assert(!text.includes("Bob's text"), "Bob's own pending insert consumed");
     assertStringIncludes(text, "\\change_inserted 2", "replacement inserted by Bob");
     assertStringIncludes(allText(children), "Bob's replacement");
-    // Flat, exact marker sequence — no nesting on the adjacent shape; the
-    // deleted region is self-contained with its own closer.
+    // Flat, exact marker sequence — no nesting on the adjacent shape. The
+    // deleted region and the insert share ONE closer (LyX writes a marker
+    // only at a (type, author) transition; dev log 122 F2 decision A —
+    // plain set now matches the --find path's byte-exact shared-closer form).
     assertEquals(
       changeMarkers(children).map(m => m.key),
-      ["change_deleted", "change_unchanged", "change_inserted", "change_unchanged"],
-      "flat: Bob-deleted{Alice} cu ci 2{replacement} cu",
+      ["change_deleted", "change_inserted", "change_unchanged"],
+      "byte-exact: Bob-deleted{Alice} ci 2{replacement} cu (shared closer)",
     );
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
@@ -2669,11 +2671,13 @@ Deno.test("DL103 F4 - clean input regression: wholesale set output unchanged", {
     const text = await Deno.readTextFile(tempFile);
     const children = firstLayoutChildren(text);
     const markers = changeMarkers(children);
-    assertEquals(markers.length, 4, "clean input still emits deleted/unchanged/inserted/unchanged");
+    // F2 decision A (dev log 122): plain set emits the byte-exact shared-closer
+    // form — deleted{Original} ci{New} cu, ONE closer for both adjacent
+    // different-type regions (LyX writes a marker only at a transition).
+    assertEquals(markers.length, 3, "clean input emits deleted/inserted/unchanged (shared closer)");
     assertStringIncludes(markers[0].value!, "1 ", "deleted under Alice");
-    assertEquals(markers[1].key, "change_unchanged");
-    assertStringIncludes(markers[2].value!, "1 ", "inserted under Alice");
-    assertEquals(markers[3].key, "change_unchanged");
+    assertStringIncludes(markers[1].value!, "1 ", "inserted under Alice");
+    assertEquals(markers[2].key, "change_unchanged");
     assertEquals(serialize(parse(text)), text);
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
@@ -3572,6 +3576,94 @@ Deno.test("DL121 - replay after a block split inside a different-author region l
     );
     assertStringIncludes(allText(children), "edit");
     assertStringIncludes(allText(children), "here");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+// --- Dev log 122 F1: split-after at the END of a different-author/deleted
+// region must not emit a redundant double closer. When the region's own
+// \change_unchanged follows the payload, the block shares it (LyX byte-exact
+// shared-closer form) instead of closing itself too — the old output was
+// `ci 1{edit} ci 2{TX} cu cu`. ---
+
+const DL122_SPLIT_END_BODY =
+  "\\begin_layout Standard\n" +
+  "\\change_inserted 1 1700000000\n" +
+  "edit\n" +
+  "\\change_unchanged\n" +
+  "\\end_layout\n";
+
+const DL122_SPLIT_END_DEL_BODY =
+  "\\begin_layout Standard\n" +
+  "\\change_deleted 1 1700000000\n" +
+  "edit\n" +
+  "\\change_unchanged\n" +
+  "\\end_layout\n";
+
+const DL122_SPLIT_END_NO_CLOSER_BODY =
+  "\\begin_layout Standard\n" +
+  "\\change_inserted 1 1700000000\n" +
+  "edit\n" +
+  "\\end_layout\n";
+
+Deno.test("DL122 F1 - text split-after at the end of a different-author inserted region shares the region's closer (no double closer)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl122_f1_text.lyx", DL122_SPLIT_END_BODY, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "edit", "--text", " TX"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.matched_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_inserted", "change_inserted", "change_unchanged"],
+      "byte-exact: ci(Alice) ci(Bob) cu — one closer, no `cu cu`",
+    );
+    assertStringIncludes(allText(children), "edit", "pre-split text stays in Alice's region");
+    assertStringIncludes(allText(children), " TX", "payload lands in Bob's region");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL122 F1 - block split-after at the end of a deleted region shares the region's closer (no double closer)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl122_f1_block.lyx", DL122_SPLIT_END_DEL_BODY, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "edit", "--footnote", "FN"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.matched_nodes, 1);
+    const text = await Deno.readTextFile(tempFile);
+    const children = firstLayoutChildren(text);
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_deleted", "change_inserted", "change_unchanged"],
+      "byte-exact: cd(Alice) ci(Bob) cu — one closer",
+    );
+    assertStringIncludes(text, "\\begin_inset Foot", "footnote present in Bob's region");
+    assertStringIncludes(allText(children), "edit", "deleted text survives");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL122 F1 - split-after at the end of a region with NO trailing closer keeps the block self-contained (guard)", { timeout: 15000 }, async () => {
+  const tempFile = await writeTempLyx("temp_dl122_f1_nocloser.lyx", DL122_SPLIT_END_NO_CLOSER_BODY, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["insert", tempFile, "layout[Standard]", "split-after", "edit", "--text", " TX"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.matched_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    assertEquals(
+      changeMarkers(children).map(m => m.key),
+      ["change_inserted", "change_inserted", "change_unchanged"],
+      "region runs to paragraph end: the block closes itself with its own closer (still a single closer)",
+    );
   } finally {
     try { await Deno.remove(tempFile); } catch { /* ignore */ }
   }

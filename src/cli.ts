@@ -457,11 +457,17 @@ function assertNoStrayFlags(restArgs: string[], commandName: string): void {
  *
  * Preserved deleted regions are emitted self-contained (explicit
  * \change_unchanged, synthesized when the source region shared a closer with
- * a different-type opener) so the output avoids the shared-closer fragility
- * of flattenNestedChanges. Insets stay OUTSIDE the change pair as current
- * content (the documented "preserves non-text children" contract, dev log 88
- * D2-b) — they survive both accept and reject; an inset inside a preserved
- * deleted region stays inside it.
+ * a different-type opener) — they pass through verbatim. Insets stay OUTSIDE
+ * the change pair as current content (the documented "preserves non-text
+ * children" contract, dev log 88 D2-b) — they survive both accept and
+ * reject; an inset inside a preserved deleted region stays inside it.
+ *
+ * The re-authored deletion and the new insert are emitted in LyX's
+ * byte-exact shared-closer form (dev log 122 F2 decision A): when they are
+ * adjacent (no preserved region between them), a single \change_unchanged
+ * closes both — LyX writes a marker only at a (type, author) transition and
+ * never between adjacent different-type regions, matching the --find path
+ * (flattenNestedChanges).
  */
 function buildTrackedFullReplace(
   children: Node[], newValue: string, tcAid: number, tcTs: string,
@@ -511,10 +517,25 @@ function buildTrackedFullReplace(
       i++;
     }
   }
+  const reauthorWrap = reauthor.length > 0
+    ? wrapInChangeMarkers(reauthor, "deleted", tcAid, tcTs)
+    : [];
+  const newValueWrap = wrapInChangeMarkers(
+    [{ type: "text", text: newValue }],
+    "inserted",
+    tcAid,
+    tcTs,
+  );
+  // F2 (dev log 122 decision A): when the re-authored deletion is immediately
+  // followed by the new insert (no preserved region between them), drop the
+  // deleted region's own closer and let the inserted region's closer close
+  // both — LyX's byte-exact shared-closer form, the same shape the --find
+  // path (flattenNestedChanges) emits.
+  const shareCloser = reauthor.length > 0 && preserved.length === 0;
   return [
-    ...(reauthor.length > 0 ? wrapInChangeMarkers(reauthor, "deleted", tcAid, tcTs) : []),
+    ...(shareCloser ? reauthorWrap.slice(0, -1) : reauthorWrap),
     ...preserved,
-    ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
+    ...newValueWrap,
     ...insets,
   ];
 }
@@ -1724,9 +1745,12 @@ function foldNegativeDepth(args: string[]): string[] {
             node.children = buildTrackedFullReplace(node.children, newValue, tcAid, tcTs);
           } else {
             // --replace-all deliberately wipes ALL children, insets included
-            // ("Wipe all children and rebuild from scratch").
+            // ("Wipe all children and rebuild from scratch"). Emitted in LyX's
+            // byte-exact shared-closer form (dev log 122 F2 decision A): the
+            // wiped deletion and the new insert are adjacent different-type
+            // regions, so a single closer ends both.
             node.children = [
-              ...wrapInChangeMarkers(node.children, "deleted", tcAid, tcTs),
+              ...wrapInChangeMarkers(node.children, "deleted", tcAid, tcTs).slice(0, -1),
               ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
             ];
           }
@@ -2578,27 +2602,38 @@ function foldNegativeDepth(args: string[]): string[] {
               if (newTs > oldTs) splitRegionInfo.node.value = `${insertAuthorId} ${insertTs}`;
             } else if (splitRegion !== "current" && splitRegionInfo) {
               // Different-author inserted, or deleted, region: emit the payload
-              // as an adjacent flat block. When the region reopens after it,
-              // use LyX's byte-exact shared-closer form — the block carries NO
-              // trailing closer (LyX writes a marker only at the (type, author)
-              // transition; dev log 121 D-C1). When the region does not
-              // continue, the block closes itself.
+              // as an adjacent flat block. LyX writes a marker only at a
+              // (type, author) transition (dev log 121 D-C1), so the block
+              // carries a trailing marker only where LyX would write one:
+              // - Region continues after the payload: reopen the region with
+              //   its own opener (byte-exact shared-closer form — no closer on
+              //   the block).
+              // - Region ends right after the payload (the region's own
+              //   \change_unchanged follows): the block emits no self-closer
+              //   and shares the region's closer (dev log 122 F1 — fixes the
+              //   redundant `cu cu` double closer).
+              // - Region runs to the end of the list (no closer follows): the
+              //   block closes itself.
               const marker: PropertyNode = {
                 type: "property",
                 key: "change_inserted",
                 value: `${insertAuthorId} ${insertTs}`,
               };
+              let trailing: PropertyNode | undefined;
               if (splitRegionContinues) {
-                splitParentList.splice(insertIdx, 0, marker, copy, {
+                trailing = {
                   type: "property",
                   key: splitRegionInfo.key,
                   value: `${splitRegionInfo.author} ${splitRegionInfo.ts}`,
-                });
-                splitInsertOffset += 3;
+                };
               } else {
-                splitParentList.splice(insertIdx, 0, marker, copy, { type: "property", key: "change_unchanged" });
-                splitInsertOffset += 3;
+                const next = splitParentList[insertIdx];
+                if (!(next?.type === "property" && next.key === "change_unchanged")) {
+                  trailing = { type: "property", key: "change_unchanged" };
+                }
               }
+              splitParentList.splice(insertIdx, 0, marker, copy, ...(trailing ? [trailing] : []));
+              splitInsertOffset += trailing ? 3 : 2;
             } else {
               // Current text (no region at the split point): self-contained
               // tracked block.

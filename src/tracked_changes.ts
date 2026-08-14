@@ -324,12 +324,22 @@ export function wrapInChangeMarkers(
  *   content, timestamp becomes max(old, new). (Different-type and
  *   different-author openers never reach the inner loop — the flat scan
  *   turns them into boundaries.)
- * - Closing \change_unchanged is emitted only when the region has its OWN
- *   closer or runs to the end of the list. A boundary-terminated region
- *   stays open and shares the next region's closer — LyX's byte-exact form
- *   (a marker fires only at a (type, author) transition). Pre-existing
- *   adjacent shapes like `ci{X} cd{Z}` therefore pass through verbatim
- *   (dev log 85 Finding 1) with no synthetic closer needed.
+ * - Closing \change_unchanged is emitted when the region has its OWN closer,
+ *   or — `change_inserted` only — when it runs to the end of the input list
+ *   (a conservative closer; see the end-of-list note below). A
+ *   boundary-terminated region stays open and shares the next region's
+ *   closer — LyX's byte-exact form (a marker fires only at a (type, author)
+ *   transition). Pre-existing adjacent shapes like `ci{X} cd{Z}` therefore
+ *   pass through verbatim (dev log 85 Finding 1) with no synthetic closer
+ *   needed.
+ * - End-of-list note: at a TRUE paragraph end LyX writes no
+ *   `\change_unchanged` — `\end_layout` closes the region (verified headless,
+ *   dev log 122 F4: `ci …` and `cd …` paragraphs ending inside a region
+ *   round-trip byte-identical). The `change_deleted` branch therefore emits
+ *   no closer for a region running to the end of the list. The
+ *   `change_inserted` branch's end-of-list closer is a deliberate safety for
+ *   inputs that are not the whole paragraph (e.g. the single-node splice in
+ *   cli.ts), where the region must not leak into the following content.
  * - Top-level \change_deleted regions pass through verbatim.
  */
 export function flattenNestedChanges(children: Node[]): Node[] {
