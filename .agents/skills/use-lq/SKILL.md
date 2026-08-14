@@ -1,6 +1,6 @@
 ---
 name: use-lq
-description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use the LyX CLI to create, import, or export the documents, and open the LyX GUI to establish a LyXServer connection.
+description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use headless LyX to create, import, or export the documents, and open the LyX GUI to establish a LyXServer connection.
 allowed-tools: Bash(lq *)
 ---
 
@@ -108,6 +108,6 @@ Deep reference lives in the `references/` folder, read on demand when its branch
 | [`Domain_recipes.md`](references/Domain_recipes.md) | Cross-references, citations, lists, multi-pass insertion | the task involves those content types or a complex payload |
 | [`Inset_data.md`](references/Inset_data.md) | Editing formula, ERT, and preamble payloads | the edit target is an opaque inset payload or preamble |
 | [`LyX_inset.md`](references/LyX_inset.md) · [`LyX_preamble.md`](references/LyX_preamble.md) | LyX file-format ground truth: inset and preamble serialization | hand-writing structure, or the CST shape of an unfamiliar structure is uncertain |
-| [`LyX_CLI.md`](references/LyX_CLI.md) | Driving the LyX binary: create, import, export, acceptance check, verification | generating ground truth, or verifying a mutated document against LyX |
+| [`Headless_LyX.md`](references/Headless_LyX.md) | Driving the LyX binary: create, import, export, acceptance check, verification | generating ground truth, or verifying a mutated document against LyX |
 | [`LyXServer.md`](references/LyXServer.md) | LyXServer and refresh: modes, Windows confirmation limits, can't-connect order | LyX holds unsaved work, or refresh misbehaves |
 

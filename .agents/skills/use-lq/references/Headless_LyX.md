@@ -1,4 +1,4 @@
-# LyX CLI
+# Headless LyX
 
 ### Resolve the LyX binary
 
@@ -33,7 +33,7 @@ ls "{installRoot}/Resources/templates/"**/*.lyx
 
 Templates are organized into subdirectories: `Articles/`, `Books/`, `Letters/`, `Presentations/`, `Posters/`, `Scripts/`, `Theses/`, plus locale folders (`ar/`, `ca/`, `de/`, `es/`, `fr/`, `ja/`). Template filenames use underscores and URI-encoding (e.g. `American_Astronomical_Society_%28AASTeX_v._6.3.1%29.lyx`).
 
-**Via LyX CLI (preferred):**
+**Via headless LyX (preferred):**
 
 ```bash
 # Minimal new document:
