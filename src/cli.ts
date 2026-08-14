@@ -21,6 +21,8 @@ import {
   annotateChanges,
   annotateChangesInPlace,
   applyCrossNodeReplace,
+  applyTrackedDeleteToChildren,
+  canonicalizeDeleteWrap,
   ensureTrackingChangesInHeader,
   extractAllText,
   flattenNestedChanges,
@@ -1748,9 +1750,18 @@ function foldNegativeDepth(args: string[]): string[] {
             // ("Wipe all children and rebuild from scratch"). Emitted in LyX's
             // byte-exact shared-closer form (dev log 122 F2 decision A): the
             // wiped deletion and the new insert are adjacent different-type
-            // regions, so a single closer ends both.
+            // regions, so a single closer ends both. An empty paragraph has
+            // nothing to wipe, so no \change_deleted opener is emitted at all
+            // (dev log 123 F2 — matches plain set's already-clean output).
+            // "Empty" covers both a childless layout and one holding only an
+            // empty text node (a blank line parses as {text: ""}).
+            const hasWipeContent = node.children.some((n) =>
+              n.type !== "text" || (n.text ?? "").length > 0
+            );
             node.children = [
-              ...wrapInChangeMarkers(node.children, "deleted", tcAid, tcTs).slice(0, -1),
+              ...(hasWipeContent
+                ? wrapInChangeMarkers(node.children, "deleted", tcAid, tcTs).slice(0, -1)
+                : []),
               ...wrapInChangeMarkers([{ type: "text", text: newValue }], "inserted", tcAid, tcTs),
             ];
           }
@@ -1934,43 +1945,68 @@ function foldNegativeDepth(args: string[]): string[] {
       // wrap the entire inset atomically at the parent level (if the parent is
       // a layout or the document body). An inset nested inside another inset
       // has no valid tracked-deletion representation in LyX.
-      const markAsDeleted = (children: Node[], inParagraphContext: boolean) => {
+      //
+      // Dev log 123 F1 (Rule 0): matched TEXT/INSET nodes in paragraph text go
+      // through applyTrackedDeleteToChildren — LyX's Paragraph::eraseChar
+      // model (current/co-author content → the deleter's deletion, the
+      // deleter's own pending insert consumed, already-deleted content a
+      // no-op, emptied regions dropped, adjacent same-author deletions merged,
+      // byte-exact transition emission). Whole-layout and nested-structural
+      // deletes keep the wrap, canonicalized (D4) to drop emptied regions and
+      // redundant closers.
+      const markAsDeleted = (children: Node[], inParagraphContext: boolean): Node[] => {
+        if (inParagraphContext) {
+          children = applyTrackedDeleteToChildren(
+            children,
+            (n) => nodesToMark.has(n),
+            authorId,
+            deleteTs,
+          );
+        }
         for (let i = children.length - 1; i >= 0; i--) {
           const child = children[i];
           if (nodesToMark.has(child)) {
             if (child.type === "block") {
               const block = child as BlockNode;
               if (block.tag === "inset") {
-                if (inParagraphContext) {
-                  // Wrap the whole inset atomically — same shape
-                  // wrapWithTracking already produces for insets inside
-                  // deleted layouts.
-                  const wrapped = wrapInChangeMarkers([block], "deleted", authorId, deleteTs);
-                  children.splice(i, 1, ...wrapped);
-                } else {
+                if (!inParagraphContext) {
                   printError("TRACKING_ERROR",
                     `Cannot track-delete an inset nested inside another inset.\n` +
                     `Use 'lq set' on the enclosing inset's text content to mark changes,\n` +
                     `or delete the enclosing structure.\n` +
                     `Run 'lq read ${filePath} "${selector}" --count' to verify the target.`);
                 }
+                // Matched paragraph insets were already handled by the
+                // region-aware pass above (dev log 123 F1).
               } else {
-                // Layout or other non-inset block: wrap children (existing behavior)
-                block.children = wrapWithTracking(block.children, "deleted", authorId, deleteTs);
+                // Layout or other non-inset block: wrap children, then
+                // canonicalize (dev log 123 D4 — drop emptied regions and
+                // redundant closers).
+                block.children = canonicalizeDeleteWrap(
+                  wrapWithTracking(block.children, "deleted", authorId, deleteTs),
+                );
               }
-            } else if (child.type === "text" || child.type === "property") {
+            } else if (child.type === "property") {
+              const wrapped = wrapWithTracking([child], "deleted", authorId, deleteTs);
+              children.splice(i, 1, ...wrapped);
+            } else if (child.type === "text" && !inParagraphContext) {
+              // Matched text in paragraph context was handled by the
+              // region-aware pass above; this branch covers matched text in
+              // non-paragraph (nested structural) context — pre-existing
+              // behavior, dev log 111 caveat.
               const wrapped = wrapWithTracking([child], "deleted", authorId, deleteTs);
               children.splice(i, 1, ...wrapped);
             }
           } else if (child.type === "block") {
             const block = child as BlockNode;
             // Layout children are paragraph-level; inset children are structural.
-            markAsDeleted(block.children, block.tag === "layout");
+            block.children = markAsDeleted(block.children, block.tag === "layout");
           }
         }
+        return children;
       };
 
-      markAsDeleted(ast.children, true); // document body = paragraph context
+      ast.children = markAsDeleted(ast.children, true); // document body = paragraph context
       await commitMutation(filePath, ast, deletePreSnapshots, statePaths);
       await refreshPostStep(filePath, refreshMode);
       const changes = nodes.map(n => ({ label: nodeLabel(n), text: briefText(n) }));

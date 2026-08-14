@@ -3669,6 +3669,275 @@ Deno.test("DL122 F1 - split-after at the end of a region with NO trailing closer
   }
 });
 
+// --- Dev log 123: tracked delete follows LyX's Paragraph::eraseChar model ---
+// (test_report_55 F1, fully Rule 0): current/co-author text becomes the
+// deleter's deletion, the deleter's own pending insert is consumed,
+// already-deleted content is a no-op, emptied regions are dropped, adjacent
+// same-author deletions merge, and markers are emitted byte-exact (dev log
+// 123 D1–D4).
+
+Deno.test("DL123 F1a - tracked delete of a co-author's pending insert drops the emptied region (byte-exact)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "alpha\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl123_f1a.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard] text:change(inserted)"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.tracked_deleted_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(markers.map(m => m.key), ["change_deleted", "change_unchanged"], "cd(Bob){alpha} cu — no emptied ci opener, single closer");
+    assertEquals((markers[0].value || "").split(" ")[0], "2", "deletion attributed to Bob");
+    assertStringIncludes(allText(children), "alpha");
+    assertEquals(maxMarkerDepth(children), 1, "flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL123 F1b - tracked delete of PART of a co-author's insert re-opens the region around the surviving content", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "alpha\n" +
+    " beta\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl123_f1b.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard] text:change(inserted):nth-match(1)"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.tracked_deleted_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(
+      markers.map(m => m.key),
+      ["change_deleted", "change_inserted", "change_unchanged"],
+      "cd(Bob){alpha} ci(Alice){ beta} cu — the surviving ' beta' stays in Alice's region",
+    );
+    assertEquals((markers[0].value || "").split(" ")[0], "2", "deletion attributed to Bob");
+    assertEquals((markers[1].value || "").split(" ")[0], "1", "reopened region keeps Alice's author");
+    assertEquals(allText(children), "alpha beta");
+    assertEquals(maxMarkerDepth(children), 1, "flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL123 F1c - tracked delete of the deleter's OWN pending insert consumes it (physically removed)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "alpha\n" +
+    "\\change_inserted 2 1700000001\n" +
+    "beta\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl123_f1c.lyx", body, '\\author 1 "Alice"\n\\author 2 "Bob"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard] text:change(inserted):nth-match(2)"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.tracked_deleted_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(markers.map(m => m.key), ["change_inserted", "change_unchanged"], "only Alice's region survives; Bob's 'beta' consumed");
+    assertEquals((markers[0].value || "").split(" ")[0], "1", "survivor is Alice's region");
+    assertEquals(allText(children), "alpha", "beta physically removed, no cd marker");
+    assertEquals(maxMarkerDepth(children), 1, "flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL123 F1d - tracked delete of already-deleted text is a no-op", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "old\n" +
+    "\\change_unchanged\n" +
+    " new\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl123_f1d.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard] text:change(deleted)"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.tracked_deleted_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(markers.map(m => m.key), ["change_deleted", "change_unchanged"], "Alice's deletion untouched, no re-authoring");
+    assertEquals((markers[0].value || "").split(" ")[0], "1", "still Alice's author");
+    assertEquals(allText(children), "old new", "nothing removed");
+    assertEquals(maxMarkerDepth(children), 1, "flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL123 F1e - tracked delete of 3 adjacent inserts merges to ONE deleted region (own insert consumed)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "alpha\n" +
+    "\\change_inserted 2 1700000001\n" +
+    "beta\n" +
+    "\\change_inserted 3 1700000002\n" +
+    "gamma\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl123_f1e.lyx", body, '\\author 1 "Alice"\n\\author 2 "Bob"\n\\author 3 "Carol"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard] text:change(inserted)"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.tracked_deleted_nodes, 3);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(markers.map(m => m.key), ["change_deleted", "change_unchanged"], "one merged cd region, single closer");
+    assertEquals((markers[0].value || "").split(" ")[0], "2", "deletion attributed to Bob");
+    assertEquals(allText(children), "alphagamma", "Bob's own 'beta' consumed, alpha+gamma merged");
+    assertEquals(maxMarkerDepth(children), 1, "flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL123 F1f - whole-layout tracked delete of a layout containing a change region is canonicalized", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_inserted 1 1700000000\n" +
+    "alpha\n" +
+    "\\change_unchanged\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl123_f1f.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard]"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.tracked_deleted_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(markers.map(m => m.key), ["change_deleted", "change_unchanged"], "no emptied ci opener, no redundant closer");
+    assertEquals((markers[0].value || "").split(" ")[0], "2", "wrapped as Bob's deletion");
+    assertStringIncludes(allText(children), "alpha");
+    assertEquals(maxMarkerDepth(children), 1, "flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL123 F1g - delete of current text after a co-author's deletion keeps two adjacent regions (not merged)", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "old\n" +
+    "\\change_unchanged\n" +
+    " new\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl123_f1g.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard] text:nth-match(2)"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.tracked_deleted_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(
+      markers.map(m => m.key),
+      ["change_deleted", "change_deleted", "change_unchanged"],
+      "cd(Alice){old} cd(Bob){new} cu — different authors, shared closer",
+    );
+    assertEquals((markers[0].value || "").split(" ")[0], "1");
+    assertEquals((markers[1].value || "").split(" ")[0], "2");
+    assertEquals(allText(children), "old new");
+    // NOTE: maxMarkerDepth intentionally not asserted — adjacent same-type
+    // flat regions (cd 1{old} cd 2{new}) overcount as depth 2 by the naive
+    // depth counter (dev log 122 F1 testing note); the marker sequence above
+    // is the authoritative flatness check.
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL123 F1h - delete of current text after a SAME-author deletion merges into one region", { timeout: 15000 }, async () => {
+  const body =
+    "\\begin_layout Standard\n" +
+    "\\change_deleted 1 1700000000\n" +
+    "old\n" +
+    "\\change_unchanged\n" +
+    " new\n" +
+    "\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl123_f1h.lyx", body, '\\author 1 "Alice"\n');
+  try {
+    const result = await runCliWithConfig(
+      ["delete", tempFile, "layout[Standard] text:nth-match(2)"],
+      { trackChanges: true, authorName: "Alice" },
+    );
+    assertEquals(result.tracked_deleted_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(markers.map(m => m.key), ["change_deleted", "change_unchanged"], "merged into Alice's single cd region");
+    assertEquals((markers[0].value || "").split(" ")[0], "1");
+    assertEquals(allText(children), "old new");
+    assertEquals(maxMarkerDepth(children), 1, "flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("DL123 F2 - --replace-all on an EMPTY paragraph emits no contentless change_deleted opener", { timeout: 15000 }, async () => {
+  // Shape A: childless layout (\begin_layout Standard\n\end_layout)
+  const body = "\\begin_layout Standard\n\\end_layout\n";
+  const tempFile = await writeTempLyx("temp_dl123_f2.lyx", body);
+  try {
+    const result = await runCliWithConfig(
+      ["set", tempFile, "layout[Standard]", "content", "--replace-all"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    assertEquals(result.modified_nodes, 1);
+    const children = firstLayoutChildren(await Deno.readTextFile(tempFile));
+    const markers = changeMarkers(children);
+    assertEquals(markers.map(m => m.key), ["change_inserted", "change_unchanged"], "ci(Bob){content} cu — no empty cd");
+    assertEquals(allText(children), "content");
+    assertEquals(maxMarkerDepth(children), 1, "flat");
+  } finally {
+    try { await Deno.remove(tempFile); } catch { /* ignore */ }
+  }
+
+  // Shape B: layout holding only an empty text node (a blank line inside the
+  // layout parses as {text: ""}) — still nothing to wipe.
+  const bodyB = "\\begin_layout Standard\n\n\\end_layout\n";
+  const tempFileB = await writeTempLyx("temp_dl123_f2b.lyx", bodyB);
+  try {
+    await runCliWithConfig(
+      ["set", tempFileB, "layout[Standard]", "content", "--replace-all"],
+      { trackChanges: true, authorName: "Bob" },
+    );
+    const childrenB = firstLayoutChildren(await Deno.readTextFile(tempFileB));
+    assertEquals(
+      changeMarkers(childrenB).map(m => m.key),
+      ["change_inserted", "change_unchanged"],
+      "blank-line empty paragraph: ci(Bob){content} cu — no empty cd",
+    );
+  } finally {
+    try { await Deno.remove(tempFileB); } catch { /* ignore */ }
+  }
+});
+
 Deno.test("DL90 - :change(deleted) scoped --find touches only the rejected region", { timeout: 15000 }, async () => {
   const body =
     "\\begin_layout Standard\n" +

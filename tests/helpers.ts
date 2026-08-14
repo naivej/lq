@@ -27,6 +27,7 @@ export interface CliResult {
   matched_nodes?: number;
   modified_nodes?: number;
   deleted_nodes?: number;
+  tracked_deleted_nodes?: number;
   inserted_blocks?: number;
   undone_nodes?: number;
   undone_changes?: number;

@@ -500,6 +500,171 @@ export function wrapWithTracking(nodes: Node[], type: "inserted" | "deleted", au
 }
 
 /**
+ * Apply LyX's tracked-deletion model (`Paragraph::eraseChar`, lyx-2.5.1
+ * src/Paragraph.cpp:872) to a paragraph's children for the matched content
+ * nodes (text and insets). Dev log 123 F1 — the delete path's counterpart to
+ * the flat-region rule (dev log 120 D2C) and the byte-exact emission rule
+ * (dev logs 121 D-15A / 122 F2).
+ *
+ * Rule 0 ground truth — with tracking on, erasing a position:
+ *   - current text            → becomes the deleter's \change_deleted,
+ *   - a co-author's insert    → becomes the deleter's \change_deleted,
+ *   - the deleter's OWN insert → is physically erased (consumed; no marker),
+ *   - already-deleted text    → no-op (stays in its original deleted region).
+ *
+ * Adjacent same-author deleted runs coalesce (`Changes::merge()`), an emptied
+ * region disappears, and markers are emitted only at (type, author)
+ * transitions — the byte-exact form LyX itself writes: no closer between
+ * adjacent regions, no empty region, no redundant closer. A region whose
+ * content survives an intervening deletion re-opens after it (e.g.
+ * `ci 1{alpha beta}` minus "alpha" → `cd 2{alpha} ci 1{ beta}`).
+ *
+ * The final \change_unchanged is emitted only when the input ended in the
+ * current state (a true paragraph end inside a region writes no closer — dev
+ * log 122 F4). On a list with no matched content the output is byte-identical
+ * to the input (pure region re-encoding).
+ *
+ * `isMatched` selects the content nodes to erase; non-matched content is
+ * preserved with its region state. Matched property/layout nodes are left in
+ * place for the caller's per-node handling.
+ */
+export function applyTrackedDeleteToChildren(
+  children: Node[],
+  isMatched: (n: Node) => boolean,
+  deleterId: number,
+  ts: string,
+): Node[] {
+  type RegionState =
+    | { kind: "current" }
+    | { kind: "inserted"; author: number; ts: string }
+    | { kind: "deleted"; author: number; ts: string };
+  const sameRegion = (a: RegionState, b: RegionState): boolean => {
+    if (a.kind === "current" || b.kind === "current") return a.kind === b.kind;
+    return a.kind === b.kind && a.author === b.author;
+  };
+
+  // Pass 1 — assign each content node its output state (LyX's per-position
+  // model): matched nodes move to the deleter's deleted run (or are consumed
+  // / kept), non-matched nodes keep their region state. Region openers and
+  // closers drive the state but are not content.
+  type Item = { state: RegionState; node: Node };
+  const items: Item[] = [];
+  let regionState: RegionState = { kind: "current" };
+  for (const child of children) {
+    if (child.type === "property") {
+      if (isChangeOpener(child.key)) {
+        const m = parseChangeMarker(child.value);
+        regionState = child.key === "change_inserted"
+          ? { kind: "inserted", author: m.authorId, ts: m.ts }
+          : { kind: "deleted", author: m.authorId, ts: m.ts };
+        continue;
+      }
+      if (isChangeCloser(child.key)) {
+        regionState = { kind: "current" };
+        continue;
+      }
+    }
+    const isContent = child.type === "text" ||
+      (child.type === "block" && (child as BlockNode).tag === "inset");
+    if (isContent && isMatched(child)) {
+      if (regionState.kind === "current") {
+        // current text → deleter's deletion
+        items.push({ state: { kind: "deleted", author: deleterId, ts }, node: child });
+      } else if (regionState.kind === "inserted") {
+        if (regionState.author !== deleterId) {
+          // co-author's pending insert → deleter's deletion
+          items.push({ state: { kind: "deleted", author: deleterId, ts }, node: child });
+        }
+        // the deleter's own pending insert → consumed (dropped)
+      } else {
+        // already deleted → no-op: stays in its original deleted region
+        items.push({ state: regionState, node: child });
+      }
+    } else {
+      items.push({ state: regionState, node: child });
+    }
+  }
+
+  // Pass 2 — run-length encode (merge adjacent same-state runs; consumed
+  // nodes were never added).
+  const runs: { state: RegionState; nodes: Node[] }[] = [];
+  for (const item of items) {
+    const last = runs[runs.length - 1];
+    if (last && sameRegion(last.state, item.state)) last.nodes.push(item.node);
+    else runs.push({ state: item.state, nodes: [item.node] });
+  }
+
+  // Pass 3 — emit markers only at (type, author) transitions.
+  const out: Node[] = [];
+  let prev: RegionState = { kind: "current" };
+  for (const run of runs) {
+    if (run.state.kind === "inserted") {
+      out.push({
+        type: "property",
+        key: "change_inserted",
+        value: `${run.state.author} ${run.state.ts}`,
+      });
+    } else if (run.state.kind === "deleted") {
+      out.push({
+        type: "property",
+        key: "change_deleted",
+        value: `${run.state.author} ${run.state.ts}`,
+      });
+    } else if (prev.kind !== "current") {
+      // current run following a region: close it (single byte-exact closer)
+      out.push({ type: "property", key: "change_unchanged" });
+    }
+    out.push(...run.nodes);
+    prev = run.state;
+  }
+  // Final closer only when the input ended in the current state (F4).
+  if (regionState.kind === "current" && prev.kind !== "current") {
+    out.push({ type: "property", key: "change_unchanged" });
+  }
+  return out;
+}
+
+/**
+ * Canonicalize a tracked-delete wrapper output for whole-layout deletes
+ * (dev log 123 D4): drop emptied change regions (an opener whose content was
+ * removed) and collapse redundant consecutive \change_unchanged closers.
+ * `wrapWithTracking` on a children list containing an open change region
+ * leaves dead markup (`ci 1{} cd 2{alpha} cu cu`); this pass reduces it to
+ * LyX's byte-exact form (`cd 2{alpha} cu`). The region-aware text path
+ * (`applyTrackedDeleteToChildren`) already emits byte-exact output and does
+ * not need this pass. Adjacent same-author regions are intentionally NOT
+ * merged here — LyX's reader coalesces them on read; the wrap never produces
+ * them.
+ */
+export function canonicalizeDeleteWrap(children: Node[]): Node[] {
+  const out: Node[] = [];
+  let i = 0;
+  while (i < children.length) {
+    const child = children[i];
+    if (child.type === "property" && isChangeOpener(child.key)) {
+      const { closer, nextOpener } = scanRegionEnd(children, i + 1, child.key, true);
+      const end = closer !== -1 ? closer : (nextOpener !== -1 ? nextOpener : children.length);
+      const content = children.slice(i + 1, end);
+      const hasContent = content.some((n) => n.type === "text" || n.type === "block");
+      if (hasContent) {
+        out.push(child, ...content);
+        i = end; // the closer (if any) is processed next; a boundary opener reprocessed
+      } else {
+        // Emptied region: drop the opener and its closer together.
+        i = closer !== -1 ? closer + 1 : end;
+      }
+      continue;
+    }
+    out.push(child);
+    i++;
+  }
+  // Collapse redundant consecutive closers.
+  const isCu = (n: Node | undefined): boolean =>
+    n !== undefined && n.type === "property" && n.key === "change_unchanged";
+  return out.filter((n, idx) => !(isCu(n) && idx > 0 && isCu(out[idx - 1])));
+}
+
+/**
  * Is `node` inside a layout's *text stream* — the only place LyX accepts
  * tracked-change markers (DL111)?
  *
