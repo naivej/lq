@@ -1,0 +1,32 @@
+{
+  "name": "lyx-preview",
+  "displayName": "LyX Preview",
+  "description": "Structural read-only preview of .lyx files with selection-to-source mapping and tracked-change review.",
+  "version": "0.1.0",
+  "publisher": "naivej",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.96.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "activationEvents": [],
+  "contributes": {},
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "lint": "eslint .",
+    "vscode:prepublish": "npm run compile"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.2.0",
+    "@types/vscode": "^1.125.0",
+    "eslint": "^10.8.1",
+    "eslint-plugin-no-unsanitized": "^4.1.5",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.67.0"
+  }
+}
