@@ -1,15 +1,14 @@
 # LyX Windows fix — patched files + step-by-step build guide
 
 This folder lets you build your **own patched LyX** on Windows that fixes a bug in
-LyX's Windows "LyXServer" (the built-in control interface). Before the fix, LyX
-sometimes **lost about half of the replies** it sends to LyXServer clients (tools
-like JabRef, or `lq`). Every command still ran — the reply was just dropped, so
-clients thought LyX was slow or stuck. These two files repair the pipe server that
-delivers those replies.
+LyX's Windows "LyXServer" (the built-in control interface). On Windows, LyX's
+pipe server could fail to deliver replies to LyXServer clients (tools like
+JabRef, or `lq`): a command ran, but the reply was dropped, so clients thought
+LyX was slow or stuck. These two files repair the pipe server that delivers
+those replies.
 
-You do **not** need to be a programmer to follow this guide. Everything is
-copy-paste. The whole process takes about 30–60 minutes (most of it waiting for
-the compiler).
+You do **not** need to be a programmer to follow this guide. If you use the
+quick install below, it takes about 2 minutes and needs no tools at all.
 
 > **A note on versions:** this fix is written for **LyX 2.5.1**. Use it with the
 > 2.5.1 source code exactly as described below. It may also apply to nearby
@@ -24,20 +23,21 @@ is in this folder. **Double-click `swap_to_patched.cmd`**. It will:
 
 - find your installed LyX 2.5 (the usual install locations; edit the `LYXDIR`
   line at the top of the script if yours is elsewhere),
-- back up your `bin\` folder to `bin_original_backup\`,
-- install the patched `LyX2.5.1.exe` as your `LyX.exe`,
-- install the matching MinGW Qt DLLs and plugins into `bin\` (the essential
-  step that makes the patched binary run).
+- keep your official `LyX.exe` aside as `LyX.exe.orig`,
+- install the patched `LyX2.5.1.exe` as your `LyX.exe`.
 
 That's it — your LyX is now the fixed one, and `lq` (or JabRef, …) uses the
 reliable server automatically. To go back to the official LyX later, double-click
 `swap_back_original.cmd`.
 
-> Everything the swap needs lives in the `runtime\` folder — the patched binary
-> `LyX2.5.1.exe` plus its MinGW Qt DLLs and plugins (about 50 MB of build
-> artifacts that are **not committed** to the repository, see `.gitignore`). If
-> this folder doesn't contain them — e.g. you cloned the repo — follow the
-> build-from-source guide below instead.
+> The patched binary is built the **same way as the official release** (MSVC and
+> the same Qt version), so it uses the Qt DLLs that are already in your LyX
+> folder — only `LyX.exe` is replaced, nothing else.
+>
+> Everything the swap needs lives in the `runtime\` folder — a single patched
+> binary `LyX2.5.1.exe` (about 12 MB, **not committed** to the repository, see
+> `.gitignore`). If this folder doesn't contain it — e.g. you cloned the repo —
+> follow the build-from-source guide below instead.
 >
 > You can run the two scripts from **anywhere**: double-click them in File
 > Explorer, or run them from any folder. They locate their own files and your LyX
@@ -52,7 +52,7 @@ reliable server automatically. To go back to the official LyX later, double-clic
 |------|-----------|
 | `swap_to_patched.cmd` | Double-click to install the patched LyX over your official one (backup + swap, no build). |
 | `swap_back_original.cmd` | Double-click to restore your original official LyX from the backup. |
-| `runtime\` | Everything the swap needs: the patched binary `LyX2.5.1.exe` plus its MinGW Qt DLLs and plugins (git-ignored local copies — present when this folder comes from the author's machine). |
+| `runtime\` | Everything the swap needs: the single patched binary `LyX2.5.1.exe` (git-ignored local copy — present when this folder comes from the author's machine). |
 | `src/Server.cpp` | Patched source file — replaces `src/Server.cpp` in the LyX source code. |
 | `src/Server.h`   | Patched source file — replaces `src/Server.h` in the LyX source code. |
 
@@ -64,10 +64,15 @@ in LyX is untouched.
 
 ## Build from source (only if you didn't use the quick install)
 
+The steps below build LyX the **same way the official LyX for Windows is built**
+(Microsoft Visual C++ and Qt for MSVC). This is what makes the swap a single
+file: the resulting `LyX.exe` uses the same Qt DLLs the official installer ships.
+
 1. **Download the LyX source code** (the "ingredients").
-2. **Install a free compiler kit** called MSYS2 (the "oven").
+2. **Install the build tools**: Visual Studio Build Tools, CMake, Qt, and LyX's
+   dependency bundle.
 3. **Copy the two patched files** over the originals in the source code.
-4. **Build** — MSYS2 compiles LyX into a program.
+4. **Build** — CMake compiles LyX into a program.
 5. **Run your patched LyX** and use it.
 
 Steps 1 and 2 are one-time setup. Steps 3–5 take ~5 minutes of your time plus a
@@ -93,37 +98,44 @@ build that runs on its own.
 
 ---
 
-## Step 2 — Install the build tools (MSYS2)
+## Step 2 — Install the build tools
 
-MSYS2 is a free bundle of compilers and tools. LyX is built with it (no Visual
-Studio needed).
+You need four things. All are free.
 
-1. Go to <https://www.msys2.org> and download the installer (it's the big
-   "msys2-x86_64-…-exe" link).
-2. Run the installer. Accept the defaults; it installs to **`C:\msys64`**.
-3. When it finishes it opens a window titled **"MSYS2 MSYS"**. Close it.
-4. From the **Start menu**, open the app named **"MSYS2 MINGW64"** (this exact
-   one — not "MSYS2 MSYS" and not "MSYS2 CLANG64"). A black terminal window opens.
-5. Paste this command and press Enter (it updates the tool list; answer `Y` if it
-   asks):
-   ```bash
-   pacman -Syu --noconfirm
-   ```
-   If it says the window must close, close it, reopen **MSYS2 MINGW64**, and run
-   the same command once more.
-6. Now install the tools LyX needs. Paste and press Enter:
-   ```bash
-   pacman -S --noconfirm --needed mingw-w64-x86_64-gcc mingw-w64-x86_64-cmake mingw-w64-x86_64-ninja mingw-w64-x86_64-qt6-base mingw-w64-x86_64-qt6-svg mingw-w64-x86_64-gettext mingw-w64-x86_64-pkgconf
-   ```
-   This downloads ~1 GB and takes a few minutes. When it's done, check that the
-   tools are there:
-   ```bash
-   which g++ cmake ninja
-   ```
-   You should see three file paths. If instead you get errors like
-   `which: no g++ in (...)`, re-open **MSYS2 MINGW64** (not MSYS) and repeat.
+**2a. Visual Studio Build Tools (the C++ compiler).**
+1. Go to <https://visualstudio.microsoft.com/downloads/> and download
+   **Build Tools for Visual Studio 2022** (the standalone "Build Tools" link, not
+   the full Visual Studio).
+2. Run the installer. On the workload list, tick **"Desktop development with
+   C++"** and click Install. (This is ~2–4 GB and takes a while.)
 
-**Leave this MINGW64 window open** — you'll use it in Step 4.
+**2b. CMake.**
+1. Download the Windows x64 zip from <https://cmake.org/download/> (the current
+   one is named something like `cmake-4.x.x-windows-x86_64.zip`).
+2. Extract it and note the path to `cmake.exe` inside `bin\`, e.g.
+   `C:\cmake\cmake-4.4.2-windows-x86_64\bin\cmake.exe`. (Use the official CMake
+   from cmake.org, not a package-manager build — it keeps the build clean.)
+
+**2c. Qt 6.10.2 for MSVC.** LyX 2.5.1's official Windows installer ships
+**Qt 6.10.2**, so the patched binary must be built against exactly that version.
+1. Install Python from <https://www.python.org> (any recent 3.x; tick "Add
+   python.exe to PATH" during install).
+2. Open a **Command Prompt** and install the Qt downloader:
+   ```
+   pip install aqtinstall
+   ```
+3. Download Qt 6.10.2 (MSVC 2022, 64-bit) into `C:\Qt`:
+   ```
+   aqt install-qt windows desktop 6.10.2 win64_msvc2022_64 -O C:\Qt
+   ```
+   This gives you `C:\Qt\6.10.2\msvc2022_64`.
+
+**2d. LyX's Windows dependency bundle.** LyX needs a small bundle of Windows
+tools (gettext, Python, Ghostscript, …) at build time.
+1. Download **`lyx-windows-deps-msvc2019_64.zip`** from
+   <http://ftp.lyx.org/pub/lyx/devel/win_deps/>.
+2. Extract it and note the inner folder, e.g.
+   `C:\lyx-deps\lyx-windows-deps-msvc2019_64`.
 
 ---
 
@@ -146,29 +158,32 @@ That's the entire "patch". Everything else is just compiling.
 
 ## Step 4 — Build LyX
 
-In the **MSYS2 MINGW64** window (Step 2):
+Build in a **"x64 Native Tools Command Prompt for VS 2022"** — this is the
+prompt that knows where the compiler is (Start menu → search "x64 Native
+Tools"). In that prompt:
 
 1. Go to the LyX source folder (adjust if you extracted elsewhere):
-   ```bash
-   cd /c/lyx-src/lyx-2.5.1
    ```
-2. Configure the build. Paste this entire long line and press Enter:
-   ```bash
-   cmake -S . -B build -G Ninja -DLYX_USE_QT=QT6 -DCMAKE_BUILD_TYPE=Release -DLYX_3RDPARTY_BUILD=OFF -DLYX_EXTERNAL_ICONV=ON -DLYX_EXTERNAL_Z=ON -DGNUWIN32_DIR=C:/msys64/mingw64 -DICONV_INCLUDE_DIR=C:/msys64/mingw64/include -DICONV_LIBRARY=C:/msys64/mingw64/lib/libiconv.dll.a -DICONV_DLL=C:/msys64/mingw64/bin/libiconv-2.dll
+   cd C:\lyx-src\lyx-2.5.1
+   ```
+2. Configure the build. Adjust the two paths — the LyX deps folder (Step 2d)
+   and the Qt folder (Step 2c) — then paste this entire long line and press
+   Enter:
+   ```
+   C:\cmake\cmake-4.4.2-windows-x86_64\bin\cmake.exe -S . -B build-msvc -G "Visual Studio 17 2022" -A x64 -DLYX_USE_QT=QT6 -DCMAKE_BUILD_TYPE=Release -DLYX_3RDPARTY_BUILD=ON -DGNUWIN32_DIR=C:\lyx-deps\lyx-windows-deps-msvc2019_64 -DCMAKE_PREFIX_PATH=C:\Qt\6.10.2\msvc2022_64 -DLYX_CONSOLE=OFF
    ```
    Success looks like lines ending in `-- Build files have been written to:
-   .../build` with **no** red `error` lines. If you see an error, scroll to the
-   Troubleshooting section.
+   .../build-msvc` with **no** red `error` lines. (The first run takes a few
+   minutes while CMake checks the compiler.)
 3. Build (this is the long one — 10–30 minutes; let it run):
-   ```bash
-   cmake --build build --target LyX2.5
+   ```
+   C:\cmake\cmake-4.4.2-windows-x86_64\bin\cmake.exe --build build-msvc --config Release --target LyX
    ```
    The last line should be:
-   `[100%] ... Linking CXX executable bin\LyX2.5.exe`
-   (or `[NN%]` numbers counting up to 100). Any red `error:` means something went
-   wrong — see Troubleshooting.
+   `LyX.vcxproj -> ...\build-msvc\bin\Release\LyX.exe`
+   Any `error C...` means something went wrong — see Troubleshooting.
 
-**Your patched LyX is now at** `build\bin\LyX2.5.exe`.
+**Your patched LyX is now at** `build-msvc\bin\Release\LyX.exe`.
 
 ---
 
@@ -177,32 +192,32 @@ In the **MSYS2 MINGW64** window (Step 2):
 The patched pipe server is only active when LyX's server interface is on. Do this
 once:
 
-1. In the MINGW64 window, copy the default settings file into the source `lib`
+1. In the Command Prompt, copy the default settings file into the source `lib`
    folder:
-   ```bash
-   cp build/lyxrc.dist lib/lyxrc.dist
+   ```
+   copy build-msvc\lyxrc.dist lib\lyxrc.dist
    ```
    (This file tells LyX to enable the server pipe. If you ever want the default
-   back, delete `lib/lyxrc.dist`.)
+   back, delete `lib\lyxrc.dist`.)
 
 ---
 
 ## Step 6 — Run your patched LyX
 
-Start it with a small "where to find LyX's data" hint. In the MINGW64 window:
+In the Command Prompt, start it with a small "where to find LyX's data" hint:
 
-```bash
-cd /c/lyx-src/lyx-2.5.1
-LYX_DIR_25X=C:/lyx-src/lyx-2.5.1/lib ./build/bin/LyX2.5.exe
+```
+set LYX_DIR_25X=C:\lyx-src\lyx-2.5.1\lib
+build-msvc\bin\Release\LyX.exe
 ```
 
 The LyX window opens. That's it — you're now running the **fixed** LyX. Use it
 normally: open documents, edit, save.
 
-> If you close the MINGW64 window you can also just double-click
-> `build\bin\LyX2.5.exe`, but then the `LYX_DIR_25X` hint is not set, so LyX may
-> ask where its data files are — point it at `C:\lyx-src\lyx-2.5.1\lib`.
-> Starting it from the MINGW64 window (as above) avoids that.
+> If you close the Command Prompt you can also just double-click
+> `build-msvc\bin\Release\LyX.exe`, but then the `LYX_DIR_25X` hint is not set,
+> so LyX may ask where its data files are — point it at
+> `C:\lyx-src\lyx-2.5.1\lib`.
 
 ---
 
@@ -211,11 +226,12 @@ normally: open documents, edit, save.
 - **Everyday use:** open a document, type, save, close — everything works as
   usual. The fix is invisible in normal use; it shows up for *programs that talk
   to LyX* (JabRef, `lq`, …): their commands are now answered reliably instead of
-  ~half the replies being lost.
+  replies being lost.
 - **Optional quick check (for the curious):** open a document in LyX first, then
-  start LyX with the server log on (in the MINGW64 window):
-  ```bash
-  LYX_DIR_25X=C:/lyx-src/lyx-2.5.1/lib ./build/bin/LyX2.5.exe -dbg LYXSERVER
+  start LyX with the server log on (in the Command Prompt):
+  ```
+  set LYX_DIR_25X=C:\lyx-src\lyx-2.5.1\lib
+  build-msvc\bin\Release\LyX.exe -dbg LYXSERVER
   ```
   Open **PowerShell** (Start menu → type "PowerShell") and paste:
   ```powershell
@@ -231,35 +247,34 @@ normally: open documents, edit, save.
   $r.ReadToEnd()
   ```
   You should see a reply like `INFO:check1:server-get-filename:C:/...` with the
-  path of the document open in LyX. Before the fix, this reply was frequently
-  lost (the command returned nothing).
+  path of the document open in LyX.
 
 ---
 
 ## Installing the patched LyX over your official one
 
-Instead of always launching the built `build\bin\LyX2.5.exe`, you can make the
-patched LyX your **default `LyX.exe`**, so `lq` (and JabRef, etc.) automatically
-use the fixed server — no `LYXSOCKET` override needed. Here is how to do it on
-your machine:
+Instead of always launching the built `build-msvc\bin\Release\LyX.exe`, you can
+make the patched LyX your **default `LyX.exe`**, so `lq` (and JabRef, etc.)
+automatically use the fixed server — no `LYXSOCKET` override needed. The quick
+install script (`swap_to_patched.cmd`) does this for you; here is what it does:
 
-1. **Back up** your official install's `bin\` folder (copy
-   `C:\Program Files\LyX 2.5\bin` to `bin_original_backup`, or wherever you keep
-   your install). The backup holds your original `LyX.exe` and the original MSVC
-   Qt DLLs, so you can undo the swap at any time — no other copy is needed.
-2. **Copy** your patched `runtime\LyX2.5.1.exe` over `bin\LyX.exe` (replace the
-   official one — the original is safe in `bin_original_backup`).
-3. **Pair the MinGW build's dependencies** — this part is essential: your patched
-   binary is built with **MSYS2/MinGW**, but the official installer ships **MSVC**
-   Qt DLLs with the *same names* (`Qt6Core.dll`, …). A MinGW exe loading MSVC Qt
-   DLLs crashes (different C++ ABI), so copy the MinGW `Qt6*.dll` files, the MinGW
-   runtime DLLs (`libgcc_s_seh-1.dll`, `libstdc++-6.dll`,
-   `libwinpthread-1.dll`, `libiconv-2.dll`, `zlib1.dll`) and the MinGW Qt plugins
-   (`platforms\`, `imageformats\`, `iconengines\`) over the MSVC ones in `bin\`.
+1. **Keep the official exe aside**: the script renames your official
+   `bin\LyX.exe` to `bin\LyX.exe.orig`, so it can be restored at any time.
+2. **Copy** the patched `LyX2.5.1.exe` over `bin\LyX.exe`.
 
-**To undo the swap:** close LyX, then copy everything from `bin_original_backup\`
-back into `bin\` (overwrite), which restores your official `LyX.exe` and the
-original MSVC Qt DLLs.
+That's the whole swap — just the exe. Because the patched binary is built the
+same way as the official one (MSVC, and the same Qt 6.10.2), it runs against the
+Qt DLLs the official installer already put in `bin\` — no other files change.
+
+**To undo the swap:** close LyX, then run `swap_back_original.cmd`, which deletes
+the patched `LyX.exe` and renames `LyX.exe.orig` back to `LyX.exe`.
+
+> **If LyX fails to start with "The procedure entry point ... could not be
+> located in the dynamic link library":** the patched `LyX.exe` was built against
+> a different Qt version than the one in your install's `bin\`. The official LyX
+> 2.5.1 ships Qt **6.10.2**; rebuild with exactly that version (Step 2c). The
+> swap scripts never touch the Qt DLLs, so an entry-point error means the exe
+> itself was built against the wrong Qt — rebuild, don't re-swap.
 
 Verified on 2026-08-16 with this setup: the installed patched `LyX.exe` starts,
 `lq init --refresh save-reload` finds it automatically (image name `LyX.exe`), and
@@ -271,11 +286,14 @@ Verified on 2026-08-16 with this setup: the installed patched `LyX.exe` starts,
 
 | Symptom | Cause / fix |
 |---------|-------------|
-| `cmake: command not found` or `g++: command not found` | You're in the wrong MSYS2 window. Re-open **MSYS2 MINGW64** from the Start menu (not "MSYS2 MSYS", not Git Bash, not plain PowerShell) and repeat the command there. |
-| Configure ends in a red `error: ... iconv ...` | The iconv settings are wrong. Re-run the exact configure line from Step 4 (it points at the MSYS2 iconv). If you changed the install location of MSYS2 (not `C:\msys64`), replace `C:/msys64` in that line with your actual path. |
-| Build fails at the *end* with `cannot open output file ... Permission denied` | A `LyX2.5.exe` is still running, so Windows locked the file. Close all LyX windows (or in MINGW64 run `taskkill //IM LyX2.5.exe //F`), then run `cmake --build build --target LyX2.5` again. |
+| `cmake: command not found` | CMake isn't on your PATH. Use the full path from Step 2b (`C:\cmake\...\bin\cmake.exe`) or add its `bin\` to your PATH. |
+| `cl.exe` / compiler errors at configure time | You're not in the **"x64 Native Tools Command Prompt for VS 2022"**. Re-open that specific prompt (Start menu → search "x64 Native Tools") and repeat Step 4 there. |
+| Configure fails with `Could NOT find GNUWIN32` | The LyX deps path is wrong. Double-check `-DGNUWIN32_DIR=...` points at the extracted `lyx-windows-deps-msvc2019_64` folder (Step 2d). |
+| Configure fails with `Could NOT find Qt6` | The Qt path is wrong. Double-check `-DCMAKE_PREFIX_PATH=...` points at `C:\Qt\6.10.2\msvc2022_64` (Step 2c), and that you installed exactly 6.10.2. |
+| Build fails at the *end* with `cannot open output file ... Permission denied` or `LNK1104` | A `LyX.exe` is still running, so Windows locked the file. Close all LyX windows, then run the `cmake --build ... --target LyX` line again. |
 | Build takes 30+ minutes | Normal — LyX is a big program and this is a full compile. Only the first build is slow; later builds are fast. |
-| The LyX window opens but the PowerShell check returns nothing | The server may be off. Redo Step 5 (`cp build/lyxrc.dist lib/lyxrc.dist`), restart LyX, and make sure the PowerShell check ran *after* LyX was fully started. |
+| The LyX window opens but the PowerShell check returns nothing | The server may be off. Redo Step 5 (`copy build-msvc\lyxrc.dist lib\lyxrc.dist`), restart LyX, and make sure the PowerShell check ran *after* LyX was fully started. |
+| LyX starts but shows a DLL / "procedure entry point" error | Qt version mismatch — see the note in "Installing the patched LyX over your official one". |
 | `Document not loaded` error from a client | That's normal for a command naming a file that isn't open in LyX — it's a correct reply, not the bug. |
 | I want the original files back | Restore `Server.cpp` / `Server.h` from your Step 3 backup, or re-extract the `.tar.xz` and copy the originals over. |
 

@@ -20,20 +20,21 @@ if not defined LYXDIR (
 )
 set "BIN=%LYXDIR%\bin"
 
-if not exist "%LYXDIR%\bin_original_backup" (
+if not exist "%BIN%\LyX.exe.orig" (
     echo.
-    echo No backup found at %LYXDIR%\bin_original_backup.
+    echo No backup found at %BIN%\LyX.exe.orig.
     echo Nothing to restore.
     echo.
     pause
     exit /b 1
 )
 
-echo Restoring your original LyX from bin_original_backup ...
+echo Restoring your original official LyX ...
 taskkill /IM LyX.exe /F >nul 2>&1
 REM Give Windows a moment to release the locked files.
 ping -n 3 127.0.0.1 >nul
-xcopy "%LYXDIR%\bin_original_backup" "%BIN%\" /E /I /Q /Y >nul
+del /Q "%BIN%\LyX.exe" >nul
+rename "%BIN%\LyX.exe.orig" LyX.exe
 
 echo.
 echo Done! Your original official LyX is restored.

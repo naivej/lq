@@ -13,7 +13,7 @@ Omit `-batch` (batch runs headless and exits). Wait for LyX to finish starting b
 
 ### Close LyX (for a fresh session)
 
-Close LyX when the session is done, or to restart a degraded LyXServer — a fresh server is the fix for repeated confirmation loss (see [`LyXServer.md`](LyXServer.md)), and a fresh session also re-reads externally changed files. Force-kill is fine once the buffer is on disk; if LyX may hold unsaved in-GUI edits, run a `--refresh save-reload` mutation first so they are written before closing:
+Close LyX when the session is done, or to restart a degraded LyXServer — a fresh server clears stale state (see [`LyXServer.md`](LyXServer.md)), and a fresh session also re-reads externally changed files. Force-kill is fine once the buffer is on disk; if LyX may hold unsaved in-GUI edits, run a `--refresh save-reload` mutation first so they are written before closing:
 
 ```bash
 # Windows — terminate all LyX instances:

@@ -110,5 +110,5 @@ Deep reference lives in the `references/` folder, read on demand when its branch
 | [`LyX_inset.md`](references/LyX_inset.md) · [`LyX_preamble.md`](references/LyX_preamble.md) | LyX file-format ground truth: inset and preamble serialization | hand-writing structure, or the CST shape of an unfamiliar structure is uncertain |
 | [`LyX_Headless.md`](references/LyX_Headless.md) | Driving the LyX binary: create, import, export, acceptance check, verification | generating ground truth, or verifying a mutated document against LyX |
 | [`LyX_GUI.md`](references/LyX_GUI.md) | Opening/closing the LyX GUI that hosts LyXServer: launch with the file, reuse a running instance, close/restart for a fresh server | a LyXServer session is needed, or the server is degraded and needs a restart |
-| [`LyXServer.md`](references/LyXServer.md) | LyXServer and refresh: modes, Windows confirmation limits, can't-connect order | LyX holds unsaved work, or refresh misbehaves |
+| [`LyXServer.md`](references/LyXServer.md) | LyXServer and refresh: modes, the Windows confirmation fix, can't-connect order | LyX holds unsaved work, or refresh misbehaves |
 

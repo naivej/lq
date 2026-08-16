@@ -33,27 +33,24 @@ taskkill /IM LyX.exe /F >nul 2>&1
 REM Give Windows a moment to release the locked files.
 ping -n 3 127.0.0.1 >nul
 
-REM --- Back up the original bin (once) ---
-if not exist "%LYXDIR%\bin_original_backup" (
-    echo Backing up the original bin folder to bin_original_backup ...
-    xcopy "%BIN%" "%LYXDIR%\bin_original_backup\" /E /I /Q /Y >nul
+REM --- Keep the official LyX.exe aside (as LyX.exe.orig) ---
+if not exist "%BIN%\LyX.exe.orig" (
+    echo Keeping your official LyX as LyX.exe.orig ...
+    rename "%BIN%\LyX.exe" LyX.exe.orig
 ) else (
-    echo Backup bin_original_backup already exists - keeping it.
+    echo LyX.exe.orig already exists - keeping it.
 )
 
-REM --- Install the patched binary ---
+REM --- Install the patched binary (single file - it uses the
+REM      official MSVC Qt DLLs that are already in bin\) ---
 echo Installing patched LyX.exe ...
 copy /Y "runtime\LyX2.5.1.exe" "%BIN%\LyX.exe" >nul
 
-REM --- Install the MinGW Qt DLLs and plugins (required) ---
-echo Installing MinGW Qt DLLs and plugins ...
-copy /Y "runtime\*.dll" "%BIN%\" >nul
-xcopy "runtime\platforms"    "%BIN%\platforms\"    /E /I /Q /Y >nul
-xcopy "runtime\imageformats" "%BIN%\imageformats\" /E /I /Q /Y >nul
-xcopy "runtime\iconengines"  "%BIN%\iconengines\"  /E /I /Q /Y >nul
-
 echo.
 echo Done! Your LyX is now the PATCHED one (fixes the LyXServer
-echo response-loss bug). To go back, run swap_back_original.cmd.
+echo response-loss bug). No DLLs needed - the patched binary is built
+echo the same way as the official one (MSVC + the same Qt version), so
+echo it uses the Qt DLLs that are already in your LyX folder.
+echo To go back, run swap_back_original.cmd.
 echo.
 pause

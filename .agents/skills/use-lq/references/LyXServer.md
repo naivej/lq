@@ -4,12 +4,11 @@ LyXServer is optional; disk is the primary integration point. For automatic refr
 
 To use `save-reload`, start LyXServer yourself: open the target file in the GUI with `"{lyx}" <file>` (omit `-batch`; see [`LyX_GUI.md`](LyX_GUI.md) "Open GUI and LyXServer"). No human is required — a window appears on the user's screen, which is expected. LyXServer is on by default; a cleared `\serverpipe` preference (enable once in Preferences, then restart) is the only way it stays off.
 
-On Windows, LyXServer's response delivery is unreliable: a lost confirmation does not mean the command failed — lq distinguishes dispatched, confirmed, and errored outcomes and treats an unconfirmed refresh as a warning when it is safe to proceed. Do not diagnose repeated confirmation loss by adding more blocking reads — LyX executes a command even when its response is lost, and stale responses linger in the server's shared reply buffer (`outbuf_`) until the next flush cycle, so no client-side read strategy is reliable. Restart LyX to restore a healthy server.
+On Windows, if the LyX version is not patched with a bug fix, LyXServer's response delivery could be unreliable. But a lost confirmation does not mean the command failed. `lq` distinguishes dispatched, confirmed, and errored outcomes as a safety net, so an unconfirmed refresh is treated as a warning when it is safe to proceed.
 
 Genuine can't-connect, in order of likelihood:
 1. **Wrong user dir** — `$LYXSOCKET` (override) else `%APPDATA%\LyX2.5\lyxpipe`, only if that dir exists AND `LyX.exe` is in `tasklist`.
-2. **Pipe instances exhausted / server degraded** — `MAX_CLIENTS=10` per pipe plus the reply backlog; restart LyX.
-3. **Shell-escaping trap** — inline PowerShell/bash mangles `\\.\pipe\` → use lq's own detection / script files.
-4. **Server not enabled** (rare) — `\serverpipe` preference empty; enable once in the GUI + restart.
+2. **Shell-escaping trap** — inline PowerShell/bash mangles `\\.\pipe\` → use lq's own detection / script files.
+3. **Server not enabled** (rare) — `\serverpipe` preference empty; enable once in the GUI + restart.
 
-Sanity checks: `lq init --refresh save-reload` is the fastest discovery check (dispatch-only, no response wait); a `REFRESH_PRE_ERROR` or pipe-open timeout means a genuine disconnect (items 1–3), never the race.
+Sanity checks: `lq init --refresh save-reload` is the fastest discovery check (dispatch-only, no response wait); a `REFRESH_PRE_ERROR` or pipe-open timeout means a genuine disconnect (items 1–3), never a response-delivery issue (with the patched LyX from `lyx_patch/`, confirmations are delivered reliably).

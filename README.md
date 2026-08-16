@@ -25,11 +25,11 @@
 - Collaborate with agents in an **auto-refreshed** LyX GUI through [LyXServer](https://wiki.lyx.org/LyX/LyXServer).
 - Agents make **tracked changes**, allowing easy review.
 
-### Limitations
-- `lq` focuses on writing assistance, not complex type-setting (e.g., intricate tables). Use the LyX GUI to fine-tune type-setting and preview the final PDF.
-- **Windows limitations**: Two named-pipe behaviors of LyXServer on Windows that `lq` works around:
-  - **Confirmations are unreliable**: LyX's Windows pipe server can lose a command's *response* even though the command executed (a LyX server behavior — no client read strategy fixes it). `lq` therefore treats a command as dispatched once it is written to the pipe, and a lost confirmation only downgrades the outcome. **warnings mean "unconfirmed", not "failed"** — the command was dispatched and almost certainly executed. When warnings repeat, restart LyX to restore a healthy server.
-  - **Refresh round-trips are slow (~4 s per mutation)**: recovering a lost confirmation re-sends the command on a fresh connection, so a refresh-enabled mutation averages two pipe round-trips (~2 s each) instead of one. **Turning off live GUI sync with `--refresh none` (the default) for almost instant `lq`**.
+### Windows patch
+
+LyX's Windows LyXServer has a response-delivery race that can lose a command's *response* even though the command executed. This is a LyX server bug that affect `lq` auto-refresh.  
+As the fix is pending upstream LyX, a patched LyX is provided in [`lyx_patch/`](lyx_patch/) with one-click swap scripts for reliably delivered confirmations and fast refresh.  
+Without the fix, `lq` works around the race: a command counts as dispatched once written to the pipe, so warnings mean "unconfirmed", not "failed" — the command was almost certainly executed. Or keep `--refresh none` for almost instant `lq`.
 
 ## Development
 
