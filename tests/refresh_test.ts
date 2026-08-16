@@ -8,7 +8,7 @@
 
 import { assert, assertEquals } from "@std/assert";
 import { refreshPreStep } from "../src/cli.ts";
-import { filterResponses } from "../src/lyxserver.ts";
+import { buildPipeCommand, filterResponses } from "../src/lyxserver.ts";
 
 Deno.test("Refresh - save-reload pre-step returns a status", { timeout: 10000 }, async () => {
   // The pre-step returns one of "ok" | "disconnect" | "unconfirmed" | "error"
@@ -73,6 +73,27 @@ Deno.test("Refresh - client-name filter is exact (not prefix)", () => {
   const data = `INFO:lq123:buffer-write:\nINFO:lq1234:buffer-write:`;
   assertEquals(filterResponses(data, "lq123"), `INFO:lq123:buffer-write:`);
   assertEquals(filterResponses(data, "lq1234"), `INFO:lq1234:buffer-write:`);
+});
+
+// Dev log 128: the Windows pipe transport must send the colon-separated
+// func:arg form so a drive letter in an absolute path doesn't truncate the
+// func field (Server.cpp Server::callback parses the func field up to the next
+// ':' and the arg field up to '\n'). Overturns dev log 28's "no escape
+// mechanism" conclusion.
+Deno.test("Refresh - pipe command uses colon-separated func:arg form", () => {
+  const c = "lq123";
+  // No argument → bare func, no trailing colon (unchanged).
+  assertEquals(buildPipeCommand(c, "buffer-write"), `LYXCMD:${c}:buffer-write\n`);
+  // Windows absolute path → colon form keeps the drive letter in the argument.
+  assertEquals(
+    buildPipeCommand(c, "buffer-switch C:\\Users\\Shifu\\file.lyx"),
+    `LYXCMD:${c}:buffer-switch:C:\\Users\\Shifu\\file.lyx\n`,
+  );
+  // Path containing spaces is preserved (argument runs to '\n').
+  assertEquals(
+    buildPipeCommand(c, "buffer-switch C:\\Users\\Shifu\\LyX 2.5\\file.lyx"),
+    `LYXCMD:${c}:buffer-switch:C:\\Users\\Shifu\\LyX 2.5\\file.lyx\n`,
+  );
 });
 
 Deno.test("Refresh - mock server: save-reload returns ok (Unix socket)", { ignore: Deno.build.os === "windows", timeout: 15000 }, async () => {

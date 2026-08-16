@@ -10,8 +10,8 @@
  *     - Discovery: $LYXSOCKET env var, or scan /tmp/lyx_tmpdir*
  *
  *   Windows: Named pipes (Server.cpp)
- *     - Protocol: LYXCMD:<client>:<lfung> <args>
- *     - Response: INFO:<client>:<lfung>:<msg> or ERROR:...
+ *     - Protocol: LYXCMD:<client>:<func>:<arg> (colon-separated — dev log 128)
+ *     - Response: INFO:<client>:<func>:<msg> or ERROR:...
  *     - Discovery: default %APPDATA%\LyX2.5\lyxpipe
  *     - Pipe paths: \\.\pipe\<base>.in (write), \\.\pipe\<base>.out (read)
  */
@@ -217,6 +217,24 @@ function winPipePath(basePath: string, suffix: ".in" | ".out"): string {
   return `\\\\.\\pipe\\${winPath}${suffix}`;
 }
 
+/**
+ * Build a Windows pipe-protocol command line for a single LFUN.
+ *
+ * LyX's `Server::callback` parses `LYXCMD:<client>:<func>:<arg>` by scanning the
+ * func field up to the NEXT ':' and the arg field up to '\n' (Server.cpp). The
+ * LFUN string syntax (`func arg`, space-separated — the form the Unix socket
+ * transport uses) therefore breaks on Windows when the argument contains a ':':
+ * a drive letter in an absolute path truncates the func field at `C` (dev log
+ * 128, overturning dev log 28's "no escape mechanism" conclusion). Sending the
+ * canonical colon-separated `func:arg` form keeps the argument intact — the
+ * arg field takes everything up to '\n', colons included.
+ */
+export function buildPipeCommand(clientName: string, lfun: string): string {
+  const sep = lfun.indexOf(" ");
+  const wire = sep === -1 ? lfun : `${lfun.slice(0, sep)}:${lfun.slice(sep + 1)}`;
+  return `LYXCMD:${clientName}:${wire}\n`;
+}
+
 async function sendViaNamedPipe(
   pipeBase: string,
   lfuns: string[],
@@ -264,8 +282,10 @@ async function sendViaNamedPipe(
     try {
       for (const lfun of lfuns) {
         try {
-          // Send command to .in (keep .in open — closing it ends the session)
-          await inFile.write(encoder.encode(`LYXCMD:${clientName}:${lfun}\n`));
+          // Send command to .in (keep .in open — closing it ends the session).
+          // Colon-separated func:arg form so a drive letter in a Windows path
+          // argument doesn't truncate the func field (dev log 128).
+          await inFile.write(encoder.encode(buildPipeCommand(clientName, lfun)));
         } catch {
           // Write failed after a successful open — server likely died mid-call.
           return;

@@ -27,8 +27,7 @@
 
 ### Limitations
 - `lq` focuses on writing assistance, not complex type-setting (e.g., intricate tables). Use the LyX GUI to fine-tune type-setting and preview the final PDF.
-- **Windows limitations**: Three named-pipe behaviors of LyXServer on Windows that `lq` works around:
-  - **`buffer-switch` is unusable**: the pipe protocol delimits messages with `:`, which conflicts with the drive letter in Windows absolute paths (e.g. `C:\...`). Auto-refresh therefore operates on LyX's active buffer rather than switching to the target file first. **Open only one `.lyx` file while using `lq` to avoid using the wrong buffer.**
+- **Windows limitations**: Two named-pipe behaviors of LyXServer on Windows that `lq` works around:
   - **Confirmations are unreliable**: LyX's Windows pipe server can lose a command's *response* even though the command executed (a LyX server behavior — no client read strategy fixes it). `lq` therefore treats a command as dispatched once it is written to the pipe, and a lost confirmation only downgrades the outcome. **warnings mean "unconfirmed", not "failed"** — the command was dispatched and almost certainly executed. When warnings repeat, restart LyX to restore a healthy server.
   - **Refresh round-trips are slow (~4 s per mutation)**: recovering a lost confirmation re-sends the command on a fresh connection, so a refresh-enabled mutation averages two pipe round-trips (~2 s each) instead of one. **Turning off live GUI sync with `--refresh none` (the default) for almost instant `lq`**.
 

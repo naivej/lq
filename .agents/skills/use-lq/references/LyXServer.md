@@ -12,4 +12,4 @@ Genuine can't-connect, in order of likelihood:
 3. **Shell-escaping trap** — inline PowerShell/bash mangles `\\.\pipe\` → use lq's own detection / script files.
 4. **Server not enabled** (rare) — `\serverpipe` preference empty; enable once in the GUI + restart.
 
-Sanity checks: `lq init --refresh save-reload` is the fastest discovery check (dispatch-only, no response wait); a `REFRESH_PRE_ERROR` or pipe-open timeout means a genuine disconnect (items 1–3), never the race. On Windows only the active buffer is saved/reloaded (buffer-switch is skipped), so keep only the intended `.lyx` file open.
+Sanity checks: `lq init --refresh save-reload` is the fastest discovery check (dispatch-only, no response wait); a `REFRESH_PRE_ERROR` or pipe-open timeout means a genuine disconnect (items 1–3), never the race.

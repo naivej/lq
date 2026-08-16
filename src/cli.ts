@@ -841,12 +841,11 @@ export async function refreshPreStep(
   if (mode !== "save-reload") return "ok";
 
   const commands: string[] = [];
-  // buffer-switch ensures the correct file is active before saving.
-  // On Windows, skipped: the pipe protocol (Server.cpp) uses ':' as a
-  // delimiter, which conflicts with the drive letter in absolute paths.
-  if (Deno.build.os !== "windows") {
-    commands.push(`buffer-switch ${path.resolve(filePath)}`);
-  }
+  // buffer-switch ensures the correct file is active before saving. Dev log 128:
+  // the Windows pipe transport now sends the colon-separated func:arg form, so a
+  // drive letter in the path no longer truncates the func field (dev log 28's
+  // "no escape mechanism" conclusion was wrong — see buildPipeCommand).
+  commands.push(`buffer-switch ${path.resolve(filePath)}`);
   commands.push("buffer-write");
 
   const { sent, confirmed, errored } = await sendLyxCommands(commands);
@@ -864,9 +863,9 @@ async function refreshPostStep(filePath: string, mode: "none" | "reload" | "save
   if (mode === "none") return;
 
   const commands: string[] = [];
-  if (Deno.build.os !== "windows") {
-    commands.push(`buffer-switch ${path.resolve(filePath)}`);
-  }
+  // buffer-switch first so buffer-reload targets the right file (dev log 128:
+  // colon form works on the Windows pipe — see refreshPreStep).
+  commands.push(`buffer-switch ${path.resolve(filePath)}`);
   commands.push("buffer-reload");
 
   // Best-effort: warn unless the reload was confirmed and did not error. On
