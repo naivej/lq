@@ -417,11 +417,19 @@ function assertNoUnknownFlags(
 
 /**
  * Commands that take no flags at all (read/delete/undo/schema) still receive
- * stray `--` tokens in their extra positional args — reject them instead of
- * silently ignoring (test_report_38 F7).
+ * stray `--` tokens in their selector or extra positional args — reject them
+ * instead of silently treating a flag typo as a zero-match selector
+ * (test_report_38 F7; test_report_61 F1).
  */
-function assertNoStrayFlags(restArgs: string[], commandName: string): void {
-  const stray = restArgs.filter(a => a.startsWith("--"));
+function assertNoStrayFlags(
+  selector: string | undefined,
+  restArgs: string[],
+  commandName: string,
+): void {
+  const stray = [
+    ...(selector?.startsWith("--") ? [selector] : []),
+    ...restArgs.filter(a => a.startsWith("--")),
+  ];
   if (stray.length > 0) {
     printError("INVALID_FLAG",
       `Unknown flag${stray.length === 1 ? "" : "s"} for '${commandName}': ` +
@@ -1136,7 +1144,7 @@ export async function runCli(args: string[]) {
   // `--` tokens (test_report_38 F7). Flag-bearing commands (init/dump/bib/
   // set/insert) validate via assertNoUnknownFlags at their parse site.
   if (["read", "delete", "undo", "schema"].includes(command)) {
-    assertNoStrayFlags(restArgs, command);
+    assertNoStrayFlags(selector, restArgs, command);
   }
   
   if (command !== "init" && !filePath.endsWith(".lyx")) {

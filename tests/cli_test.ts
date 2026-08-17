@@ -236,6 +236,21 @@ Deno.test("CLI - unknown command alone reports UNKNOWN_COMMAND (not MISSING_ARGS
   assertStringIncludes(result.message!, "lq help");
 });
 
+Deno.test("CLI - selector-position flag typos are rejected", { timeout: 20000 }, async () => {
+  const cases = [
+    ["read", "--text-ony"],
+    ["schema", "--bogus-flag"],
+    ["delete", "--bogus-flag"],
+    ["undo", "--bogus-flag"],
+  ];
+  for (const [command, typo] of cases) {
+    const result = await runCliTest([command, FIXTURE, typo]);
+    assertEquals(result.code, "INVALID_FLAG", `${command} must reject ${typo}`);
+    assertStringIncludes(result.message!, typo);
+    assertStringIncludes(result.message!, `lq ${command} --help`);
+  }
+});
+
 // ---------------------------------------------------------------------------
 // 7. bib --search
 // ---------------------------------------------------------------------------
