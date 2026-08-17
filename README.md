@@ -29,7 +29,7 @@
 
 LyX's Windows LyXServer has a response-delivery race that can lose a command's *response* even though the command executed. This is a LyX server bug that affect `lq` auto-refresh.  
 As the fix is pending upstream LyX, a patched LyX is provided in [`lyx_patch/`](lyx_patch/) with one-click swap scripts for reliably delivered confirmations and fast refresh.  
-Without the fix, `lq` works around the race: a command counts as dispatched once written to the pipe, so warnings mean "unconfirmed", not "failed" — the command was almost certainly executed. Or keep `--refresh none` for almost instant `lq`.
+Without the fix, `lq` works around the race: a command counts as dispatched once written to the pipe, so warnings mean "unconfirmed", not "failed" — the command was almost certainly executed.
 
 ## Development
 
@@ -40,7 +40,7 @@ Requires **Deno 2.8+**.
 - **Test coverage:** `deno task coverage` generates per-function coverage report in `./cov`
 - **Benchmark:** `deno bench -A --no-check tests/bench.ts`
 - **CPU profiling:** `deno task profile <args...>` (outputs .cpuprofile, SVG flamegraph, and Markdown report)
-- **Audit messages:** `deno task audit:messages` writes a report grouped by kind to `./audit/messages.md`; add `-- --format json` for `./audit/messages.json` or `--output <path>` for a custom destination
+- **Audit messages:** `deno task audit:messages` extrac error / warning / help messages to `./audit/messages.md`, or `./audit/messages.json` (with `-- --format json`), or `--output <path>`
 - **Watch execution:** `deno task dev`
 - **Build binary:** `deno task build` (or `deno task build:all` for all platforms)
 - **Compatibility**:
