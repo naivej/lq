@@ -1,24 +1,17 @@
 # LyX Windows fix — patched files + step-by-step build guide
 
-This folder lets you build your **own patched LyX** on Windows that fixes a bug in
-LyXServer. On Windows, LyX's pipe server could fail to deliver replies to LyXServer clients (tools like
-JabRef, or `lq`): a command ran, but the reply was dropped, so clients thought
-LyX was slow or stuck. These two files repair the pipe server that delivers
-those replies.
+This folder lets you build your **own patched LyX** on Windows that fixes a bug in LyXServer. On Windows, LyX's pipe server could fail to deliver replies to LyXServer clients (tools like JabRef, or `lq`): a command ran, but the reply was dropped, so clients thought
+LyX was slow or stuck. These two files repair the pipe server that delivers those replies.
 
-> **A note on versions:** this fix is written for **LyX 2.5.1**. Use it with the
-> 2.5.1 source code exactly as described below. It may also apply to nearby
-> 2.5.x releases, but 2.5.1 is the guaranteed target.
+> **A note on versions:** this fix is written for **LyX 2.5.1**. Use it with the 2.5.1 source code exactly as described below. It may also apply to nearby 2.5.x releases, but 2.5.1 is the guaranteed target.
 
 ---
 
 ## Quick install (no building — about 2 minutes)
 
-If you just want the fix and don't want to compile anything, everything you need
-is in this folder. **Double-click `swap_to_patched.cmd`**. It will:
+If you just want the fix and don't want to compile anything, everything you need is in this folder. **Double-click `swap_to_patched.cmd`**. It will:
 
-- find your installed LyX 2.5 (the usual install locations; edit the `LYXDIR`
-  line at the top of the script if yours is elsewhere),
+- find your installed LyX 2.5 (the usual install locations; edit the `LYXDIR` line at the top of the script if yours is elsewhere),
 - keep your official `LyX.exe` aside as `LyX.exe.orig`,
 - install the patched `LyX2.5.1.exe` as your `LyX.exe`.
 
@@ -40,9 +33,7 @@ To go back to the official LyX later, double-click `swap_back_original.cmd`.
 
 ## Build from source (only if you didn't use the quick install)
 
-The steps below build LyX the **same way the official LyX for Windows is built**
-(Microsoft Visual C++ and Qt for MSVC). This is what makes the swap a single
-file: the resulting `LyX.exe` uses the same Qt DLLs the official installer ships.
+The steps below build LyX the **same way the official LyX for Windows is built** (Microsoft Visual C++ and Qt for MSVC). This is what makes the swap a single file: the resulting `LyX.exe` uses the same Qt DLLs the official installer ships.
 
 1. **Download the LyX source code** (the "ingredients").
 2. **Install the build tools**: Visual Studio Build Tools, CMake, Qt, and LyX's
@@ -60,23 +51,16 @@ file: the resulting `LyX.exe` uses the same Qt DLLs the official installer ships
 ### Step 2 — Install the build tools
 
 **2a. Visual Studio Build Tools (the C++ compiler).**
-1. Go to <https://visualstudio.microsoft.com/downloads/> and download
-   **Build Tools for Visual Studio 2022** (the standalone "Build Tools" link, not
-   the full Visual Studio).
-2. Run the installer. On the workload list, tick **"Desktop development with
-   C++"** and click Install. (This is ~2–4 GB and takes a while.)
+1. Go to <https://visualstudio.microsoft.com/downloads/> and download **Build Tools for Visual Studio 2022** (the standalone "Build Tools" link, not the full Visual Studio).
+2. Run the installer. On the workload list, tick **"Desktop development with C++"** and click Install. (This is ~2–4 GB and takes a while.)
 
 **2b. CMake.**
-1. Download the Windows x64 zip from <https://cmake.org/download/> (the current
-   one is named something like `cmake-4.x.x-windows-x86_64.zip`).
-2. Extract it and note the path to `cmake.exe` inside `bin\`, e.g.
-   `C:\cmake\cmake-4.4.2-windows-x86_64\bin\cmake.exe`. (Use the official CMake
-   from cmake.org, not a package-manager build — it keeps the build clean.)
+1. Download the Windows x64 zip from <https://cmake.org/download/> (the current one is named something like `cmake-4.x.x-windows-x86_64.zip`).
+2. Extract it and note the path to `cmake.exe` inside `bin\`, e.g. `C:\cmake\cmake-4.4.2-windows-x86_64\bin\cmake.exe`. (Use the official CMake from cmake.org, not a package-manager build — it keeps the build clean.)
 
-**2c. Qt 6.10.2 for MSVC.** LyX 2.5.1's official Windows installer ships
-**Qt 6.10.2**, so the patched binary must be built against exactly that version.
-1. Install Python from <https://www.python.org> (any recent 3.x; tick "Add
-   python.exe to PATH" during install).
+**2c. Qt 6.10.2 for MSVC.** LyX 2.5.1's official Windows installer ships **Qt 6.10.2**, so the patched binary must be built against exactly that version.
+
+1. Install Python from <https://www.python.org> (any recent 3.x; tick "Add python.exe to PATH" during install).
 2. Open a **Command Prompt** and install the Qt downloader:
    ```
    pip install aqtinstall
@@ -87,49 +71,34 @@ file: the resulting `LyX.exe` uses the same Qt DLLs the official installer ships
    ```
    This gives you `C:\Qt\6.10.2\msvc2022_64`.
 
-**2d. LyX's Windows dependency bundle.** LyX needs a small bundle of Windows
-tools (gettext, Python, Ghostscript, …) at build time.
-1. Download **`lyx-windows-deps-msvc2019_64.zip`** from
-   <http://ftp.lyx.org/pub/lyx/devel/win_deps/>.
-2. Extract it and note the inner folder, e.g.
-   `C:\lyx-deps\lyx-windows-deps-msvc2019_64`.
+**2d. LyX's Windows dependency bundle.** LyX needs a small bundle of Windows tools (gettext, Python, Ghostscript, …) at build time.
+
+1. Download **`lyx-windows-deps-msvc2019_64.zip`** from <http://ftp.lyx.org/pub/lyx/devel/win_deps/>.
+2. Extract it and note the inner folder, e.g. `C:\lyx-deps\lyx-windows-deps-msvc2019_64`.
 
 ### Step 3 — Copy the patched files
 
-1. In Windows Explorer, open the LyX source folder you made in Step 1, then open
-   the **`src`** subfolder. You should see (among many files) `Server.cpp` and
-   `Server.h`.
-2. Copy the two files from **this** folder's `src` subfolder
-   (`lyx_patch\src\Server.cpp` and `lyx_patch\src\Server.h`) into the LyX source
-   `src` folder, and choose **"Replace the files in the destination"** when
-   Windows asks.
+1. In Windows Explorer, open the LyX source folder you made in Step 1, then open the **`src`** subfolder. You should see (among many files) `Server.cpp` and `Server.h`.
+2. Copy the two files from **this** folder's `src` subfolder (`lyx_patch\src\Server.cpp` and `lyx_patch\src\Server.h`) into the LyX source `src` folder with replace.
 
 ### Step 4 — Build LyX
 
-Build in a **"x64 Native Tools Command Prompt for VS 2022"** — this is the
-prompt that knows where the compiler is (Start menu → search "x64 Native
-Tools"). In that prompt:
+Build in a **"x64 Native Tools Command Prompt for VS 2022"**. This is the prompt that knows where the compiler is (Start menu → search "x64 Native Tools"). In that prompt:
 
 1. Go to the LyX source folder (adjust if you extracted elsewhere):
    ```
    cd C:\lyx-src\lyx-2.5.1
    ```
-2. Configure the build. Adjust the two paths — the LyX deps folder (Step 2d)
-   and the Qt folder (Step 2c) — then paste this entire long line and press
-   Enter:
+2. Configure the build. Adjust the two paths — the LyX deps folder (Step 2d) and the Qt folder (Step 2c) — then paste this entire long line and press Enter:
    ```
    C:\cmake\cmake-4.4.2-windows-x86_64\bin\cmake.exe -S . -B build-msvc -G "Visual Studio 17 2022" -A x64 -DLYX_USE_QT=QT6 -DCMAKE_BUILD_TYPE=Release -DLYX_3RDPARTY_BUILD=ON -DGNUWIN32_DIR=C:\lyx-deps\lyx-windows-deps-msvc2019_64 -DCMAKE_PREFIX_PATH=C:\Qt\6.10.2\msvc2022_64 -DLYX_CONSOLE=OFF
    ```
-   Success looks like lines ending in `-- Build files have been written to:
-   .../build-msvc` with **no** red `error` lines. (The first run takes a few
-   minutes while CMake checks the compiler.)
+   Success looks like lines ending in `-- Build files have been written to:.../build-msvc` with **no** red `error` lines. (The first run takes a few minutes while CMake checks the compiler.)
 3. Build (this is the long one — 10–30 minutes; let it run):
    ```
    C:\cmake\cmake-4.4.2-windows-x86_64\bin\cmake.exe --build build-msvc --config Release --target LyX
    ```
-   The last line should be:
-   `LyX.vcxproj -> ...\build-msvc\bin\Release\LyX.exe`
-   Any `error C...` means something went wrong — see Troubleshooting.
+   The last line should be: `LyX.vcxproj -> ...\build-msvc\bin\Release\LyX.exe` Any `error C...` means something went wrong — see Troubleshooting.
 
 **Your patched LyX is now at** `build-msvc\bin\Release\LyX.exe`.
 
@@ -137,16 +106,10 @@ Tools"). In that prompt:
 
 ## How to know the fix worked
 
-- **Everyday use:** after `swap_to_patched.cmd` finishes, start LyX from your
-   usual shortcut. The `LyX.exe` in your normal installation is now the patched
-   binary, so open a document, type, save, and close as usual. The fix is
-   invisible in normal use; it shows up for *programs that talk to LyX* (JabRef,
-   `lq`, …): their commands are now answered reliably instead of replies being
-   lost.
-- **Optional quick check (for the curious):** close LyX, then open **PowerShell**
-   (Start menu → type "PowerShell"). Start the installed executable with the
-   server log on. For the default system-wide installation, run:
-  ```
+- **Everyday use:** after `swap_to_patched.cmd` finishes, start LyX from your usual shortcut. The `LyX.exe` in your normal installation is now the patched binary, so open a document, type, save, and close as usual. The fix is invisible in normal use; it shows up for *programs that talk to LyX* (JabRef, `lq`, …): their commands are now answered reliably instead of replies being lost.
+- **Optional quick check (for the curious):** close LyX, then open **PowerShell**. Start the installed executable with the server log on. For the default system-wide installation, run:
+   
+   ```
   Start-Process -FilePath "C:\Program Files\LyX 2.5\bin\LyX.exe" -ArgumentList '-dbg', 'LYXSERVER'
   ```
    For a per-user installation, use:
@@ -155,6 +118,7 @@ Tools"). In that prompt:
    ```
    `Start-Process` returns immediately, so keep using the same PowerShell window.
    Open a document in LyX, then paste:
+  
   ```powershell
   $base = "$env:APPDATA\LyX2.5\lyxpipe"
   $in = New-Object System.IO.Pipes.NamedPipeClientStream(".", "${base}.in", [System.IO.Pipes.PipeDirection]::Out)
@@ -177,7 +141,7 @@ Tools"). In that prompt:
 | Symptom | Cause / fix |
 |---------|-------------|
 | `cmake: command not found` | CMake isn't on your PATH. Use the full path from Step 2b (`C:\cmake\...\bin\cmake.exe`) or add its `bin\` to your PATH. |
-| `cl.exe` / compiler errors at configure time | You're not in the **"x64 Native Tools Command Prompt for VS 2022"**. Re-open that specific prompt (Start menu → search "x64 Native Tools") and repeat Step 4 there. |
+| `cl.exe` / compiler errors at configure time | You're not in the **"x64 Native Tools Command Prompt for VS 2022"**. Re-open that specific prompt and repeat Step 4 there. |
 | Configure fails with `Could NOT find GNUWIN32` | The LyX deps path is wrong. Double-check `-DGNUWIN32_DIR=...` points at the extracted `lyx-windows-deps-msvc2019_64` folder (Step 2d). |
 | Configure fails with `Could NOT find Qt6` | The Qt path is wrong. Double-check `-DCMAKE_PREFIX_PATH=...` points at `C:\Qt\6.10.2\msvc2022_64` (Step 2c), and that you installed exactly 6.10.2. |
 | Build fails at the *end* with `cannot open output file ... Permission denied` or `LNK1104` | A `LyX.exe` is still running, so Windows locked the file. Close all LyX windows, then run the `cmake --build ... --target LyX` line again. |
@@ -196,12 +160,9 @@ Tools"). In that prompt:
 - **Scope.** It's two files (`src/Server.h`, `src/Server.cpp`) that repair the
   Windows pipe loop: replies are now delivered as soon as they're ready, stale
   replies are never handed to the wrong client, replies are never discarded by an
-  early disconnect, and the pipe instances recycle properly. Full technical
-  analysis lives in `dev_logs/lyx/001_server_pipe_delivery_race.md` in the
-  `lq_dev` repository.
+  early disconnect, and the pipe instances recycle properly.
 - **The fix is not yet in an official LyX release.** A patch was submitted to the
-  LyX developers (Trac ticket + `lyx-devel` mailing list, per LyX's contribution
-  rules). Until it ships, this local build is how you get the fix today. When a
+  LyX developers. Until it ships, this local build is how you get the fix today. When a
   future LyX release includes it, you can switch back to the normal installer.
 - **License.** LyX is GPL — building from source is fully allowed. These patched
   files are derived from LyX 2.5.1 and are provided under the same license.
