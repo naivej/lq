@@ -96,7 +96,7 @@
 \papersides 1
 \paperpagestyle default
 \tablestyle default
-\tracking_changes true
+\tracking_changes false
 \output_changes false
 \change_bars false
 \postpone_fragile_content false
@@ -106,7 +106,7 @@
 \docbook_table_output 0
 \docbook_mathml_prefix 1
 \docbook_mathml_version 0
-\author 236438948 "me"
+\author 236438948 "Shifu"
 \end_header
 
 \begin_body
@@ -156,7 +156,6 @@ I like to use lyx note
 
 \end_layout
 
-
 \begin_layout Section
 Section 
 \begin_inset CommandInset label
@@ -185,7 +184,7 @@ tuple "list"
  citing other's paper 
 \begin_inset CommandInset citation
 LatexCommand citet
-key "Carrier2025"
+key "Abernethy2003"
 literal "false"
 
 \end_inset
@@ -194,14 +193,14 @@ literal "false"
  Another paper 
 \begin_inset CommandInset citation
 LatexCommand citep
-key "DAcunto2023a"
+key "Cotton1999"
 literal "false"
 
 \end_inset
 
  said some else.
 \begin_inset Foot
-status collapsed
+status open
 
 \begin_layout Plain Layout
 A footnote.
@@ -231,7 +230,7 @@ placement document
 alignment document
 wide false
 sideways false
-status collapsed
+status open
 
 \begin_layout Plain Layout
 \begin_inset Caption Standard
@@ -298,7 +297,7 @@ Panel B
 
 \begin_layout Plain Layout
 \begin_inset Graphics
-	filename figure_folder/fig1.jpg
+	filename Presentations/beamer-g4.jpg
 	scale 25
 
 \end_inset
@@ -313,7 +312,7 @@ Panel B
 
 \begin_layout Plain Layout
 \begin_inset Graphics
-	filename figure_folder/fig2.jpg
+	filename Presentations/beamer-knight1.png
 	scale 25
 
 \end_inset
@@ -396,7 +395,7 @@ placement document
 alignment document
 wide false
 sideways false
-status collapsed
+status open
 
 \begin_layout Plain Layout
 \begin_inset Caption Standard
@@ -741,6 +740,10 @@ name "sec:appendix_label"
 \end_inset
 
 
+\end_layout
+
+\begin_layout Standard
+Something not in main text.
 \end_layout
 
 \begin_layout Standard
