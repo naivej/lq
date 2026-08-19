@@ -82,7 +82,7 @@ const LARGEOP_CHAR: Record<string, string> = {
   oint: "∮",
 };
 
-const ENV = /\\begin\{(equation\*?|align\*?|displaymath|multline\*?|gather\*?|eqnarray\*?)\}([\s\S]*)\\end\{\1\}/;
+const ENV = /\\begin\{(equation\*?|align\*?|alignat\*?|flalign\*?|displaymath|multline\*?|gather\*?|eqnarray\*?)\}(?:\{[^}]*\})?([\s\S]*)\\end\{\1\}/;
 
 export function unwrapLatexSource(source: string): { display: boolean; body: string } {
   let s = source.trim();
@@ -248,7 +248,7 @@ class Parser {
       const close = this.readDelimiter();
       return `<mo>${escapeLiveHtml(close)}</mo>`;
     }
-    if (name === "frac") {
+    if (name === "frac" || name === "dfrac" || name === "tfrac" || name === "nicefrac" || name === "unitfrac") {
       const a = this.parseGroupOrAtom();
       const b = this.parseGroupOrAtom();
       return `<mfrac>${a}${b}</mfrac>`;
@@ -265,6 +265,17 @@ class Parser {
     if (name === "text" || name === "mathrm" || name === "textrm" || name === "operatorname") {
       const inner = this.readGroupText();
       return `<mtext>${escapeLiveHtml(inner)}</mtext>`;
+    }
+    if (name === "mathbf" || name === "boldsymbol" || name === "mathsf" || name === "mathtt" || name === "mathit") {
+      const inner = this.parseGroupOrAtom();
+      const variant = name === "mathbf" || name === "boldsymbol"
+        ? "bold"
+        : name === "mathsf"
+        ? "sans-serif"
+        : name === "mathtt"
+        ? "monospace"
+        : "italic";
+      return `<mstyle mathvariant="${variant}">${inner}</mstyle>`;
     }
     if (name === "label") {
       this.readGroupText();

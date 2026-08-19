@@ -295,6 +295,7 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, "class=\"sans\"");
   assertStringIncludes(html, "\u2423");
   assertStringIncludes(html, "<mo>↓</mo>");
+  assertStringIncludes(html, "<mfrac>");
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
@@ -327,10 +328,28 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, 'class="box-frameless"');
   assertStringIncludes(html, '<span class="noun">');
   const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
-  assert(
-    unknown.length <= 3,
-    `too many UNKNOWN_INSET diagnostics: ${unknown.map((d) => d.message).join("; ")}`,
-  );
+  assertEquals(unknown.map((d) => d.message), []);
+  assertStringIncludes(html, "4.10.1.4 List Spacing");
+  assert(!html.includes("List SpacingLists"), "Index inset must not leak into heading/TOC text");
+});
+
+Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/EmbeddedObjects.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, '<article class="lyx-live">');
+  const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
+  assertEquals(unknown.map((d) => d.message), []);
+  assertStringIncludes(html, '<div class="marginal">');
+  assertStringIncludes(html, "This is a margin note.");
+  assertStringIncludes(html, 'class="wrap"');
+  assertStringIncludes(html, "width: 40%");
+  assertStringIncludes(html, "This is a wrapped figure float.");
+  assertStringIncludes(html, '<code class="listings C++">');
+  assertStringIncludes(html, "int a=5;");
+  assertStringIncludes(html, '<div class="float-listings">');
+  assertStringIncludes(html, "Example Listing float");
+  assertStringIncludes(html, "def func(param):");
+  assertStringIncludes(html, 'data-filename="Abstract.pdf"');
 });
 
 Deno.test("Live renderer - escape helper is applied to source-derived text", () => {

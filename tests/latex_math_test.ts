@@ -29,6 +29,9 @@ Deno.test("latexToMathML - scripts, greek, sum, delimiters", () => {
   assertStringIncludes(display, "<mrow><mo>(</mo><mi>x</mi><mo>)</mo></mrow>");
   if (display.includes('stretchy="true"')) throw new Error("fences must not be stretchy");
   assertStringIncludes(latexToMathML("\\downarrow"), "<mo>↓</mo>");
+  assertStringIncludes(latexToMathML("\\dfrac{A}{B}"), "<mfrac>");
+  assertStringIncludes(latexToMathML("\\nicefrac{1}{18}"), "<mfrac>");
+  assertStringIncludes(latexToMathML("\\mathbf{x}"), 'mathvariant="bold"');
 });
 
 Deno.test("renderFormulaHtml - MathML plus TeX annotation, escaped", () => {

@@ -597,7 +597,17 @@ function headingPlainText(layout: BlockNode): string {
       if (n.type === "text") out += expandSpecialInText(n.text);
       else if (n.type === "property" && n.key === "SpecialChar") out += specialChar(n.value ?? "");
       else if (n.type === "block") {
-        if (n.tag === "inset" && insetKind(n).startsWith("CommandInset label")) continue;
+        if (n.tag === "inset") {
+          const kind = insetKind(n);
+          if (
+            kind.startsWith("CommandInset label") ||
+            kind === "Index" || kind.startsWith("Index ") ||
+            kind.startsWith("IndexMacro") ||
+            kind === "ERT"
+          ) {
+            continue;
+          }
+        }
         walk(n.children);
       }
     }
@@ -747,20 +757,28 @@ function renderEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string, n
   return [html, i];
 }
 
-function splitDescription(layout: BlockNode, _ctx: RenderCtx): { label: string; rest: string } {
+function splitDescription(layout: BlockNode, ctx: RenderCtx): { label: string; rest: string } {
   let label = "";
   let rest = "";
   let inRest = false;
   const walk = (nodes: Node[], state: TraversalState) => {
     for (const n of nodes) {
       if (n.type === "property") {
+        if (inRest && n.key === "SpecialChar") {
+          if (traversalRegion(state) !== "deleted") rest += escapeLiveHtml(specialChar(n.value ?? ""));
+          continue;
+        }
+        if (inRest && n.key === "backslash") {
+          if (traversalRegion(state) !== "deleted") rest += "\\";
+          continue;
+        }
         advanceTraversalState(state, n.key, n.value);
         continue;
       }
       if (traversalRegion(state) === "deleted") continue;
       if (inRest) {
-        if (n.type === "text") rest += n.text;
-        else if (n.type === "block") rest += collectVisibleText(n);
+        if (n.type === "text") rest += escapeLiveHtml(expandSpecialInText(n.text));
+        else if (n.type === "block") rest += renderInset(n, state, ctx);
         continue;
       }
       if (n.type === "text") {
@@ -769,7 +787,8 @@ function splitDescription(layout: BlockNode, _ctx: RenderCtx): { label: string; 
           label += n.text;
         } else {
           label += n.text.slice(0, cut);
-          rest += n.text.slice(cut + 1);
+          const tail = n.text.slice(cut + 1);
+          if (tail) rest += escapeLiveHtml(expandSpecialInText(tail));
           inRest = true;
         }
         continue;
@@ -787,7 +806,7 @@ function splitDescription(layout: BlockNode, _ctx: RenderCtx): { label: string; 
   walk(layout.children, createTraversalState());
   return {
     label: escapeLiveHtml(label.replace(/\s+/g, " ").trim()),
-    rest: escapeLiveHtml(rest.replace(/\s+/g, " ").trim()),
+    rest: rest.trim(),
   };
 }
 
@@ -945,6 +964,16 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Tabular") return renderTabular(block, parentState, ctx);
   if (kind.startsWith("Float ")) return renderFloat(block, kind, parentState, ctx);
+  if (kind === "Marginal" || kind.startsWith("Marginal ")) {
+    return `<div class="marginal">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  }
+  if (kind.startsWith("Wrap ")) return renderWrap(block, parentState, ctx);
+  if (kind === "listings" || kind.startsWith("listings ")) {
+    return renderListings(block, parentState, ctx);
+  }
+  if (kind === "External" || kind.startsWith("External ")) {
+    return renderGraphics(block, ctx);
+  }
   if (kind === "Graphics") return renderGraphics(block, ctx);
   if (kind === "Caption" || kind.startsWith("Caption ")) {
     return renderInsetLayouts(block, parentState, ctx);
@@ -1109,6 +1138,60 @@ function renderCaptionInline(block: BlockNode, ctx: RenderCtx): string {
   return renderChildren(block.children, createTraversalState(), ctx);
 }
 
+function renderWrap(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
+  const width = widthToCss(findProperty(block, "width")) || "50%";
+  return `<div class="wrap" style="width: ${escapeLiveHtml(width)}">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+}
+
+function listingLanguage(params: string): string {
+  return /language\s*=\s*\{([^}]+)\}/.exec(params)?.[1]
+    ?? /language\s*=\s*([^,\s"]+)/.exec(params)?.[1]
+    ?? "";
+}
+
+function listingCode(block: BlockNode): string {
+  const lines: string[] = [];
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type !== "block") continue;
+      if (n.tag === "layout") {
+        let line = "";
+        const lineWalk = (kids: Node[]) => {
+          for (const k of kids) {
+            if (k.type === "text") line += k.text;
+            else if (k.type === "property" && k.key === "backslash") line += "\\";
+            else if (k.type === "block") {
+              if (k.tag === "inset" && insetKind(k).startsWith("Caption")) continue;
+              lineWalk(k.children);
+            }
+          }
+        };
+        lineWalk(n.children);
+        lines.push(line.replace(/\s+$/, ""));
+        continue;
+      }
+      if (n.tag === "inset" && insetKind(n).startsWith("Caption")) continue;
+      walk(n.children);
+    }
+  };
+  walk(block.children);
+  return lines.join("\n").replace(/^\n+/, "").replace(/\n+$/, "");
+}
+
+function renderListings(block: BlockNode, _parentState: TraversalState, ctx: RenderCtx): string {
+  const lang = listingLanguage(findProperty(block, "lstparams") ?? "");
+  const inline = (findProperty(block, "inline") ?? "").toLowerCase() === "true";
+  const captions = collectBlocks(block, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
+  const captionHtml = captions.map((c) => renderCaptionInline(c, ctx)).join("");
+  const cls = lang ? `listings ${escapeLiveHtml(lang)}` : "listings";
+  const code = `<code class="${cls}">${escapeLiveHtml(listingCode(block))}</code>`;
+  if (inline) return code;
+  let html = `<div class="float-listings">`;
+  if (captionHtml) html += `<div class="listings-caption">${captionHtml}</div>`;
+  html += `${code}</div>`;
+  return html;
+}
+
 function renderFloat(block: BlockNode, kind: string, parentState: TraversalState, ctx: RenderCtx): string {
   const variant = kind.slice("Float ".length).trim() || "figure";
   let prefix = "";
@@ -1232,11 +1315,19 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
       return `<a class="citation" href="#LyXCite-${escapeLiveHtml(xmlId(k))}">${escapeLiveHtml(text)}</a>`;
     }).join("; ");
   }
-  if (subtype === "ref" || subtype === "pageref" || subtype === "formatted") {
+  if (
+    subtype === "ref" || subtype === "pageref" || subtype === "formatted" ||
+    subtype === "eqref" || subtype === "nameref" || subtype === "vref" ||
+    subtype === "vpageref" || subtype === "labelonly"
+  ) {
     const target = findProperty(block, "reference") ?? name;
-    const resolved = ctx.labels.get(target) || target;
     const id = xmlId(target);
-    return `<a class="ref" href="#${escapeLiveHtml(id)}">${escapeLiveHtml(resolved)}</a>`;
+    let text = ctx.labels.get(target) || target;
+    if (command === "eqref" || subtype === "eqref") text = `(${text})`;
+    else if (command === "pageref" || command === "vpageref" || subtype === "pageref" || subtype === "vpageref") {
+      text = "elsewhere";
+    }
+    return `<a class="ref" href="#${escapeLiveHtml(id)}">${escapeLiveHtml(text)}</a>`;
   }
   if (subtype === "bibtex") return renderBibliography(ctx);
   if (subtype === "toc") return renderToc(ctx);
@@ -1318,7 +1409,16 @@ function collectVisibleText(block: BlockNode): string {
       if (traversalRegion(state) === "deleted") continue;
       if (n.type === "text") out += n.text;
       else if (n.type === "block") {
-        if (n.tag === "inset" && (insetKind(n) === "ERT" || isInvisibleInset(n))) continue;
+        if (n.tag === "inset") {
+          const kind = insetKind(n);
+          if (
+            kind === "ERT" || isInvisibleInset(n) ||
+            kind === "Index" || kind.startsWith("Index ") ||
+            kind.startsWith("IndexMacro")
+          ) {
+            continue;
+          }
+        }
         walk(n.children, enterTraversalState(state));
       }
     }
