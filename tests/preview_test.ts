@@ -147,7 +147,8 @@ Deno.test("Live renderer - table, figure, footnote, formula", async () => {
   assertStringIncludes(html, ">A</");
   assertStringIncludes(html, 'class="foot"');
   assertStringIncludes(html, "Footnote body.");
-  assertStringIncludes(html, '<span class="formula">$E=mc^{2}$</span>');
+  assertStringIncludes(html, "<math");
+  assertStringIncludes(html, "E=mc^{2}");
   assertStringIncludes(html, "<figure");
   assertStringIncludes(html, 'data-filename="live-figure.png"');
   assertStringIncludes(html, "<figcaption>Figure 1: ");
@@ -172,6 +173,44 @@ Deno.test("Live renderer - tracked/ERT/notes follow XHTML omissions", async () =
   assert(!html.includes("private note"), "private notes must be omitted");
   assert(warnings.some((w) => w.includes("ERT")));
   assert(diagnostics.some((d) => d.code === "ERT_OMITTED"));
+});
+
+Deno.test("Live renderer - title, author, abstract, and math", async () => {
+  const { html } = await renderFile("front_matter_math.lyx");
+  assertStringIncludes(html, '<h1 class="title">Title</h1>');
+  assertStringIncludes(html, '<div class="author">My name');
+  assertStringIncludes(html, 'class="foot_intitle"');
+  assertStringIncludes(html, 'class="foot_intitle_label">*</span>');
+  assertStringIncludes(html, "Details about me");
+  assertStringIncludes(html, '<div class="abstract">');
+  assertStringIncludes(html, '<span class="abstract_label">Abstract</span>');
+  assertStringIncludes(html, '<div class="abstract_item">Abstract</div>');
+  assertStringIncludes(html, '<div class="abstract_item">Keywords: one</div>');
+  assert(!html.includes('<div class="abstract">Abstract</div>'), "abstracts must be grouped, not repeated as sibling blocks");
+  assertStringIncludes(html, '<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">');
+  assertStringIncludes(html, "<mi>ζ</mi>");
+  assertStringIncludes(html, 'encoding="application/x-tex"');
+  const sem = normalizeReaderHtml(html);
+  const dump = formatSem(sem);
+  assertStringIncludes(dump, "title");
+  assertStringIncludes(dump, "author");
+  assertStringIncludes(dump, "abstract");
+  assertStringIncludes(dump, "formula");
+});
+
+Deno.test("Live renderer - my_template front matter and math", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/my_template.lyx", import.meta.url));
+  const text = await Deno.readTextFile(filePath);
+  const { html } = renderLiveHtml(parse(text));
+  assertStringIncludes(html, '<h1 class="title">Title</h1>');
+  assertStringIncludes(html, '<div class="author">My name');
+  assertStringIncludes(html, '<span class="abstract_label">Abstract</span>');
+  assertStringIncludes(html, '<div class="abstract_item">Keywords:');
+  assertStringIncludes(html, '<div class="abstract_item">JEL:');
+  assertStringIncludes(html, 'display="block"');
+  assertStringIncludes(html, "<mi>ζ</mi>");
+  assertStringIncludes(html, "∑");
+  assert(!html.includes("\\begin{equation}"), "display math must not dump the TeX environment");
 });
 
 Deno.test("Live renderer - escape helper is applied to source-derived text", () => {

@@ -9,6 +9,7 @@ Do not commit generated `.xhtml` artifacts.
 | Fixture | Constructs | Math mode |
 |---|---|---|
 | `headings_paragraphs.lyx` | Section/Subsection, Standard, empty paragraph, Unicode, astral | `html_math_output 3` (LaTeX) |
+| `front_matter_math.lyx` | Title, Author + title footnote, grouped Abstract, display/inline math | LaTeX |
 | `lists_quotes.lyx` | Itemize, nested Itemize, Enumerate, Description, Quote | LaTeX |
 | `table_figure_foot_math.lyx` | Tabular, Float figure + `live-figure.png`, Foot, Formula | LaTeX |
 | `hostile.lyx` | Source strings that must stay escaped in HTML | LaTeX |

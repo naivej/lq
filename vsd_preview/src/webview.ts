@@ -44,16 +44,28 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .banner { padding: 0.4rem 0.6rem; margin-bottom: 0.75rem; border-left: 3px solid var(--vscode-editorWarning-foreground); }
 .banner.error { border-left-color: var(--vscode-errorForeground); }
 .banner.pending { border-left-color: var(--vscode-editorInfo-foreground); }
+article.lyx-live { max-width: 46em; margin: 0 auto; line-height: 1.45; }
 article.lyx-live section { margin: 0 0 1rem; }
 article.lyx-live h1, article.lyx-live h2, article.lyx-live h3, article.lyx-live h4 { margin: 0.8em 0 0.4em; }
+h1.title { font-size: 1.85em; text-align: center; font-weight: bold; margin: 0.4em 0 0.6em; }
+div.author { font-size: 1.15em; text-align: center; margin: 0.35em 0 1em; }
+div.date { text-align: center; margin: 0.35em 0 1em; }
+div.abstract { margin: 1.5em 2.5em 2em; }
+.abstract_label { display: block; font-weight: bold; text-align: center; margin-bottom: 0.6em; }
+.abstract_item { font-size: 0.95em; margin: 0.4em 0; }
 div.standard { margin: 0 0 0.8em; }
 blockquote { margin: 0.5em 1.5em; }
 table { border-collapse: collapse; margin: 0.75em 0; }
 td, th { border: 1px solid var(--vscode-panel-border); padding: 0.25em 0.5em; }
-.foot_label { font-size: 0.75em; vertical-align: super; cursor: default; }
-.foot_inner { display: none; }
-.foot:hover .foot_inner, .foot:focus-within .foot_inner { display: inline; }
-.formula { font-family: var(--vscode-editor-font-family); }
+.foot_label, .foot_intitle_label { font-size: 0.75em; vertical-align: super; cursor: default; }
+.foot_inner, .foot_intitle_inner { display: none; }
+.foot:hover .foot_inner, .foot:focus-within .foot_inner,
+.foot_intitle:hover .foot_intitle_inner, .foot_intitle:focus-within .foot_intitle_inner { display: inline; }
+span.formula { }
+math { font-family: "Cambria Math", "Latin Modern Math", "STIX Two Math", serif; font-size: 1.05em; }
+math[display="block"] { display: block; margin: 1em 0; text-align: center; }
+span.formula:has(math[display="block"]) { display: block; margin: 1em 0; }
+span.eqno { float: right; }
 .diagnostics { font-size: 0.85em; opacity: 0.85; }
 </style>
 </head>

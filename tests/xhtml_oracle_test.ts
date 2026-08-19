@@ -23,6 +23,7 @@ const PARITY_FIXTURES = [
   "table_figure_foot_math.lyx",
   "hostile.lyx",
   "tracked_ert_notes.lyx",
+  "front_matter_math.lyx",
 ];
 
 Deno.test("oracle sanitizer - drops head material, scripts, handlers, javascript URLs", () => {

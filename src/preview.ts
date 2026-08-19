@@ -15,6 +15,7 @@ import {
   type TraversalState,
 } from "./text_utils.ts";
 import * as path from "@std/path";
+import { renderFormulaHtml, unwrapLatexSource } from "./latex_math.ts";
 
 export const LIVE_CONTRACT = "lyx-preview/live-1";
 export const LIVE_PROJECTION = "live";
@@ -192,8 +193,11 @@ interface RenderCtx {
   warnings: string[];
   diagnostics: LiveDiagnostic[];
   footnote: number;
+  titleFoot: number;
   figure: number;
   table: number;
+  equation: number;
+  inTitle: boolean;
 }
 
 const HEADING: Record<string, { tag: string; level: number }> = {
@@ -288,7 +292,16 @@ function diagnostic(ctx: RenderCtx, code: string, message: string): void {
 }
 
 export function renderLiveHtml(ast: DocumentNode): { html: string; warnings: string[]; diagnostics: LiveDiagnostic[] } {
-  const ctx: RenderCtx = { warnings: [], diagnostics: [], footnote: 0, figure: 0, table: 0 };
+  const ctx: RenderCtx = {
+    warnings: [],
+    diagnostics: [],
+    footnote: 0,
+    titleFoot: 0,
+    figure: 0,
+    table: 0,
+    equation: 0,
+    inTitle: false,
+  };
   const inner = renderFlowItems(flattenFlow(findBody(ast), 0), ctx);
   return {
     html: `<article class="lyx-live">${inner}</article>`,
@@ -351,6 +364,22 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
   while (i < items.length) {
     const item = items[i];
     const heading = HEADING[item.layout];
+    if (item.layout === "Title") {
+      html += `<h1 class="title">${renderLayoutInline(item.node, ctx, true)}</h1>`;
+      i++;
+      continue;
+    }
+    if (item.layout === "Author" || item.layout === "Date") {
+      html += `<div class="${layoutSlug(item.layout)}">${renderLayoutInline(item.node, ctx, true)}</div>`;
+      i++;
+      continue;
+    }
+    if (item.layout === "Abstract") {
+      const [chunk, next] = renderAbstract(items, i, ctx);
+      html += chunk;
+      i = next;
+      continue;
+    }
     if (heading) {
       closeSections(heading.level);
       const number = headingNumber(item.layout, heading.level, counters);
@@ -462,8 +491,27 @@ function splitDescription(layout: BlockNode, _ctx: RenderCtx): { label: string; 
   };
 }
 
-function renderLayoutInline(layout: BlockNode, ctx: RenderCtx): string {
-  return renderChildren(layout.children, createTraversalState(), ctx);
+function renderAbstract(items: FlowItem[], start: number, ctx: RenderCtx): [string, number] {
+  let i = start;
+  let html = `<div class="abstract"><span class="abstract_label">Abstract</span>`;
+  while (i < items.length && items[i].layout === "Abstract" && items[i].depth === items[start].depth) {
+    html += `<div class="abstract_item">${renderLayoutInline(items[i].node, ctx, true)}</div>`;
+    i++;
+  }
+  html += "</div>";
+  return [html, i];
+}
+
+const TITLE_MARKS = ["*", "†", "‡", "§", "¶", "‖", "**", "††"];
+
+function renderLayoutInline(layout: BlockNode, ctx: RenderCtx, inTitle = false): string {
+  const prev = ctx.inTitle;
+  if (inTitle) ctx.inTitle = true;
+  try {
+    return renderChildren(layout.children, createTraversalState(), ctx);
+  } finally {
+    ctx.inTitle = prev;
+  }
 }
 
 function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx): string {
@@ -553,13 +601,23 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return `<aside class="note-greyedout">${renderInsetLayouts(block, parentState, ctx)}</aside>`;
   }
   if (kind === "Foot" || kind.startsWith("Foot ")) {
+    if (ctx.inTitle) {
+      const mark = TITLE_MARKS[ctx.titleFoot] ?? "*".repeat(ctx.titleFoot + 1);
+      ctx.titleFoot += 1;
+      return `<span class="foot_intitle"><span class="foot_intitle_label">${mark}</span><span class="foot_intitle_inner">${renderFootInner(block, parentState, ctx)}</span></span>`;
+    }
     ctx.footnote += 1;
     const n = ctx.footnote;
     return `<span class="foot"><span class="foot_label">${n}</span><span class="foot_inner">${renderInsetLayouts(block, parentState, ctx)}</span></span>`;
   }
   if (kind === "Formula" || kind.startsWith("Formula ") || kind.startsWith("Formula")) {
     const source = formulaSource(block);
-    return `<span class="formula">${escapeLiveHtml(source)}</span>`;
+    const { display } = unwrapLatexSource(source);
+    const number = display ? ++ctx.equation : undefined;
+    return renderFormulaHtml(source, number);
+  }
+  if (kind === "Newpage" || kind.startsWith("Newpage ")) {
+    return "";
   }
   if (kind === "Tabular") return renderTabular(block, parentState, ctx);
   if (kind.startsWith("Float ")) return renderFloat(block, kind, parentState, ctx);
@@ -582,6 +640,14 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   diagnostic(ctx, "UNKNOWN_INSET", `Unknown inset '${kind}' rendered as an escaped fallback.`);
   const fallback = collectVisibleText(block);
   return `<span class="unknown-inset">${escapeLiveHtml(fallback)}</span>`;
+}
+
+function renderFootInner(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
+  const nested = flattenFlow(block.children, 0);
+  if (nested.length > 0) {
+    return nested.map((item) => renderLayoutInline(item.node, ctx, ctx.inTitle)).join("");
+  }
+  return renderChildren(block.children, enterTraversalState(parentState), ctx);
 }
 
 function renderInsetLayouts(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
@@ -666,7 +732,8 @@ function renderCommandInset(block: BlockNode, kind: string): string {
     return `<span class="citation">${escapeLiveHtml(key || name)}</span>`;
   }
   if (subtype === "ref" || subtype === "pageref" || subtype === "formatted") {
-    return `<span class="ref">${escapeLiveHtml(name)}</span>`;
+    const target = findProperty(block, "reference") ?? name;
+    return `<span class="ref">${escapeLiveHtml(target)}</span>`;
   }
   if (subtype === "label" || subtype === "index_print" || subtype === "toc" || subtype === "nomenclature_print") {
     return "";
@@ -816,7 +883,7 @@ function collapse(node: SemNode): SemNode {
     for (const cur of merged) {
       if (cur.role === "text" && cur.text) cur.text = collapseWs(cur.text, false);
     }
-    const blocky = new Set(["list", "table", "figure", "section", "quote"]);
+    const blocky = new Set(["list", "table", "figure", "section", "quote", "formula"]);
     if (merged[0]?.role === "text" && merged[0].text) merged[0].text = merged[0].text.trimStart();
     const last = merged[merged.length - 1];
     if (last?.role === "text" && last.text) last.text = last.text.trimEnd();
@@ -864,6 +931,9 @@ function mapRole(node: SemNode): SemNode {
   }
   if (tag === "article") return { role: "document", children };
   if (tag === "section") return { role: "section", children };
+  if (tag === "h1" && cls.split(/\s+/).includes("title")) {
+    return { role: "title", children };
+  }
   if (/^h[1-6]$/.test(tag)) {
     return { role: "heading", attrs: { level: tag.slice(1) }, children };
   }
@@ -881,7 +951,11 @@ function mapRole(node: SemNode): SemNode {
   if (tag === "figure") return { role: "figure", children };
   if (tag === "figcaption" || tag === "caption") return { role: "caption", children };
   if (tag === "math" || cls.split(/\s+/).includes("formula") || cls.split(/\s+/).includes("math")) {
-    return { role: "formula", text: normalizeFormula(collectText({ role: tag, children, text: node.text })), children: [] };
+    const tex = findTexAnnotation(node);
+    let text = normalizeFormula(tex ?? collectText({ role: tag, children, text: node.text }));
+    const eqno = findEqno(node);
+    if (eqno && !text.endsWith(eqno)) text += eqno;
+    return { role: "formula", text, children: [] };
   }
   if (cls.split(/\s+/).includes("foot") || cls.split(/\s+/).includes("foot_inner")) {
     if (cls.split(/\s+/).includes("foot_label")) {
@@ -907,6 +981,9 @@ function mapRole(node: SemNode): SemNode {
     if (classes.includes("float-figure") || classes.includes("float-table")) {
       return { role: "figure", children };
     }
+    if (classes.includes("abstract")) return { role: "abstract", children };
+    if (classes.includes("author")) return { role: "author", children };
+    if (classes.includes("date")) return { role: "date", children };
     return { role: "paragraph", children };
   }
   if (tag === "span") {
@@ -921,6 +998,29 @@ function mapRole(node: SemNode): SemNode {
 function collectText(node: SemNode): string {
   if (node.text) return node.text;
   return node.children.map(collectText).join("");
+}
+
+function findEqno(node: SemNode): string | undefined {
+  if ((node.attrs?.class ?? "").split(/\s+/).includes("eqno")) {
+    return collectText(node).replace(/\s+/g, "");
+  }
+  for (const child of node.children) {
+    const found = findEqno(child);
+    if (found) return found;
+  }
+  return undefined;
+}
+
+function findTexAnnotation(node: SemNode): string | undefined {
+  if (node.role === "annotation") {
+    const enc = node.attrs?.encoding ?? "";
+    if (enc === "application/x-tex") return collectText(node);
+  }
+  for (const child of node.children) {
+    const found = findTexAnnotation(child);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 function basenameAttr(src: string): string {
