@@ -211,6 +211,13 @@ interface RenderCtx {
   btprint: string;
   outline: OutlineEntry[];
   layoutHtml: Map<string, LayoutHtml> | null;
+  nomencl: NomenclEntry[];
+}
+
+interface NomenclEntry {
+  symbol: string;
+  desc: string;
+  sort: string;
 }
 
 type LayoutRole =
@@ -245,6 +252,7 @@ const HEADING: Record<string, { tag: string; level: number }> = {
 const LIST: Record<string, { tag: string; item: string }> = {
   Itemize: { tag: "ul", item: "li" },
   Enumerate: { tag: "ol", item: "li" },
+  "Enumerate-Resume": { tag: "ol", item: "li" },
   Description: { tag: "dl", item: "dd" },
 };
 
@@ -388,8 +396,52 @@ function diagnostic(ctx: RenderCtx, code: string, message: string): void {
   }
 }
 
+function hasStartOfAppendix(node: BlockNode): boolean {
+  return node.children.some((c) => c.type === "property" && c.key === "start_of_appendix");
+}
+
+function alphabetic(n: number): string {
+  let s = "";
+  let x = n;
+  while (x > 0) {
+    x -= 1;
+    s = String.fromCharCode(65 + (x % 26)) + s;
+    x = Math.floor(x / 26);
+  }
+  return s || "A";
+}
+
+class HeadingState {
+  private readonly counts = new Map<number, number>();
+  private appendix = false;
+  private letterLevel: number | undefined;
+
+  next(layout: string, level: number, startAppendix: boolean): string {
+    if (layout.endsWith("*") || level > 3) return "";
+    if (startAppendix && !this.appendix) {
+      this.appendix = true;
+      this.letterLevel = level;
+      for (const key of [...this.counts.keys()]) {
+        if (key >= level) this.counts.delete(key);
+      }
+    }
+    this.counts.set(level, (this.counts.get(level) ?? 0) + 1);
+    for (const key of [...this.counts.keys()]) {
+      if (key > level) this.counts.delete(key);
+    }
+    const start = this.counts.has(0) ? 0 : this.counts.has(-1) ? -1 : 1;
+    const parts: string[] = [];
+    for (let l = start; l <= level; l++) {
+      const n = this.counts.get(l);
+      if (n === undefined) continue;
+      parts.push(this.appendix && l === this.letterLevel ? alphabetic(n) : String(n));
+    }
+    return parts.length ? `${parts.join(".")} ` : "";
+  }
+}
+
 function indexDocument(nodes: Node[], ctx: RenderCtx): void {
-  const headingCounters = new Map<number, number>();
+  const headings = new HeadingState();
   let currentHeading = "";
 
   const walk = (list: Node[], floatNo: string | undefined, atBody: boolean) => {
@@ -403,7 +455,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         const layout = (n.args ?? "").trim();
         const heading = role(layout, ctx);
         if (heading.kind === "heading") {
-          currentHeading = headingNumber(layout, heading.level, headingCounters).trim();
+          currentHeading = headings.next(layout, heading.level, hasStartOfAppendix(n)).trim();
           if (atBody) {
             const text = headingPlainText(n);
             ctx.outline.push({
@@ -460,6 +512,11 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         ctx.bibfiles = findProperty(n, "bibfiles") ?? ctx.bibfiles;
         ctx.btprint = findProperty(n, "btprint") ?? ctx.btprint;
       }
+      if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) {
+        const entry = collectNomenclEntry(n);
+        if (entry.symbol || entry.desc) ctx.nomencl.push(entry);
+        continue;
+      }
       walk(n.children, floatNo, false);
     }
   };
@@ -498,6 +555,27 @@ function documentTextclass(ast: DocumentNode): string | undefined {
   return walk(ast.children);
 }
 
+function documentModules(ast: DocumentNode): string[] {
+  const out: string[] = [];
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type !== "block") continue;
+      if (n.tag === "modules") {
+        for (const c of n.children) {
+          if (c.type === "text") {
+            const name = c.text.trim();
+            if (name) out.push(name);
+          }
+        }
+        continue;
+      }
+      if (n.tag === "header" || n.tag === "document") walk(n.children);
+    }
+  };
+  walk(ast.children);
+  return out;
+}
+
 async function loadLayoutHtml(
   ast: DocumentNode,
   layoutsDir?: string,
@@ -506,7 +584,7 @@ async function loadLayoutHtml(
   if (!textclass) return null;
   try {
     const dir = layoutsDir || await getDefaultLayoutsDir();
-    const map = await getLayoutHtmlForClass(textclass, dir);
+    const map = await getLayoutHtmlForClass(textclass, dir, documentModules(ast));
     return map.size > 0 ? map : null;
   } catch {
     return null;
@@ -545,6 +623,7 @@ export async function renderLiveHtml(
     btprint: "",
     outline: [],
     layoutHtml: await loadLayoutHtml(ast, layoutsDir),
+    nomencl: [],
   };
   indexDocument(findBody(ast), ctx);
   await loadBibliography(ctx);
@@ -582,20 +661,7 @@ export async function buildLiveResponse(
   return { response, warnings: rendered.warnings };
 }
 
-function headingNumber(layout: string, level: number, counters: Map<number, number>): string {
-  if (layout.endsWith("*") || level > 3) return "";
-  counters.set(level, (counters.get(level) ?? 0) + 1);
-  for (const key of [...counters.keys()]) {
-    if (key > level) counters.delete(key);
-  }
-  const start = counters.has(0) ? 0 : counters.has(-1) ? -1 : 1;
-  const parts: number[] = [];
-  for (let l = start; l <= level; l++) {
-    const n = counters.get(l);
-    if (n !== undefined) parts.push(n);
-  }
-  return parts.length ? `${parts.join(".")} ` : "";
-}
+
 
 function sectionId(number: string, text: string): string {
   const n = number.trim();
@@ -608,8 +674,9 @@ function headingPlainText(layout: BlockNode): string {
   let out = "";
   const walk = (nodes: Node[]) => {
     for (const n of nodes) {
-      if (n.type === "text") out += expandSpecialInText(n.text);
-      else if (n.type === "property" && n.key === "SpecialChar") out += specialChar(n.value ?? "");
+      if (n.type === "text") {
+        if (!isStatusLine(n.text)) out += expandSpecialInText(n.text);
+      } else if (n.type === "property" && n.key === "SpecialChar") out += specialChar(n.value ?? "");
       else if (n.type === "block") {
         if (n.tag === "inset") {
           const kind = insetKind(n);
@@ -617,7 +684,8 @@ function headingPlainText(layout: BlockNode): string {
             kind.startsWith("CommandInset label") ||
             kind === "Index" || kind.startsWith("Index ") ||
             kind.startsWith("IndexMacro") ||
-            kind === "ERT"
+            kind === "ERT" ||
+            kind === "Nomenclature" || kind.startsWith("Nomenclature ")
           ) {
             continue;
           }
@@ -634,7 +702,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
   let i = 0;
   let html = "";
   const openLevels: number[] = [];
-  const counters = new Map<number, number>();
+  const headings = new HeadingState();
 
   const closeSections = (level: number) => {
     while (openLevels.length > 0 && openLevels[openLevels.length - 1] >= level) {
@@ -664,7 +732,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
     }
     if (layout.kind === "heading") {
       closeSections(layout.level);
-      const number = headingNumber(item.layout, layout.level, counters);
+      const number = headings.next(item.layout, layout.level, hasStartOfAppendix(item.node));
       const text = headingPlainText(item.node);
       const id = sectionId(number, text);
       html += `<section id="${escapeLiveHtml(id)}"><${layout.tag}>${number}${renderLayoutInline(item.node, ctx)}</${layout.tag}>`;
@@ -1000,6 +1068,14 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind.startsWith("space ") || kind === "space") return spaceChar(kind);
   if (kind.startsWith("Index ") || kind === "Index") return "";
   if (kind.startsWith("IndexMacro ") || kind === "IndexMacro") return "";
+  if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) return "";
+  if (kind === "Preview" || kind.startsWith("Preview ")) {
+    return renderInsetLayouts(block, parentState, ctx);
+  }
+  if (kind.startsWith("script ")) {
+    const tag = kind.includes("superscript") ? "sup" : kind.includes("subscript") ? "sub" : "";
+    if (tag) return `<${tag}>${renderFlexInline(block, ctx)}</${tag}>`;
+  }
   if (kind.startsWith("Phantom ") || kind === "Phantom") return "\u200b";
   if (kind === "Text") return renderInsetLayouts(block, parentState, ctx);
   if (kind === "Flex Noun" || kind.startsWith("Flex Noun")) {
@@ -1007,6 +1083,12 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Flex Code" || kind.startsWith("Flex Code")) {
     return `<code>${renderFlexInline(block, ctx)}</code>`;
+  }
+  if (kind === "Flex Emph" || kind.startsWith("Flex Emph")) {
+    return `<em>${renderFlexInline(block, ctx)}</em>`;
+  }
+  if (kind === "Flex Strong" || kind.startsWith("Flex Strong")) {
+    return `<strong>${renderFlexInline(block, ctx)}</strong>`;
   }
   if (kind === "Flex URL" || kind.startsWith("Flex URL")) {
     const url = flattenFlow(block.children, 0).map((item) => collectVisibleText(item.node)).join("").trim();
@@ -1196,10 +1278,14 @@ function renderFlexInline(block: BlockNode, ctx: RenderCtx): string {
 }
 
 function renderBox(block: BlockNode, kind: string, parentState: TraversalState, ctx: RenderCtx): string {
-  const variant = kind.slice("Box ".length).trim() || "box";
+  const variant = kind.slice("Box ".length).trim() || "Boxed";
   const width = widthToCss(findProperty(block, "width"));
   const style = width && width !== "100%" ? ` style="width: ${escapeLiveHtml(width)}"` : "";
-  return `<div class="box-${layoutSlug(variant)}"${style}>${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  const nested = flattenFlow(block.children, 0);
+  const inner = nested.length <= 1
+    ? (nested[0] ? renderLayoutInline(nested[0].node, ctx) : "")
+    : renderInsetLayouts(block, parentState, ctx);
+  return `<div class="${escapeLiveHtml(variant)}"${style}>${inner}</div>`;
 }
 
 function renderInfo(block: BlockNode): string {
@@ -1423,6 +1509,74 @@ function renderBibliography(ctx: RenderCtx): string {
   return html;
 }
 
+function isStatusLine(text: string): boolean {
+  return /^(status|name|LatexCommand|LatexName|labelwidthstring)\s/.test(text);
+}
+
+function nomenclText(block: BlockNode): string {
+  let out = "";
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type === "text") {
+        if (!isStatusLine(n.text)) out += n.text;
+        continue;
+      }
+      if (n.type !== "block") continue;
+      if (n.tag === "inset") continue;
+      walk(n.children);
+    }
+  };
+  walk(block.children);
+  return out.replace(/\s+/g, " ").trim();
+}
+
+function collectNomenclEntry(block: BlockNode): NomenclEntry {
+  let symbol = "";
+  let desc = "";
+  let prefix = "";
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type === "text") {
+        if (!isStatusLine(n.text)) symbol += n.text;
+        continue;
+      }
+      if (n.type !== "block") continue;
+      if (n.tag === "inset") {
+        const kind = insetKind(n);
+        if (kind.startsWith("Argument ")) {
+          const name = kind.slice("Argument ".length).trim();
+          const text = nomenclText(n);
+          if (name === "1") prefix = text;
+          else if (name.startsWith("post:")) desc = text;
+          continue;
+        }
+        if (
+          kind === "ERT" || isInvisibleInset(n) ||
+          kind === "Index" || kind.startsWith("Index ") ||
+          kind.startsWith("IndexMacro")
+        ) {
+          continue;
+        }
+      }
+      walk(n.children);
+    }
+  };
+  walk(block.children);
+  symbol = symbol.replace(/\s+/g, " ").trim();
+  return { symbol, desc, sort: prefix || symbol };
+}
+
+function renderNomenclature(ctx: RenderCtx): string {
+  if (ctx.nomencl.length === 0) return "";
+  const items = [...ctx.nomencl].sort((a, b) => a.sort.localeCompare(b.sort));
+  let html = `<div class="nomencl"><h2 class="nomencl">Nomenclature</h2><dl>`;
+  for (const e of items) {
+    html += `<dt>${escapeLiveHtml(e.symbol)}</dt><dd>${escapeLiveHtml(e.desc)}</dd>`;
+  }
+  html += "</dl></div>";
+  return html;
+}
+
 function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): string {
   const subtype = kind.slice("CommandInset ".length).trim();
   const name = findProperty(block, "name") ?? "";
@@ -1457,6 +1611,8 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
   if (subtype === "index_print" || subtype === "nomenclature_print") {
     return "";
   }
+  if (subtype === "nomencl_print") return renderNomenclature(ctx);
+  if (subtype === "line") return "<hr>";
   if (subtype === "href") {
     const target = findProperty(block, "target") ?? name;
     const label = name || target;
@@ -1468,21 +1624,61 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
 
 function spaceChar(kind: string): string {
   const arg = kind.startsWith("space ") ? kind.slice("space ".length).trim() : "";
+  // Match InsetSpace::spaceToXMLEntity (LyX 2.5).
   if (arg.includes("textvisiblespace")) return "\u2423";
-  if (arg.includes("thinspace")) return "\u2009";
-  if (arg.includes("negthinspace") || arg.includes("negmedspace") || arg.includes("negthickspace")) return "";
-  if (arg.includes("hfill") || arg.includes("hfill")) return " ";
+  if (arg.includes("qquad")) return "\u2003\u2003";
+  if (arg.includes("quad")) return "\u2003";
+  if (arg.includes("enskip")) return "\u2002";
+  if (arg.includes("enspace")) return "\u2060\u2002\u2060";
+  if (arg.includes("thinspace")) return "\u202f";
+  if (arg.includes("medspace")) return "\u2005";
+  if (arg.includes("thickspace")) return "\u2004";
+  if (
+    arg.includes("negthinspace") || arg.includes("negmedspace") || arg.includes("negthickspace") ||
+    arg === "~"
+  ) {
+    return "\u00a0";
+  }
+  if (arg === "\\space{}" || arg === "\\space") return " ";
+  if (
+    arg.includes("hfill") || arg.includes("dotfill") || arg.includes("hrulefill") ||
+    arg.includes("leftarrowfill") || arg.includes("rightarrowfill") ||
+    arg.includes("upbracefill") || arg.includes("downbracefill") ||
+    arg.includes("hspace")
+  ) {
+    return "\n";
+  }
   return "\u00a0";
 }
 
+/** Primary open/close, secondary open/close. Keys are InsetQuotes style_char. */
+const QUOTE_STYLES: Record<string, [string, string, string, string]> = {
+  e: ["\u201c", "\u201d", "\u2018", "\u2019"],
+  s: ["\u201d", "\u201d", "\u2019", "\u2019"],
+  g: ["\u201e", "\u201c", "\u201a", "\u2018"],
+  p: ["\u201e", "\u201d", "\u201a", "\u2019"],
+  c: ["\u00ab", "\u00bb", "\u2039", "\u203a"],
+  a: ["\u00bb", "\u00ab", "\u203a", "\u2039"],
+  q: ["\u0022", "\u0022", "\u0027", "\u0027"],
+  b: ["\u2018", "\u2019", "\u201c", "\u201d"],
+  w: ["\u00bb", "\u00bb", "\u2019", "\u2019"],
+  f: ["\u00ab", "\u00bb", "\u201c", "\u201d"],
+  i: ["\u00ab", "\u00bb", "\u00ab", "\u00bb"],
+  r: ["\u00ab", "\u00bb", "\u201e", "\u201c"],
+  j: ["\u300c", "\u300d", "\u300e", "\u300f"],
+  k: ["\u300a", "\u300b", "\u3008", "\u3009"],
+  h: ["\u201e", "\u201d", "\u00bb", "\u00ab"],
+  d: ["\u201d", "\u201e", "\u2019", "\u201a"],
+  x: ["\u201c", "\u201d", "\u2018", "\u2019"],
+};
+
 function quoteChar(kind: string): string {
-  if (kind.includes("eld") || kind.includes("els")) return "‘";
-  if (kind.includes("erd") || kind.includes("ers")) return "’";
-  if (kind.includes("gld") || kind.includes("gls")) return "“";
-  if (kind.includes("grd") || kind.includes("grs")) return "”";
-  if (kind.includes("ald")) return "«";
-  if (kind.includes("ard")) return "»";
-  return "\"";
+  const code = kind.startsWith("Quotes ") ? kind.slice("Quotes ".length).trim() : "";
+  if (code.length !== 3) return "\"";
+  const marks = QUOTE_STYLES[code[0]] ?? QUOTE_STYLES.e;
+  const secondary = code[2] === "s";
+  const closing = code[1] === "r";
+  return marks[(secondary ? 2 : 0) + (closing ? 1 : 0)];
 }
 
 function findProperty(block: BlockNode, key: string): string | undefined {
@@ -1534,7 +1730,8 @@ function collectVisibleText(block: BlockNode): string {
           if (
             kind === "ERT" || isInvisibleInset(n) ||
             kind === "Index" || kind.startsWith("Index ") ||
-            kind.startsWith("IndexMacro")
+            kind.startsWith("IndexMacro") ||
+            kind === "Nomenclature" || kind.startsWith("Nomenclature ")
           ) {
             continue;
           }

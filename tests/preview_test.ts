@@ -242,6 +242,7 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assertStringIncludes(html, '<a class="ref" href="#subsec_subsec_label">1.1</a>');
   assertStringIncludes(html, 'id="sec_Section_label"');
   assert(!html.includes("sec:Section_label"), "refs must resolve to numbers, not raw keys");
+  assertStringIncludes(html, ">A Appendix");
   assertStringIncludes(html, 'href="#LyXCite-Abernethy2003"');
   assertStringIncludes(html, "Abernethy et al.");
   assertStringIncludes(html, "Abernethy, Colin D. et al. (2003)");
@@ -325,12 +326,40 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assert(!html.includes("<code><div"), "Flex Code must stay inline");
   assertStringIncludes(html, "<dt>Current");
   assertStringIncludes(html, "Current Address</dt>");
-  assertStringIncludes(html, 'class="box-frameless"');
+  assertStringIncludes(html, 'class="Frameless"');
   assertStringIncludes(html, '<span class="noun">');
   const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
   assertEquals(unknown.map((d) => d.message), []);
   assertStringIncludes(html, "4.10.1.4 List Spacing");
   assert(!html.includes("List SpacingLists"), "Index inset must not leak into heading/TOC text");
+  assertStringIncludes(html, "\u201c");
+  assertStringIncludes(html, "\u201d");
+  assertStringIncludes(html, "<li>resumed</li>");
+  assert(!html.includes('class="enumerate_resume"'), "Enumerate-Resume must not fall back to a generic div");
+  assert(!html.includes("status collapsed"), "inset status lines must not leak into heading/TOC text");
+});
+
+Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/UserGuide.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, '<article class="lyx-live">');
+  const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
+  assertEquals(unknown.map((d) => d.message), []);
+  assertStringIncludes(html, "<sup>a, b</sup>");
+  assertStringIncludes(html, "<sub>3x</sub>");
+  assertStringIncludes(html, "<hr>");
+  assertStringIncludes(html, "<em>Emph</em>");
+  assertStringIncludes(html, "<strong>Strong</strong>");
+  assertStringIncludes(html, '<div class="nomencl">');
+  assertStringIncludes(html, "<dt>Tab</dt>");
+  assertStringIncludes(html, "<dd>Tabulator key</dd>");
+  assert(!html.includes("UNKNOWN_INSET"), "UserGuide must not dump unknown-inset fallbacks");
+  assertStringIncludes(html, ">A The User Interface");
+  assertStringIncludes(html, ">A.1 The File Menu");
+  assert(!html.includes(">7 The User Interface"), "appendix chapters must not continue arabic numbering");
+  assertStringIncludes(html, 'class="Doublebox"');
+  assertStringIncludes(html, "with rotated");
+  assertStringIncludes(html, "This is a line");
 });
 
 Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings", async () => {

@@ -114,6 +114,24 @@ div.marginal {
   font-size: 0.85em;
 }
 div.marginal .plain_layout { margin: 0; }
+div.Boxed, div.Framed, div.Doublebox, div.Shadowbox, div.ovalbox, div.Ovalbox, div.Shaded {
+  display: block;
+  box-sizing: border-box;
+  margin: 0.4em 0;
+  text-align: center;
+}
+div.Boxed, div.Framed { border: solid thick currentColor; padding: 0.5ex; }
+div.Doublebox { border: double thick currentColor; padding: 0.5ex; }
+div.Shadowbox {
+  border: solid medium gray;
+  border-bottom: solid 0.6em currentColor;
+  border-right: solid 0.6em currentColor;
+  padding: 0.5ex;
+}
+div.ovalbox { border: groove medium currentColor; padding: 0.5ex; border-radius: 1em; }
+div.Ovalbox { border: ridge thick currentColor; padding: 0.5ex; border-radius: 1em; }
+div.Shaded { background: color-mix(in srgb, currentColor 12%, transparent); padding: 0.5ex; }
+div.Frameless { margin: 1em 0; }
 .diagnostics { font-size: 0.85em; opacity: 0.85; }
 </style>
 </head>

@@ -263,6 +263,7 @@ function resolveStyle(name: string, raw: Map<string, RawStyle>, seen: Set<string
 export async function getLayoutHtmlForClass(
   textclass: string,
   layoutsDir: string,
+  modules: readonly string[] = [],
 ): Promise<Map<string, LayoutHtml>> {
   const mainLayoutPath = path.join(layoutsDir, `${textclass}.layout`);
   try {
@@ -271,7 +272,21 @@ export async function getLayoutHtmlForClass(
   } catch {
     return new Map();
   }
-  const parsed = await parseLayoutFile(mainLayoutPath, [layoutsDir]);
+  const searchPaths = [layoutsDir];
+  const visited = new Set<string>();
+  const parsed = await parseLayoutFile(mainLayoutPath, searchPaths, visited);
+  for (const name of modules) {
+    const trimmed = name.trim();
+    if (!trimmed) continue;
+    const modulePath = path.join(layoutsDir, `${trimmed}.module`);
+    const sub = await parseLayoutFile(modulePath, searchPaths, visited);
+    for (const s of sub.allowed) parsed.allowed.add(s);
+    for (const s of sub.disallowed) parsed.disallowed.add(s);
+    for (const [k, v] of sub.headingLevels) parsed.headingLevels.set(k, v);
+    for (const s of sub.customInsets) parsed.customInsets.add(s);
+    for (const s of sub.disallowedInsets) parsed.disallowedInsets.add(s);
+    for (const [k, v] of sub.styles) parsed.styles.set(k, mergeStyle(parsed.styles.get(k), v));
+  }
   const out = new Map<string, LayoutHtml>();
   for (const name of parsed.styles.keys()) {
     if (parsed.disallowed.has(name)) continue;

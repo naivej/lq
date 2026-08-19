@@ -61,4 +61,10 @@ Deno.test("Layout HTML lookup is renderer-private and resolves CopyStyle", async
   assertEquals(koma.get("Section")?.htmlTag?.toLowerCase(), "h2");
   const missing = await getLayoutHtmlForClass("article", "Z:\\lq-no-such-layouts");
   assertEquals(missing.size, 0);
+  const withModules = await getLayoutHtmlForClass("scrbook", layoutsDir, ["enumitem"]);
+  assertEquals(
+    withModules.get("Enumerate-Resume")?.htmlTag?.toLowerCase(),
+    "ol",
+    "header module Enumerate-Resume CopyStyle Enumerate must resolve HTMLTag",
+  );
 });
