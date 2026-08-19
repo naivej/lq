@@ -152,6 +152,7 @@ Deno.test("Live renderer - table, figure, footnote, formula", async () => {
   assertStringIncludes(html, "<figure");
   assertStringIncludes(html, 'data-filename="live-figure.png"');
   assertStringIncludes(html, "<figcaption>Figure 1: ");
+  assert(!html.includes("<figcaption>Figure 1: <div"), "caption must stay on one line");
   assertStringIncludes(html, "data-filepath=");
   assertStringIncludes(html, 'src="file:');
 });
@@ -220,6 +221,28 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assertStringIncludes(html, "References");
   assertStringIncludes(html, "data-filename=\"beamer-g4.jpg\"");
   assertStringIncludes(html, "data-filepath=");
+  const fig = html.slice(html.indexOf("<figure"), html.indexOf("</figure>") + 9);
+  const capAt = fig.indexOf("<figcaption>");
+  const tableAt = fig.indexOf("<table");
+  assert(capAt !== -1 && tableAt !== -1 && capAt < tableAt, "figure caption must appear above the figure body");
+  assertStringIncludes(fig, "<figcaption>Figure 1: Figure caption");
+  assert(!fig.includes("<figcaption>Figure 1: <div"), "figure number and caption must be one line");
+});
+
+Deno.test("Live renderer - SpecialChar and quiet insets in Additional.lyx", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/Additional.lyx", import.meta.url));
+  const text = await Deno.readTextFile(filePath);
+  const { html, diagnostics } = await renderLiveHtml(parse(text), { filePath });
+  assertStringIncludes(html, "Additional LyX");
+  assertStringIncludes(html, "the LyX");
+  assertStringIncludes(html, "⇒");
+  assert(!html.includes("<h1 class=\"title\">Additional \\SpecialChar"), "title SpecialChar must expand");
+  assertStringIncludes(html, "User&#39;s Guide.");
+  const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
+  assert(
+    unknown.length <= 3,
+    `too many UNKNOWN_INSET diagnostics: ${unknown.map((d) => d.message).join("; ")}`,
+  );
 });
 
 Deno.test("Live renderer - escape helper is applied to source-derived text", () => {

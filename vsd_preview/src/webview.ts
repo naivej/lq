@@ -58,7 +58,12 @@ div.abstract { margin: 1.5em 2.5em 2em; }
 .abstract_label { display: block; font-weight: bold; text-align: center; margin-bottom: 0.6em; }
 .abstract_item { font-size: 0.95em; margin: 0.4em 0; }
 div.standard { margin: 0 0 0.8em; }
+div.subtitle { font-size: 1.2em; text-align: center; margin: 0.2em 0 0.8em; }
 blockquote { margin: 0.5em 1.5em; }
+figure.float-figure, figure.float-table { display: block; margin: 1.2em auto; text-align: center; }
+figure > figcaption { display: block; text-align: center; margin: 0 0 0.6em; }
+figure > .float-body { display: flex; justify-content: center; margin: 0.4em 0; }
+figure table { margin-left: auto; margin-right: auto; }
 table { border-collapse: collapse; margin: 0.75em 0; }
 td, th { border: 1px solid var(--vscode-panel-border); padding: 0.25em 0.5em; }
 .foot_label, .foot_intitle_label { font-size: 0.75em; vertical-align: super; cursor: default; }

@@ -250,6 +250,7 @@ const SPECIAL_CHAR: Record<string, string> = {
   LyX: "LyX",
   TeX: "TeX",
   LaTeX: "LaTeX",
+  LaTeX2e: "LaTeX2ε",
   lyx: "lyx",
   tex: "tex",
   latex: "latex",
@@ -258,12 +259,26 @@ const SPECIAL_CHAR: Record<string, string> = {
   endash: "–",
   emdash: "—",
   slash: "/",
+  breakableslash: "\u2044",
   hyphenation: "\u00ad",
+  softhyphen: "\u00ad",
   noboundry: "",
   noboundary: "",
-  allowbreak: "",
-  "menu-separator": "\u25b8",
+  allowbreak: "\u200b",
+  ligaturebreak: "\u200c",
+  endofsentence: ".",
+  menuseparator: "\u21d2",
+  "menu-separator": "\u21d2",
+  nobreakdash: "\u2011",
 };
+
+function specialChar(name: string): string {
+  return SPECIAL_CHAR[name] ?? name;
+}
+
+function expandSpecialInText(text: string): string {
+  return text.replace(/\\SpecialChar\s+(\S+)/g, (_, name: string) => specialChar(name));
+}
 
 function layoutSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "standard";
@@ -472,7 +487,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
       i++;
       continue;
     }
-    if (item.layout === "Author" || item.layout === "Date") {
+    if (item.layout === "Author" || item.layout === "Date" || item.layout === "Subtitle") {
       html += `<div class="${layoutSlug(item.layout)}">${renderLayoutInline(item.node, ctx, true)}</div>`;
       i++;
       continue;
@@ -651,7 +666,7 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
       if (SKIP_LAYOUT_PROPS.has(child.key)) continue;
       if (child.key === "SpecialChar") {
         if (traversalRegion(state) === "deleted") continue;
-        html += escapeLiveHtml(SPECIAL_CHAR[child.value ?? ""] ?? (child.value ?? ""));
+        html += escapeLiveHtml(specialChar(child.value ?? ""));
         continue;
       }
       if (child.key === "backslash") {
@@ -671,7 +686,7 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     }
     if (traversalRegion(state) === "deleted") continue;
     if (child.type === "text") {
-      html += escapeLiveHtml(child.text);
+      html += escapeLiveHtml(expandSpecialInText(child.text));
       continue;
     }
     if (child.type === "block") {
@@ -719,8 +734,17 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const number = display ? ++ctx.equation : undefined;
     return renderFormulaHtml(source, number);
   }
-  if (kind === "Newpage" || kind.startsWith("Newpage ")) {
+  if (
+    kind === "Newpage" || kind.startsWith("Newpage ") ||
+    kind === "VSpace" || kind.startsWith("VSpace ") ||
+    kind === "Separator" || kind.startsWith("Separator ") ||
+    kind === "Argument" || kind.startsWith("Argument ")
+  ) {
     return "";
+  }
+  if (kind === "Info" || kind.startsWith("Info ")) {
+    const arg = findProperty(block, "arg") ?? collectVisibleText(block);
+    return arg ? `<span class="info">${escapeLiveHtml(arg)}</span>` : "";
   }
   if (kind === "Tabular") return renderTabular(block, parentState, ctx);
   if (kind.startsWith("Float ")) return renderFloat(block, kind, parentState, ctx);
@@ -736,6 +760,13 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind.startsWith("space ") || kind === "space") return "\u00a0";
   if (kind.startsWith("Index ") || kind === "Index") return "";
   if (kind === "Text") return renderInsetLayouts(block, parentState, ctx);
+  if (kind === "Flex Code" || kind.startsWith("Flex Code")) {
+    return `<code>${renderInsetLayouts(block, parentState, ctx)}</code>`;
+  }
+  if (kind === "Flex URL" || kind.startsWith("Flex URL")) {
+    const url = collectVisibleText(block).trim();
+    return `<span class="url">${escapeLiveHtml(url)}</span>`;
+  }
   if (kind.startsWith("Flex ") || kind.startsWith("Box ") || kind.startsWith("Branch ")) {
     return renderInsetLayouts(block, parentState, ctx);
   }
@@ -799,20 +830,16 @@ function renderTabular(block: BlockNode, parentState: TraversalState, ctx: Rende
   return html;
 }
 
+function renderCaptionInline(block: BlockNode, ctx: RenderCtx): string {
+  const nested = flattenFlow(block.children, 0);
+  if (nested.length > 0) {
+    return nested.map((item) => renderLayoutInline(item.node, ctx)).join("");
+  }
+  return renderChildren(block.children, createTraversalState(), ctx);
+}
+
 function renderFloat(block: BlockNode, kind: string, parentState: TraversalState, ctx: RenderCtx): string {
   const variant = kind.slice("Float ".length).trim() || "figure";
-  const caption = collectBlocks(block, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
-  const tabular = collectBlocks(block, (b) => b.tag === "inset" && insetKind(b) === "Tabular");
-  const graphics = collectBlocks(
-    block,
-    (b) => b.tag === "inset" && insetKind(b) === "Graphics",
-    (b) => b.tag === "inset" && insetKind(b) === "Tabular",
-  );
-  let body = "";
-  for (const g of graphics) body += renderGraphics(g, ctx);
-  for (const t of tabular) body += renderTabular(t, parentState, ctx);
-  let cap = "";
-  for (const c of caption) cap += renderInsetLayouts(c, parentState, ctx);
   let prefix = "";
   if (variant === "figure") {
     ctx.figure += 1;
@@ -821,8 +848,18 @@ function renderFloat(block: BlockNode, kind: string, parentState: TraversalState
     ctx.table += 1;
     prefix = `Table ${ctx.table}: `;
   }
-  const capHtml = cap ? `<figcaption>${prefix}${cap}</figcaption>` : "";
-  return `<figure class="float-${layoutSlug(variant)}">${body}${capHtml}</figure>`;
+  let html = `<figure class="float-${layoutSlug(variant)}">`;
+  for (const item of flattenFlow(block.children, 0)) {
+    const captions = collectBlocks(item.node, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
+    if (captions.length > 0) {
+      const cap = captions.map((c) => renderCaptionInline(c, ctx)).join("");
+      html += `<figcaption>${prefix}${cap}</figcaption>`;
+      continue;
+    }
+    html += `<div class="float-body">${renderLayoutInline(item.node, ctx)}</div>`;
+  }
+  html += "</figure>";
+  return html;
 }
 
 function renderGraphics(block: BlockNode, ctx: RenderCtx): string {
@@ -1152,6 +1189,7 @@ function mapRole(node: SemNode): SemNode {
     if (classes.includes("float-figure") || classes.includes("float-table")) {
       return { role: "figure", children };
     }
+    if (classes.includes("float-body")) return { role: "wrap", children };
     if (classes.includes("abstract")) return { role: "abstract", children };
     if (classes.includes("author")) return { role: "author", children };
     if (classes.includes("date")) return { role: "date", children };
