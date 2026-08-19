@@ -181,7 +181,7 @@ Deno.test("CLI - no help output references the removed lq selector --help", { ti
 /** High-risk facts each command page must document (edge-case checklist). */
 const PAGE_FACTS: [string, string[]][] = [
   ["init", ["--global", "--refresh", "auto-detect", "--track-changes", "save-reload"]],
-  ["schema", ["documentLayouts", "insetLayouts", "commandInsetSubtypes", "headingHierarchy", "textclass", "insetCatalog"]],
+  ["schema", ["documentLayouts", "insetLayouts", "insets", "headingHierarchy", "textclass", "kind"]],
   ["dump", ["--depth", "--toc", "TocLevel", "truncated"]],
   ["preview", ["lyx-preview/live-1", "sha256", "raw-file-bytes", "does not mutate"]],
   ["read", ["--count", "--text-only", "change_deleted", "empty result"]],
@@ -822,9 +822,18 @@ Deno.test("CLI - schema fallback auto-detects layouts", { timeout: 10000 }, asyn
   // runCliTest provides a clean config with no layoutsDir set.
   // schema should auto-detect the LyX layouts path.
   const result = await runCliTest(["schema", FIXTURE]);
-  const data = result.data as { headingHierarchy?: Array<{ layout: string; level: number }> };
+  const data = result.data as {
+    headingHierarchy?: Array<{ layout: string; level: number }>;
+    insets?: Array<{ name: string; kind: string; subtypes: string[] }>;
+    insetCatalog?: unknown;
+    commandInsetSubtypes?: unknown;
+  };
   assertEquals(data.headingHierarchy !== undefined, true);
   assertEquals((data.headingHierarchy!).length > 0, true, "headingHierarchy should not be empty");
+  assertEquals(Array.isArray(data.insets), true);
+  assertEquals(data.insets!.some((e) => e.name === "Formula" && e.kind === "content"), true);
+  assertEquals(data.insetCatalog, undefined);
+  assertEquals(data.commandInsetSubtypes, undefined);
 });
 
 // ---------------------------------------------------------------------------

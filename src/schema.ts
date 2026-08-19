@@ -1,7 +1,6 @@
 import * as path from "@std/path";
 import {
   KNOWN_INSET_TYPES,
-  KNOWN_COMMAND_INSET_TYPES,
   INLINE_PROPERTIES,
   INSET_CATALOG,
   type InsetMeta,
@@ -16,16 +15,12 @@ export interface LyxSchema {
   textclass: string;
   documentLayouts: string[];
   insetLayouts: string[];
-  insets: string[];
-  insetCatalog: InsetMeta[];
-  commandInsetSubtypes: string[];
+  insets: InsetMeta[];
   inlineProperties: readonly string[];
   headingHierarchy: HeadingLevel[];
 }
 
 export const INSET_LAYOUTS = ["Plain Layout"];
-
-export const INSETS: string[] = [...KNOWN_INSET_TYPES];
 
 export { INLINE_PROPERTIES, INSET_CATALOG };
 
@@ -171,7 +166,7 @@ export async function getSchemaForClass(textclass: string, layoutsDir: string): 
   }
 
   // Merge hardcoded insets with per-class custom InsetLayout declarations
-  const allInsets = new Set(INSETS);
+  const allInsets = new Set(KNOWN_INSET_TYPES);
   for (const s of result.customInsets) {
     allInsets.add(s);
   }
@@ -189,7 +184,7 @@ export async function getSchemaForClass(textclass: string, layoutsDir: string): 
   headingHierarchy.sort((a, b) => a.tocLevel - b.tocLevel);
 
   const catalogByName = new Map(INSET_CATALOG.map((e) => [e.name, e]));
-  const insetCatalog: InsetMeta[] = Array.from(allInsets).sort().map((name) => {
+  const insets: InsetMeta[] = Array.from(allInsets).sort().map((name) => {
     const builtin = catalogByName.get(name);
     if (builtin) return { name: builtin.name, kind: builtin.kind, subtypes: [...builtin.subtypes] };
     return { name, kind: "collapsible", subtypes: [] };
@@ -199,9 +194,7 @@ export async function getSchemaForClass(textclass: string, layoutsDir: string): 
     textclass,
     documentLayouts: Array.from(result.allowed).sort(),
     insetLayouts: INSET_LAYOUTS,
-    insets: Array.from(allInsets).sort(),
-    insetCatalog,
-    commandInsetSubtypes: [...KNOWN_COMMAND_INSET_TYPES].sort(),
+    insets,
     inlineProperties: INLINE_PROPERTIES,
     headingHierarchy,
   };

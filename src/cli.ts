@@ -1,11 +1,11 @@
 import { parse } from "./parser.ts";
 import { serialize } from "./serializer.ts";
 import { query, parseSelector, buildScopePredicate, buildTraversalStateIndex, selectorNoteScope, isValidNthMatchFormula, type ScopePredicate, type SelectorPart } from "./query.ts";
-import { getSchemaForClass, INSET_LAYOUTS, INSETS, INSET_CATALOG, INLINE_PROPERTIES } from "./schema.ts";
+import { getSchemaForClass, INSET_LAYOUTS, INSET_CATALOG, INLINE_PROPERTIES } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode, TextNode } from "./ast.ts";
-import { validateInsetType, KNOWN_COMMAND_INSET_TYPES } from "./registry.ts";
+import { validateInsetType } from "./registry.ts";
 import {
   advanceChangeDepths,
   concatenateTextNodes,
@@ -1473,9 +1473,7 @@ function foldNegativeDepth(args: string[]): string[] {
           textclass: textclassNode.value,
           documentLayouts: [],
           insetLayouts: INSET_LAYOUTS,
-          insets: INSETS,
-          insetCatalog: [...INSET_CATALOG],
-          commandInsetSubtypes: [...KNOWN_COMMAND_INSET_TYPES].sort(),
+          insets: [...INSET_CATALOG],
           inlineProperties: INLINE_PROPERTIES,
           headingHierarchy: DEFAULT_HEADING_HIERARCHY,
         },

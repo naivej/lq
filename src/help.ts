@@ -410,7 +410,7 @@ export const HELP_PAGES: HelpPage[] = [
           "Structural tags for block and property nodes. Use with an optional bracket argument. Valid argument values can be discovered with `lq schema`.\n\n" +
           "- `layout[...]` takes a document layout from `documentLayouts` or an inset layout from `insetLayouts`\n" +
           "- `inset[...]` takes an inset type from `insets`\n" +
-          "- `inset[CommandInset ...]` takes a CommandInset subtype from `commandInsetSubtypes`\n" +
+          "- `inset[CommandInset ...]` takes a CommandInset subtype from that entry's `subtypes`\n" +
           "- `property[...]` takes an inline property key from `inlineProperties`\n\n" +
           "Content tag for text nodes:\n\n" +
           "- `text`: prose, raw inset payload, preamble data, file `#` comments, or metadata text depending on the owner.",
@@ -566,16 +566,17 @@ export const HELP_PAGES: HelpPage[] = [
       ),
       sec(
         "Output",
-        "The response's 'data' contains seven categories:\n" +
+        "The response's 'data' contains five categories:\n" +
           "  documentLayouts      Styles valid for this document class (e.g. Section, Standard).\n" +
           "  insetLayouts         Layouts valid inside insets (e.g. Plain Layout).\n" +
-          "  insets               Valid inset type names (e.g. Formula, Foot, CommandInset).\n" +
-          "  insetCatalog         Each inset's CST kind and closed subtypes. Describes the file\n" +
-          "                       shape for writing. kind is collapsible, command,\n" +
-          "                       content, tabular, spacing, formatting, or misc. subtypes is a\n" +
-          "                       closed list when LyX has one (Note, CommandInset, Phantom);\n" +
-          "                       otherwise empty. Class InsetLayout names are collapsible.\n" +
-          "  commandInsetSubtypes Valid CommandInset subtypes (e.g. citation, ref, label).\n" +
+          "  insets               Valid insets. Use kind to choose the file shape when writing:\n" +
+          "                       collapsible  status line, then nested layouts\n" +
+          "                       command      CommandInset params (one per line)\n" +
+          "                       content      type-specific payload after the header\n" +
+          "                       tabular      Tabular metadata block\n" +
+          "                       spacing      short spacing inset\n" +
+          "                       formatting   short inline inset\n" +
+          "                       misc         remaining specialized shapes\n" +
           "  inlineProperties     Valid inline property keys (e.g. family, lang).\n" +
           "  headingHierarchy     Heading layouts with their TocLevel values.\n\n" +
           "The document's 'textclass' (e.g. article, book) selects the matching .layout\n" +

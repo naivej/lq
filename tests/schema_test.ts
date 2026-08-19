@@ -26,17 +26,17 @@ Deno.test("Schema parsing for book class", async () => {
 
   // Verify static global constructs are present
   assert(schema.insetLayouts.includes("Plain Layout"));
-  assert(schema.insets.includes("Formula"));
   assert(schema.inlineProperties.includes("change_inserted"));
+  assertEquals("insetCatalog" in schema, false, "catalog payload is insets, not insetCatalog");
+  assertEquals("commandInsetSubtypes" in schema, false, "CommandInset subtypes live on insets");
 
-  const formula = schema.insetCatalog.find((e) => e.name === "Formula");
-  assert(formula !== undefined, "insetCatalog should include Formula");
+  const formula = schema.insets.find((e) => e.name === "Formula");
+  assert(formula !== undefined, "insets should include Formula");
   assertEquals(formula.kind, "content");
-  const note = schema.insetCatalog.find((e) => e.name === "Note");
+  const note = schema.insets.find((e) => e.name === "Note");
   assertEquals(note?.kind, "collapsible");
   assertEquals(note?.subtypes, ["Note", "Comment", "Greyedout"]);
-  const command = schema.insetCatalog.find((e) => e.name === "CommandInset");
+  const command = schema.insets.find((e) => e.name === "CommandInset");
   assertEquals(command?.kind, "command");
   assert(command?.subtypes.includes("citation"), "CommandInset subtypes include citation");
-  assertEquals(schema.insetCatalog.length, schema.insets.length);
 });
