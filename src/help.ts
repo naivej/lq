@@ -5,9 +5,10 @@
  * derived from `id` and never stored, so a page ID cannot be spelled
  * inconsistently between the map, the router, and the links.
  *
- * Phase 0 (dev log 113): types, the 18-page registry, and navigation
+ * Phase 0 (dev log 113): types, the page registry, and navigation
  * helpers. Phase 1 (dev log 114): content migration — page `sections` and
- * `furtherReading` transcribed from the help draft.
+ * `furtherReading` transcribed from the help draft. Live preview (dev log 129)
+ * adds `commands/preview`.
  */
 
 export type PageGroup = "commands" | "model" | "concepts";
@@ -626,6 +627,55 @@ export const HELP_PAGES: HelpPage[] = [
     furtherReading: [
       fr("model/cst", "CST structure"),
       fr("concepts/private-notes", "note nodes in CST and TOC views"),
+    ],
+  },
+  {
+    id: "commands/preview",
+    title: "render the saved document as the Live reader projection",
+    sections: [
+      sec(
+        "Purpose",
+        "lq preview - Render the saved document as the Live reader projection.",
+      ),
+      sec(
+        "Usage",
+        "  lq preview <file>",
+      ),
+      sec(
+        "Arguments",
+        "  <file>      The path to the saved .lyx file. The command reads disk\n" +
+          "              contents only; it does not accept unsaved editor text.",
+      ),
+      sec(
+        "Output",
+        "One JSON object on stdout:\n" +
+          "  contract       Always 'lyx-preview/live-1'.\n" +
+          "  projection     Always 'live'.\n" +
+          "  html           Escaped reader-facing HTML for the supported Live corpus.\n" +
+          "  source         Saved-source identity: absolute path, SHA-256 of raw file\n" +
+          "                 bytes (hashAlgorithm 'sha256', hashInput 'raw-file-bytes'),\n" +
+          "                 diskHash, lineEnding (lf|crlf|mixed), lineCount, and\n" +
+          "                 fresh=true (this command always reads the saved file).\n" +
+          "  capabilities   review, mapping, outline, editing, and sourceReveal are\n" +
+          "                 false. Those fields are omitted, not stubbed as empty arrays.\n" +
+          "  diagnostics    Structured notes such as omitted ERT or unknown insets.\n" +
+          "  warnings       Non-fatal messages from the CLI envelope.\n\n" +
+          "A parse or file error is the usual {code, message} JSON object and a\n" +
+          "non-zero exit. The command does not mutate the file.",
+      ),
+      sec(
+        "Constraints",
+        "- Deleted tracked text is omitted; inserted text is rendered as current text.\n" +
+          "- ERT and private notes (Note, Comment) are omitted, matching native XHTML.\n" +
+          "- Formulas are escaped source, not executed or converted.\n" +
+          "- Unknown insets become an escaped, marked fallback plus a diagnostic.\n" +
+          "- No source tokens, selection references, or edit commands are emitted.",
+      ),
+    ],
+    furtherReading: [
+      fr("model/cst", "the tree this projection is built from"),
+      fr("concepts/private-notes", "notes omitted from the reader projection"),
+      fr("concepts/tracked-changes", "deleted regions omitted like native XHTML"),
     ],
   },
   {

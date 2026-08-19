@@ -1,12 +1,113 @@
-// LyX Preview — structural read-only preview of .lyx files inside VS Code.
-// Phase A1 tooling stub: compiles and lints; the preview webview shell and
-// title-bar toggle land next (dev_logs/lq_vscode/v0.1/001_lyx_preview_plan.md).
 import * as vscode from "vscode";
+import { AdapterError, PreviewSession } from "./previewSession";
+import { discoverLqBinary, runLivePreview } from "./lqClient";
+import { renderWebviewHtml } from "./webview";
 
-export function activate(_context: vscode.ExtensionContext): void {
-  // Placeholder: no contributions yet.
+const VIEW_TYPE = "lyxPreview.live";
+
+class LivePreviewPanel {
+  private static current: LivePreviewPanel | undefined;
+  private readonly disposables: vscode.Disposable[] = [];
+  private readonly session = new PreviewSession();
+  private pending = false;
+
+  private constructor(
+    private readonly panel: vscode.WebviewPanel,
+    private readonly document: vscode.TextDocument,
+  ) {
+    this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+    this.disposables.push(vscode.workspace.onDidSaveTextDocument((saved) => {
+      if (saved.uri.toString() === this.document.uri.toString()) {
+        void this.refresh();
+      }
+    }));
+    this.disposables.push(vscode.workspace.onDidChangeTextDocument((change) => {
+      if (change.document.uri.toString() !== this.document.uri.toString()) return;
+      if (change.contentChanges.length === 0) return;
+      this.session.markStale();
+      this.paint();
+    }));
+    this.paint();
+    void this.refresh();
+  }
+
+  static createOrShow(document: vscode.TextDocument): void {
+    const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.Beside;
+    if (LivePreviewPanel.current) {
+      LivePreviewPanel.current.panel.reveal(column);
+      if (LivePreviewPanel.current.document.uri.toString() !== document.uri.toString()) {
+        LivePreviewPanel.current.dispose();
+        LivePreviewPanel.createOrShow(document);
+        return;
+      }
+      void LivePreviewPanel.current.refresh();
+      return;
+    }
+    const panel = vscode.window.createWebviewPanel(
+      VIEW_TYPE,
+      titleFor(document),
+      column,
+      { enableScripts: false, retainContextWhenHidden: true, localResourceRoots: [] },
+    );
+    LivePreviewPanel.current = new LivePreviewPanel(panel, document);
+  }
+
+  private async refresh(): Promise<void> {
+    const generation = this.session.nextGeneration();
+    this.pending = true;
+    this.paint();
+    const timeoutMs = vscode.workspace.getConfiguration("lyx-preview", this.document.uri).get<number>("timeoutMs") ?? 30000;
+    try {
+      const lqPath = discoverLqBinary(this.document.uri);
+      const render = await runLivePreview(lqPath, this.document.uri.fsPath, timeoutMs);
+      if (!this.session.applySuccess(generation, render)) return;
+      this.pending = false;
+      this.paint();
+    } catch (error) {
+      if (!this.session.applyFailure(generation)) return;
+      this.pending = false;
+      const message = error instanceof AdapterError
+        ? error.message
+        : error instanceof Error ? error.message : String(error);
+      this.paint(message);
+    }
+  }
+
+  private paint(error?: string): void {
+    this.panel.title = titleFor(this.document);
+    this.panel.webview.html = renderWebviewHtml({
+      title: this.panel.title,
+      stale: this.session.stale,
+      pending: this.pending,
+      error,
+      render: this.session.lastValid,
+    });
+  }
+
+  private dispose(): void {
+    if (LivePreviewPanel.current === this) LivePreviewPanel.current = undefined;
+    for (const d of this.disposables) d.dispose();
+  }
+}
+
+function titleFor(document: vscode.TextDocument): string {
+  const name = document.fileName.split(/[/\\]/).pop() ?? document.fileName;
+  return `LyX Live: ${name}`;
+}
+
+export function activate(context: vscode.ExtensionContext): void {
+  context.subscriptions.push(
+    vscode.commands.registerCommand("lyx-preview.open", () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || !editor.document.fileName.toLowerCase().endsWith(".lyx")) {
+        void vscode.window.showWarningMessage("Open a .lyx document before starting LyX Live Preview.");
+        return;
+      }
+      LivePreviewPanel.createOrShow(editor.document);
+    }),
+  );
 }
 
 export function deactivate(): void {
-  // Nothing to clean up yet.
+  // Webview panels dispose through VS Code.
 }

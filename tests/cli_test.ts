@@ -55,6 +55,14 @@ Deno.test("CLI - global help is the home page map", { timeout: 10000 }, async ()
 // ---------------------------------------------------------------------------
 // 2. Per-command help
 // ---------------------------------------------------------------------------
+Deno.test("CLI - per-command help (preview)", { timeout: 10000 }, async () => {
+  const { stdout } = await runCliRaw(["preview", "--help"]);
+  assertStringIncludes(stdout, "lq preview");
+  assertStringIncludes(stdout, "<file>");
+  assertStringIncludes(stdout, "lyx-preview/live-1");
+  assertStringIncludes(stdout, "sha256");
+});
+
 Deno.test("CLI - per-command help (read)", { timeout: 10000 }, async () => {
   const { stdout } = await runCliRaw(["read", "--help"]);
   assertStringIncludes(stdout, "lq read");
@@ -120,7 +128,7 @@ Deno.test("CLI - invalid --rich value fails", { timeout: 10000 }, async () => {
 // ---------------------------------------------------------------------------
 // Phase 4 — comprehensive help navigation and content
 // ---------------------------------------------------------------------------
-const COMMAND_REACHES = ["init", "schema", "dump", "read", "bib", "set", "delete", "insert", "undo"];
+const COMMAND_REACHES = ["init", "schema", "dump", "preview", "read", "bib", "set", "delete", "insert", "undo"];
 const TOPIC_REACHES = [
   "cst",
   "guarantees",
@@ -175,6 +183,7 @@ const PAGE_FACTS: [string, string[]][] = [
   ["init", ["--global", "--refresh", "auto-detect", "--track-changes", "save-reload"]],
   ["schema", ["documentLayouts", "insetLayouts", "commandInsetSubtypes", "headingHierarchy", "textclass"]],
   ["dump", ["--depth", "--toc", "TocLevel", "truncated"]],
+  ["preview", ["lyx-preview/live-1", "sha256", "raw-file-bytes", "does not mutate"]],
   ["read", ["--count", "--text-only", "change_deleted", "empty result"]],
   ["bib", ["--search", ".bib"]],
   ["set", ["--find", "--replace-all", "inset is rejected"]],

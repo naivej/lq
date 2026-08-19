@@ -1,7 +1,7 @@
 {
   "name": "lyx-preview",
   "displayName": "LyX Preview",
-  "description": "Structural read-only preview of .lyx files with selection-to-source mapping and tracked-change review.",
+  "description": "Read-only Live preview of saved .lyx files.",
   "version": "0.1.0",
   "publisher": "naivej",
   "license": "MIT",
@@ -12,12 +12,66 @@
     "Other"
   ],
   "main": "./out/extension.js",
-  "activationEvents": [],
-  "contributes": {},
+  "activationEvents": [
+    "onLanguage:lyx"
+  ],
+  "contributes": {
+    "languages": [
+      {
+        "id": "lyx",
+        "aliases": [
+          "LyX",
+          "lyx"
+        ],
+        "extensions": [
+          ".lyx"
+        ],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "commands": [
+      {
+        "command": "lyx-preview.open",
+        "title": "LyX Preview: Open Live Preview",
+        "category": "LyX Preview"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "lyx-preview.open",
+          "when": "resourceExtname == .lyx",
+          "group": "navigation"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "lyx-preview.open",
+          "when": "resourceExtname == .lyx"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "LyX Preview",
+      "properties": {
+        "lyx-preview.lqPath": {
+          "type": "string",
+          "default": "",
+          "description": "Path to the compiled lq binary. When empty, the extension uses LQ_PATH, a workspace lq/bin binary, or lq on PATH."
+        },
+        "lyx-preview.timeoutMs": {
+          "type": "number",
+          "default": 30000,
+          "description": "Milliseconds to wait for lq preview before terminating the process."
+        }
+      }
+    }
+  },
   "scripts": {
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint .",
+    "test": "npm run compile && node --test out/previewSession.test.js",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

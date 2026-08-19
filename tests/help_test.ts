@@ -19,7 +19,7 @@ import { renderPage, renderPageRich, renderPageText } from "../src/help_render.t
 // deno-lint-ignore no-control-regex
 const stripAnsi = (s: string): string => s.replace(/\x1b\[[0-9;]*m/g, "");
 
-/** The 18-page page map from the help draft, exactly. */
+/** The catalog page map, including commands/preview (dev log 129). */
 const EXPECTED_IDS = [
   "home",
   "model/cst",
@@ -33,6 +33,7 @@ const EXPECTED_IDS = [
   "commands/init",
   "commands/schema",
   "commands/dump",
+  "commands/preview",
   "commands/read",
   "commands/bib",
   "commands/set",
@@ -41,7 +42,7 @@ const EXPECTED_IDS = [
   "commands/undo",
 ];
 
-Deno.test("help catalog - page map matches the draft (18 pages)", () => {
+Deno.test("help catalog - page map matches the draft (19 pages)", () => {
   const ids = HELP_PAGES.map((p) => p.id).sort();
   assertEquals(ids, [...EXPECTED_IDS].sort());
 });
@@ -59,8 +60,8 @@ Deno.test("help catalog - reaches are unique (one canonical lq help <page> form)
 Deno.test("help catalog - command aliases are unique and only on command pages", () => {
   const aliases = HELP_PAGES.map((p) => aliasOf(p.id)).filter((a): a is string => a !== undefined);
   assertEquals(new Set(aliases).size, aliases.length);
-  // 9 command pages (init schema dump read bib set delete insert undo)
-  assertEquals(aliases.length, 9);
+  // 10 command pages (init schema dump preview read bib set delete insert undo)
+  assertEquals(aliases.length, 10);
 });
 
 Deno.test("help catalog - every page has a non-empty title", () => {
@@ -98,10 +99,10 @@ Deno.test("help catalog - grouped map covers all non-home pages", () => {
   assertEquals(groups, ["model", "concepts", "commands"]);
   const total = grouped.reduce((n, g) => n + g.pages.length, 0);
   assertEquals(total, HELP_PAGES.length - 1); // home is excluded
-  // 2 model + 6 concepts + 9 commands
+  // 2 model + 6 concepts + 10 commands
   assertEquals(grouped[0].pages.length, 2);
   assertEquals(grouped[1].pages.length, 6);
-  assertEquals(grouped[2].pages.length, 9);
+  assertEquals(grouped[2].pages.length, 10);
 });
 
 // --- Phase 1: content migration invariants (dev log 113) ---

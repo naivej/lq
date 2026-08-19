@@ -8,7 +8,7 @@ import noUnsanitized from "eslint-plugin-no-unsanitized";
 
 export default tseslint.config(
   {
-    ignores: ["out/", "dist/", "node_modules/", "eslint.config.mjs"],
+    ignores: ["out/", "dist/", "node_modules/", "eslint.config.mjs", "src/**/*.test.ts"],
   },
   js.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,

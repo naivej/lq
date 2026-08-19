@@ -42,6 +42,7 @@ import { sendLyxCommands, checkLyxServerAvailable } from "./lyxserver.ts";
 import * as path from "@std/path";
 import { HOME_PAGE, findByAlias, findByReach } from "./help.ts";
 import { renderPage, type RichMode } from "./help_render.ts";
+import { buildLiveResponse } from "./preview.ts";
 
 /**
  * Map every text node in the tree to its parent children list + index.
@@ -959,7 +960,7 @@ function printHelpPage(page: (typeof HOME_PAGE), rich: RichMode): void {
 // handled earlier in runCli and never reach this set. Rejecting unknown
 // commands up front stops a bad command name from falling through to a
 // misleading per-command error (test_report_53 D1).
-const KNOWN_COMMANDS = new Set(["init", "dump", "bib", "schema", "read", "set", "delete", "insert", "undo"]);
+const KNOWN_COMMANDS = new Set(["init", "dump", "bib", "schema", "read", "preview", "set", "delete", "insert", "undo"]);
 
 export async function runCli(args: string[]) {
 
@@ -1143,7 +1144,7 @@ export async function runCli(args: string[]) {
   // Commands without their own flag parsing must not silently swallow stray
   // `--` tokens (test_report_38 F7). Flag-bearing commands (init/dump/bib/
   // set/insert) validate via assertNoUnknownFlags at their parse site.
-  if (["read", "delete", "undo", "schema"].includes(command)) {
+  if (["read", "delete", "undo", "schema", "preview"].includes(command)) {
     assertNoStrayFlags(selector, restArgs, command);
   }
   
@@ -1479,6 +1480,22 @@ function foldNegativeDepth(args: string[]): string[] {
         },
       });
     }
+    return;
+  }
+
+  if (command === "preview") {
+    if (selector && !selector.startsWith("--")) {
+      printError(
+        "INVALID_FLAG",
+        "lq preview does not accept extra arguments. Usage: lq preview <file>. Run 'lq preview --help'.",
+      );
+    }
+    const previewArgs = selector ? [selector, ...restArgs] : restArgs;
+    const previewFlags = parseArgs(previewArgs, {});
+    assertNoUnknownFlags(previewFlags, [], "preview");
+    const result = await buildLiveResponse(path.resolve(filePath), ast, text);
+    for (const warning of result.warnings) pushWarning(warning);
+    printJson(result.response);
     return;
   }
 
