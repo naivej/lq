@@ -67,4 +67,8 @@ Deno.test("Layout HTML lookup is renderer-private and resolves CopyStyle", async
     "ol",
     "header module Enumerate-Resume CopyStyle Enumerate must resolve HTMLTag",
   );
+  const theorems = await getLayoutHtmlForClass("scrbook", layoutsDir, ["theorems-ams"]);
+  assertEquals(theorems.get("Theorem")?.labelType?.toLowerCase(), "static");
+  assertEquals(theorems.get("Theorem")?.labelString, "Theorem \\thetheorem.");
+  assertEquals(theorems.get("Theorem")?.labelCounter, "theorem");
 });

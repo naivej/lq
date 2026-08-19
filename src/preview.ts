@@ -209,9 +209,12 @@ interface RenderCtx {
   citedKeys: string[];
   bibfiles: string;
   btprint: string;
+  biboptions: string;
   outline: OutlineEntry[];
   layoutHtml: Map<string, LayoutHtml> | null;
   nomencl: NomenclEntry[];
+  layoutCounters: Map<string, number>;
+  bibitem: number;
 }
 
 interface NomenclEntry {
@@ -311,6 +314,21 @@ function layoutRole(name: string, html: Map<string, LayoutHtml> | null): LayoutR
 
 function role(name: string, ctx: RenderCtx): LayoutRole {
   return layoutRole(name, ctx.layoutHtml);
+}
+
+function staticLayoutLabel(name: string, ctx: RenderCtx): string {
+  const spec = ctx.layoutHtml?.get(name);
+  if (!spec || spec.labelType?.toLowerCase() !== "static") return "";
+  let fmt = spec.labelString ?? "";
+  if (fmt === name) return "";
+  if (spec.labelCounter) {
+    const n = (ctx.layoutCounters.get(spec.labelCounter) ?? 0) + 1;
+    ctx.layoutCounters.set(spec.labelCounter, n);
+    fmt = fmt.replace(/\\the[A-Za-z]+/g, String(n));
+  }
+  fmt = fmt.replace(/\\the[A-Za-z]+/g, "").replace(/\s+/g, " ").trim();
+  if (!fmt) return "";
+  return `<span class="layout-label">${escapeLiveHtml(fmt)}</span> `;
 }
 
 const SKIP_LAYOUT_PROPS = new Set([
@@ -511,6 +529,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       if (kind.startsWith("CommandInset bibtex")) {
         ctx.bibfiles = findProperty(n, "bibfiles") ?? ctx.bibfiles;
         ctx.btprint = findProperty(n, "btprint") ?? ctx.btprint;
+        ctx.biboptions = findProperty(n, "options") ?? ctx.biboptions;
       }
       if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) {
         const entry = collectNomenclEntry(n);
@@ -531,13 +550,20 @@ async function loadBibliography(ctx: RenderCtx): Promise<void> {
   const dir = path.dirname(ctx.filePath);
   for (const raw of ctx.bibfiles.split(/\s+/).filter(Boolean)) {
     const name = raw.toLowerCase().endsWith(".bib") ? raw : `${raw}.bib`;
-    const full = path.resolve(dir, name);
-    try {
-      const parsed = parseBibtex(await Deno.readTextFile(full));
-      for (const c of parsed) ctx.bib.set(c.key, c);
-    } catch {
-      warnOnce(ctx, `Could not read bibliography file '${name}'.`);
+    const tries = [path.resolve(dir, name)];
+    if (ctx.systemDocDir) tries.push(path.resolve(ctx.systemDocDir, name));
+    let loaded = false;
+    for (const full of tries) {
+      try {
+        const parsed = parseBibtex(await Deno.readTextFile(full));
+        for (const c of parsed) ctx.bib.set(c.key, c);
+        loaded = true;
+        break;
+      } catch {
+        /* try the next location */
+      }
     }
+    if (!loaded) warnOnce(ctx, `Could not read bibliography file '${name}'.`);
   }
 }
 
@@ -621,9 +647,12 @@ export async function renderLiveHtml(
     citedKeys: [],
     bibfiles: "",
     btprint: "",
+    biboptions: "",
     outline: [],
     layoutHtml: await loadLayoutHtml(ast, layoutsDir),
     nomencl: [],
+    layoutCounters: new Map(),
+    bibitem: 0,
   };
   indexDocument(findBody(ast), ctx);
   await loadBibliography(ctx);
@@ -752,6 +781,17 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
       i = next;
       continue;
     }
+    if (item.layout === "Bibliography") {
+      const [chunk, next] = renderBibEnv(items, i, ctx);
+      html += chunk;
+      i = next;
+      continue;
+    }
+    if (item.layout === "Initial") {
+      html += renderInitial(item.node, ctx);
+      i++;
+      continue;
+    }
     const inner = renderLayoutInline(item.node, ctx);
     if (inner.trim().length === 0) {
       i++;
@@ -760,7 +800,11 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
     if (/^<figure\b[\s\S]*<\/figure>$/.test(inner.trim())) {
       html += inner;
     } else {
-      html += `<div class="${layoutSlug(item.layout)}">${inner}</div>`;
+      const firstOfRun = i === 0 ||
+        items[i - 1].layout !== item.layout ||
+        items[i - 1].depth !== item.depth;
+      const label = firstOfRun ? staticLayoutLabel(item.layout, ctx) : "";
+      html += `<div class="${layoutSlug(item.layout)}">${label}${inner}</div>`;
     }
     i++;
   }
@@ -772,24 +816,55 @@ function isListLayout(name: string, ctx: RenderCtx): boolean {
   return role(name, ctx).kind === "list";
 }
 
-function renderList(items: FlowItem[], start: number, ctx: RenderCtx): [string, number] {
+const ENUM_CLASS = ["enumi", "enumii", "enumiii", "enumiv"] as const;
+
+function isSkippableFlow(item: FlowItem, ctx: RenderCtx): boolean {
+  if (role(item.layout, ctx).kind !== "flow") return false;
+  return renderLayoutInline(item.node, ctx).trim().length === 0;
+}
+
+function listOpenTag(spec: { tag: string }, layout: string, enumDepth: number): string {
+  if (layout === "Description" || spec.tag === "dl") return '<dl class="description">';
+  if (spec.tag === "ol") return `<ol class="${ENUM_CLASS[Math.min(enumDepth, ENUM_CLASS.length - 1)]}">`;
+  return `<${spec.tag}>`;
+}
+
+function renderList(
+  items: FlowItem[],
+  start: number,
+  ctx: RenderCtx,
+  enumDepth = 0,
+): [string, number] {
   const first = items[start];
   const spec = role(first.layout, ctx);
   if (spec.kind !== "list") return ["", start];
   const depth = first.depth;
+  const childEnum = spec.tag === "ol" ? enumDepth + 1 : enumDepth;
   let i = start;
-  let html = `<${spec.tag}>`;
+  let html = listOpenTag(spec, first.layout, enumDepth);
+  const nestFrom = (at: number): [string, number] => renderList(items, at, ctx, childEnum);
   while (i < items.length) {
     const item = items[i];
     if (item.depth < depth) break;
     if (item.depth === depth) {
-      if (item.layout !== first.layout) break;
+      if (item.layout !== first.layout) {
+        if (isSkippableFlow(item, ctx)) {
+          i++;
+          continue;
+        }
+        break;
+      }
       if (first.layout === "Description" || spec.tag === "dl") {
         const { label, rest } = splitDescription(item.node, ctx);
         html += `<dt>${label}</dt><dd>${rest}`;
         i++;
-        if (i < items.length && items[i].depth > depth && isListLayout(items[i].layout, ctx)) {
-          const [nested, next] = renderList(items, i, ctx);
+        while (i < items.length && items[i].depth > depth) {
+          if (isSkippableFlow(items[i], ctx)) {
+            i++;
+            continue;
+          }
+          if (!isListLayout(items[i].layout, ctx)) break;
+          const [nested, next] = nestFrom(i);
           html += nested;
           i = next;
         }
@@ -797,15 +872,22 @@ function renderList(items: FlowItem[], start: number, ctx: RenderCtx): [string, 
       } else {
         html += `<${spec.item}>${renderLayoutInline(item.node, ctx)}`;
         i++;
-        if (i < items.length && items[i].depth > depth && isListLayout(items[i].layout, ctx)) {
-          const [nested, next] = renderList(items, i, ctx);
+        while (i < items.length && items[i].depth > depth) {
+          if (isSkippableFlow(items[i], ctx)) {
+            i++;
+            continue;
+          }
+          if (!isListLayout(items[i].layout, ctx)) break;
+          const [nested, next] = nestFrom(i);
           html += nested;
           i = next;
         }
         html += `</${spec.item}>`;
       }
+    } else if (isSkippableFlow(item, ctx)) {
+      i++;
     } else if (isListLayout(item.layout, ctx)) {
-      const [nested, next] = renderList(items, i, ctx);
+      const [nested, next] = nestFrom(i);
       html += nested;
       i = next;
     } else {
@@ -1089,6 +1171,34 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Flex Strong" || kind.startsWith("Flex Strong")) {
     return `<strong>${renderFlexInline(block, ctx)}</strong>`;
+  }
+  if (kind.startsWith("Flex Multiple")) {
+    const cols = argumentText(block, "1") || "2";
+    const n = /^\d+$/.test(cols.trim()) ? cols.trim() : "2";
+    const preface = argumentText(block, "2");
+    const body = renderInsetLayouts(block, parentState, ctx);
+    const head = preface ? `<div class="multicol-preface">${escapeLiveHtml(preface)}</div>` : "";
+    return `${head}<div class="multicol" style="column-count: ${escapeLiveHtml(n)}">${body}</div>`;
+  }
+  if (kind.startsWith("Flex Rotatebox")) {
+    const angle = argumentText(block, "2") || "0";
+    return `<span class="rotatebox" style="display:inline-block;transform:rotate(${escapeLiveHtml(angle)}deg)">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (kind.startsWith("Flex Scalebox")) {
+    const h = argumentText(block, "1") || "1";
+    const v = argumentText(block, "2") || h;
+    return `<span class="scalebox" style="display:inline-block;transform:scale(${escapeLiveHtml(h)}, ${escapeLiveHtml(v)})">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (kind.startsWith("Flex Resizebox")) {
+    const w = argumentText(block, "1");
+    const h = argumentText(block, "2");
+    const styles: string[] = ["display:inline-block"];
+    if (w) styles.push(`width:${w}`);
+    if (h && h !== "!") styles.push(`height:${h}`);
+    return `<span class="resizebox" style="${escapeLiveHtml(styles.join(";"))}">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (kind.startsWith("Flex Reflectbox")) {
+    return `<span class="reflectbox" style="display:inline-block;transform:scaleX(-1)">${renderFlexInline(block, ctx)}</span>`;
   }
   if (kind === "Flex URL" || kind.startsWith("Flex URL")) {
     const url = flattenFlow(block.children, 0).map((item) => collectVisibleText(item.node)).join("").trim();
@@ -1495,16 +1605,73 @@ function renderToc(ctx: RenderCtx): string {
   return html;
 }
 
-function renderBibliography(ctx: RenderCtx): string {
-  const citedOnly = ctx.btprint === "btPrintCited" || ctx.citedKeys.length > 0;
-  const items = (citedOnly ? ctx.citedKeys : [...ctx.bib.keys()]).filter((k, i, a) => a.indexOf(k) === i);
-  if (items.length === 0) return "";
-  let html = `<div class="bibliography"><h2 class="bibliography">References</h2>`;
-  for (const key of items) {
-    const c = ctx.bib.get(key);
-    const body = c ? formatBibliographyEntry(c) : escapeLiveHtml(key);
-    html += `<div class="bibitem" id="LyXCite-${escapeLiveHtml(key)}">${body}</div>`;
+function argumentText(block: BlockNode, name: string): string {
+  const found = collectBlocks(
+    block,
+    (b) => b.tag === "inset" && insetKind(b) === `Argument ${name}`,
+  );
+  return found[0] ? nomenclText(found[0]) : "";
+}
+
+function renderInitial(node: BlockNode, ctx: RenderCtx): string {
+  const letter = argumentText(node, "2");
+  const rest = argumentText(node, "3");
+  const body = renderLayoutInline(node, ctx);
+  const cap = letter
+    ? `<span class="dropcap">${escapeLiveHtml(letter)}</span><span class="dropcap-rest">${escapeLiveHtml(rest)}</span>`
+    : "";
+  return `<div class="initial">${cap}${body}</div>`;
+}
+
+function renderBibEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string, number] {
+  const title = ctx.layoutHtml?.get("Bibliography")?.labelString || "References";
+  let html = `<div class="bibliography"><h2 class="bibliography">${escapeLiveHtml(title)}</h2>`;
+  let i = start;
+  while (i < items.length && items[i].layout === "Bibliography" && items[i].depth === items[start].depth) {
+    html += `<div class="bibitem">${renderLayoutInline(items[i].node, ctx)}</div>`;
+    i++;
   }
+  html += "</div>";
+  return [html, i];
+}
+
+function isAuthoryearStyle(options: string): boolean {
+  return /authoryear|natbib|econ-|apa|chicago|harvard|kluwer/i.test(options);
+}
+
+function isAlphaStyle(options: string): boolean {
+  return /\balpha\b/i.test(options);
+}
+
+function alphaCiteLabel(c: Citation): string {
+  const people = (c.author ?? "").split(/\s+and\s+/i).map((p) => lastName(p).replace(/[^A-Za-z]/g, ""));
+  const year2 = (c.year ?? "").slice(-2);
+  const letters = people.filter(Boolean);
+  if (letters.length === 0) return (c.key.replace(/[^A-Za-z]/g, "").slice(0, 3) + year2) || c.key;
+  if (letters.length === 1) return letters[0].slice(0, 3) + year2;
+  if (letters.length <= 4) return letters.map((n) => n[0] ?? "").join("") + year2;
+  return `${letters.slice(0, 3).map((n) => n[0] ?? "").join("")}+${year2}`;
+}
+
+function renderBibliography(ctx: RenderCtx): string {
+  const citedOnly = ctx.btprint === "btPrintCited";
+  const raw = citedOnly ? ctx.citedKeys : [...ctx.bib.keys()];
+  const items = raw.filter((k, i, a) => a.indexOf(k) === i && ctx.bib.has(k));
+  if (items.length === 0) return "";
+  const title = ctx.layoutHtml?.get("Bibliography")?.labelString || "References";
+  const authoryear = isAuthoryearStyle(ctx.biboptions);
+  const alpha = isAlphaStyle(ctx.biboptions);
+  let html = `<div class="bibtex"><h2 class="bibtex">${escapeLiveHtml(title)}</h2>`;
+  items.forEach((key, i) => {
+    const c = ctx.bib.get(key)!;
+    const body = formatBibliographyEntry(c);
+    let label = "";
+    if (!authoryear) {
+      label = alpha ? alphaCiteLabel(c) : String(i + 1);
+    }
+    const labelHtml = label ? `<span class="bibtexlabel">${escapeLiveHtml(label)}</span>` : "";
+    html += `<div class="bibtexentry" id="LyXCite-${escapeLiveHtml(xmlId(key))}">${labelHtml}<span class="bibtexinfo">${body}</span></div>`;
+  });
   html += "</div>";
   return html;
 }
@@ -1617,6 +1784,17 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
     const target = findProperty(block, "target") ?? name;
     const label = name || target;
     return `<a class="href" href="${escapeLiveHtml(target)}">${escapeLiveHtml(label)}</a>`;
+  }
+  if (subtype === "bibitem") {
+    const label = findProperty(block, "label") ?? "";
+    let shown = label;
+    if (!shown) {
+      ctx.bibitem += 1;
+      shown = String(ctx.bibitem);
+    }
+    const id = xmlId(key);
+    const idAttr = id ? ` id="LyXCite-${escapeLiveHtml(id)}"` : "";
+    return `<a${idAttr}></a><span class="bibitemlabel">${escapeLiveHtml(shown)}</span>`;
   }
   const visible = key || name;
   return visible ? `<span class="command-inset">${escapeLiveHtml(visible)}</span>` : "";

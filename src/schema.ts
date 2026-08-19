@@ -31,6 +31,9 @@ export interface LayoutHtml {
   htmlTitle?: boolean;
   category?: string;
   tocLevel?: number;
+  labelType?: string;
+  labelString?: string;
+  labelCounter?: string;
 }
 
 interface RawStyle extends LayoutHtml {
@@ -177,6 +180,9 @@ function mergeStyle(prev: RawStyle | undefined, next: RawStyle): RawStyle {
   if (next.htmlTitle !== undefined) out.htmlTitle = next.htmlTitle;
   if (next.category !== undefined) out.category = next.category;
   if (next.tocLevel !== undefined) out.tocLevel = next.tocLevel;
+  if (next.labelType !== undefined) out.labelType = next.labelType;
+  if (next.labelString !== undefined) out.labelString = next.labelString;
+  if (next.labelCounter !== undefined) out.labelCounter = next.labelCounter;
   if (next.copyStyle !== undefined) out.copyStyle = next.copyStyle;
   return out;
 }
@@ -233,6 +239,21 @@ function parseStyleBody(lines: string[], start: number): { style: RawStyle; endI
     }
     const copy = bodyLine.match(/^CopyStyle\s+(.+)$/i);
     if (copy) style.copyStyle = copy[1].trim();
+    const labelType = bodyLine.match(/^LabelType\s+(\S+)/i);
+    if (labelType) {
+      style.labelType = labelType[1];
+      continue;
+    }
+    const labelString = bodyLine.match(/^LabelString\s+(.+)$/i);
+    if (labelString) {
+      style.labelString = labelString[1].replace(/^"|"$/g, "").trim();
+      continue;
+    }
+    const labelCounter = bodyLine.match(/^LabelCounter\s+(\S+)/i);
+    if (labelCounter) {
+      style.labelCounter = labelCounter[1];
+      continue;
+    }
   }
   return { style, endIndex: i };
 }
@@ -253,6 +274,9 @@ function resolveStyle(name: string, raw: Map<string, RawStyle>, seen: Set<string
   if (rest.htmlTitle !== undefined) out.htmlTitle = rest.htmlTitle;
   if (rest.category !== undefined) out.category = rest.category;
   if (rest.tocLevel !== undefined) out.tocLevel = rest.tocLevel;
+  if (rest.labelType !== undefined) out.labelType = rest.labelType;
+  if (rest.labelString !== undefined) out.labelString = rest.labelString;
+  if (rest.labelCounter !== undefined) out.labelCounter = rest.labelCounter;
   return out;
 }
 

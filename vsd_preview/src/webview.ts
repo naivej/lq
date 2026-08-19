@@ -60,6 +60,11 @@ div.abstract { margin: 1.5em 2.5em 2em; }
 div.standard { margin: 0 0 0.8em; }
 div.subtitle { font-size: 1.2em; text-align: center; margin: 0.2em 0 0.8em; }
 blockquote { margin: 0.5em 1.5em; }
+dl.description dt { font-weight: bold; }
+ol.enumi { list-style-type: decimal; }
+ol.enumii { list-style-type: lower-alpha; }
+ol.enumiii { list-style-type: lower-roman; }
+ol.enumiv { list-style-type: upper-alpha; }
 figure.float-figure, figure.float-table { display: block; margin: 1.2em auto; text-align: center; }
 figure > figcaption { display: block; text-align: center; margin: 0 0 0.6em; }
 figure > .float-body { display: flex; justify-content: center; margin: 0.4em 0; }
@@ -93,9 +98,11 @@ nav.toc ol { list-style: none; padding-left: 1.2em; margin: 0.2em 0; }
 nav.toc > ol { padding-left: 0; }
 nav.toc a { color: inherit; text-decoration: none; }
 nav.toc a:hover { text-decoration: underline; }
-div.bibliography { margin-top: 2em; }
-h2.bibliography { font-size: 1.3em; }
-div.bibitem { margin: 0.6em 0 0.6em 1.5em; text-indent: -1.5em; }
+div.bibliography, div.bibtex { margin-top: 2em; }
+h2.bibliography, h2.bibtex { font-size: 1.3em; }
+div.bibitem, div.bibtexentry { margin: 0.6em 0 0.6em 2em; text-indent: -2em; }
+span.bibitemlabel:before, span.bibtexlabel:before { content: "["; }
+span.bibitemlabel:after, span.bibtexlabel:after { content: "] "; }
 span.ref, span.citation { }
 img { max-width: 100%; height: auto; }
 div.wrap { float: right; margin: 0.4em 0 1em 1em; }
@@ -132,6 +139,27 @@ div.ovalbox { border: groove medium currentColor; padding: 0.5ex; border-radius:
 div.Ovalbox { border: ridge thick currentColor; padding: 0.5ex; border-radius: 1em; }
 div.Shaded { background: color-mix(in srgb, currentColor 12%, transparent); padding: 0.5ex; }
 div.Frameless { margin: 1em 0; }
+div.right_address { text-align: right; }
+div.hanging { text-indent: -2em; padding-left: 2em; }
+div.initial { margin: 0.8em 0; }
+span.dropcap {
+  float: left;
+  font-size: 2.8em;
+  line-height: 0.85;
+  font-weight: bold;
+  padding-right: 0.12em;
+}
+div.multicol { column-gap: 1.4em; margin: 0.8em 0; }
+div.theorem, div.lemma, div.proposition, div.conjecture, div.corollary,
+div.claim, div.fact, div.remark, div.proof, div.assumption, div.axiom,
+div.criterion, div.condition, div.notation, div.summary, div.conclusion {
+  font-style: italic;
+  margin: 0.8em 0;
+}
+div.definition, div.example, div.problem, div.exercise, div.question, div.note, div.algorithm {
+  margin: 0.8em 0;
+}
+.layout-label { font-style: normal; font-weight: bold; }
 .diagnostics { font-size: 0.85em; opacity: 0.85; }
 </style>
 </head>

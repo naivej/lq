@@ -146,7 +146,7 @@ Deno.test("Live renderer - lists and quotes", async () => {
   assertStringIncludes(html, "<ul>");
   assertStringIncludes(html, "<li>outer one");
   assertStringIncludes(html, "<ul><li>nested</li></ul>");
-  assertStringIncludes(html, "<ol>");
+  assertStringIncludes(html, '<ol class="enumi">');
   assertStringIncludes(html, "<li>first</li>");
   assertStringIncludes(html, "<dt>Term</dt>");
   assertStringIncludes(html, "<dd>the explanation</dd>");
@@ -324,6 +324,8 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, '<a class="url" href="https://www.ams.org/publications/authors/tex/amslatex">');
   assertStringIncludes(html, "<code>");
   assert(!html.includes("<code><div"), "Flex Code must stay inline");
+  assertStringIncludes(html, '<dl class="description">');
+  assertStringIncludes(html, "<dt>Address</dt>");
   assertStringIncludes(html, "<dt>Current");
   assertStringIncludes(html, "Current Address</dt>");
   assertStringIncludes(html, 'class="Frameless"');
@@ -337,6 +339,21 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, "<li>resumed</li>");
   assert(!html.includes('class="enumerate_resume"'), "Enumerate-Resume must not fall back to a generic div");
   assert(!html.includes("status collapsed"), "inset status lines must not leak into heading/TOC text");
+  assertStringIncludes(html, '<span class="layout-label">Theorem 1.</span>');
+  assertStringIncludes(html, "This is typically used for the statements of major results.");
+  assertStringIncludes(html, '<span class="layout-label">Corollary.</span>');
+  assertStringIncludes(html, '<span class="layout-label">Lemma 2.</span>');
+  assertStringIncludes(html, 'class="hanging"');
+  assertStringIncludes(html, "all but the first line of the paragraph is indented");
+  assertStringIncludes(html, '<span class="dropcap">T</span>');
+  assertStringIncludes(html, '<span class="dropcap-rest">his</span>');
+  assertStringIncludes(html, "module adds a drop capitals paragraph style");
+  assertStringIncludes(html, 'class="rotatebox"');
+  assertStringIncludes(html, "rotate(30deg)");
+  assertStringIncludes(html, "Great Western Railway");
+  assertStringIncludes(html, 'class="multicol"');
+  assertStringIncludes(html, "column-count: 2");
+  assertStringIncludes(html, "The Adventure of the Empty House");
 });
 
 Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph", async () => {
@@ -360,6 +377,35 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, 'class="Doublebox"');
   assertStringIncludes(html, "with rotated");
   assertStringIncludes(html, "This is a line");
+  const helloLi = html.indexOf("<li>Hello");
+  assert(helloLi !== -1, "UserGuide 3.4.6 Hello item missing");
+  const helloAt = html.lastIndexOf("<ol", helloLi);
+  const nest = html.slice(helloAt, html.indexOf("<li>Hi"));
+  assertStringIncludes(nest, 'class="enumi"');
+  assertStringIncludes(nest, 'class="enumii"');
+  assertStringIncludes(nest, 'class="enumiii"');
+  assertStringIncludes(nest, "<li>this is an");
+  assertStringIncludes(nest, "<li>enumeration</li>");
+  assertStringIncludes(nest, "<li>itemize list</li>");
+  const itemizeAt = nest.indexOf("<li>itemize list</li>");
+  const enumEnd = nest.indexOf("<li>enumeration</li>");
+  assert(itemizeAt > enumEnd, "itemize must follow the inner enumeration");
+  assert(
+    nest.slice(0, itemizeAt).includes("enumiii") && nest.includes("</ol><ul>"),
+    "itemize must stay nested beside the inner enumeration, not restart at the top level",
+  );
+  assert(
+    html.includes('<h2 class="bibliography">References</h2>') ||
+      html.includes('<h2 class="bibliography">Bibliography</h2>'),
+    "Bibliography environment must emit a References/Bibliography heading",
+  );
+  assertStringIncludes(html, 'id="LyXCite-lyxcredit"');
+  assertStringIncludes(html, '<span class="bibitemlabel">Credits</span>');
+  assertStringIncludes(html, "The LaTeX Companion Second Edition");
+  assertStringIncludes(html, 'class="bibtex"');
+  assertStringIncludes(html, 'id="LyXCite-Mittelbach"');
+  assertStringIncludes(html, '<span class="bibtexlabel">');
+  assertStringIncludes(html, "The LaTeX Companion");
 });
 
 Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings", async () => {

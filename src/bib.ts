@@ -49,6 +49,10 @@ export function cleanBibText(raw: string): string {
   let s = raw.replace(/\s+/g, " ");
   s = s.replace(/\\textsc\{([^}]*)\}/gi, "$1");
   s = s.replace(/\\emph\{([^}]*)\}/gi, "$1");
+  s = s.replace(/\\LaTeXe\{\}?/g, "LaTeX2ε");
+  s = s.replace(/\\LaTeX\{\}?/g, "LaTeX");
+  s = s.replace(/\\TeX\{\}?/g, "TeX");
+  s = s.replace(/\\LyX\{\}?/g, "LyX");
   s = s.replace(/---/g, "—");
   s = s.replace(/--/g, "–");
   s = s.replace(/~/g, " ");
