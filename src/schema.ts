@@ -1,5 +1,11 @@
 import * as path from "@std/path";
-import { KNOWN_INSET_TYPES, KNOWN_COMMAND_INSET_TYPES, INLINE_PROPERTIES } from "./registry.ts";
+import {
+  KNOWN_INSET_TYPES,
+  KNOWN_COMMAND_INSET_TYPES,
+  INLINE_PROPERTIES,
+  INSET_CATALOG,
+  type InsetMeta,
+} from "./registry.ts";
 
 export interface HeadingLevel {
   layout: string;
@@ -11,6 +17,7 @@ export interface LyxSchema {
   documentLayouts: string[];
   insetLayouts: string[];
   insets: string[];
+  insetCatalog: InsetMeta[];
   commandInsetSubtypes: string[];
   inlineProperties: readonly string[];
   headingHierarchy: HeadingLevel[];
@@ -20,7 +27,7 @@ export const INSET_LAYOUTS = ["Plain Layout"];
 
 export const INSETS: string[] = [...KNOWN_INSET_TYPES];
 
-export { INLINE_PROPERTIES };
+export { INLINE_PROPERTIES, INSET_CATALOG };
 
 /**
  * Parses a .layout or .inc file and extracts declared Styles.
@@ -181,11 +188,19 @@ export async function getSchemaForClass(textclass: string, layoutsDir: string): 
   }
   headingHierarchy.sort((a, b) => a.tocLevel - b.tocLevel);
 
+  const catalogByName = new Map(INSET_CATALOG.map((e) => [e.name, e]));
+  const insetCatalog: InsetMeta[] = Array.from(allInsets).sort().map((name) => {
+    const builtin = catalogByName.get(name);
+    if (builtin) return { name: builtin.name, kind: builtin.kind, subtypes: [...builtin.subtypes] };
+    return { name, kind: "collapsible", subtypes: [] };
+  });
+
   return {
     textclass,
     documentLayouts: Array.from(result.allowed).sort(),
     insetLayouts: INSET_LAYOUTS,
     insets: Array.from(allInsets).sort(),
+    insetCatalog,
     commandInsetSubtypes: [...KNOWN_COMMAND_INSET_TYPES].sort(),
     inlineProperties: INLINE_PROPERTIES,
     headingHierarchy,

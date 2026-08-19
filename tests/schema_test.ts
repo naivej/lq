@@ -28,4 +28,15 @@ Deno.test("Schema parsing for book class", async () => {
   assert(schema.insetLayouts.includes("Plain Layout"));
   assert(schema.insets.includes("Formula"));
   assert(schema.inlineProperties.includes("change_inserted"));
+
+  const formula = schema.insetCatalog.find((e) => e.name === "Formula");
+  assert(formula !== undefined, "insetCatalog should include Formula");
+  assertEquals(formula.kind, "content");
+  const note = schema.insetCatalog.find((e) => e.name === "Note");
+  assertEquals(note?.kind, "collapsible");
+  assertEquals(note?.subtypes, ["Note", "Comment", "Greyedout"]);
+  const command = schema.insetCatalog.find((e) => e.name === "CommandInset");
+  assertEquals(command?.kind, "command");
+  assert(command?.subtypes.includes("citation"), "CommandInset subtypes include citation");
+  assertEquals(schema.insetCatalog.length, schema.insets.length);
 });

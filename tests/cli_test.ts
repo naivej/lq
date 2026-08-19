@@ -181,7 +181,7 @@ Deno.test("CLI - no help output references the removed lq selector --help", { ti
 /** High-risk facts each command page must document (edge-case checklist). */
 const PAGE_FACTS: [string, string[]][] = [
   ["init", ["--global", "--refresh", "auto-detect", "--track-changes", "save-reload"]],
-  ["schema", ["documentLayouts", "insetLayouts", "commandInsetSubtypes", "headingHierarchy", "textclass"]],
+  ["schema", ["documentLayouts", "insetLayouts", "commandInsetSubtypes", "headingHierarchy", "textclass", "insetCatalog"]],
   ["dump", ["--depth", "--toc", "TocLevel", "truncated"]],
   ["preview", ["lyx-preview/live-1", "sha256", "raw-file-bytes", "does not mutate"]],
   ["read", ["--count", "--text-only", "change_deleted", "empty result"]],

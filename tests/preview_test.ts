@@ -1,9 +1,12 @@
 /**
  * Live projection contract, renderer, escaping, and semantic comparison
  * (dev log 129).
+ *
+ * Real-document renderer checks use my_template.lyx and Help/.
+ * fixtures/Synthetic/ holds tiny hand-written isolates (hostile, oracle, CRLF).
  */
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
-import { fromFileUrl } from "@std/path";
+import { fromFileUrl, join } from "@std/path";
 import { parse } from "../src/parser.ts";
 import {
   LIVE_CONTRACT,
@@ -20,23 +23,34 @@ import {
 } from "../src/preview.ts";
 import { runCliRaw, runCliTest } from "./helpers.ts";
 
-const LIVE = fromFileUrl(new URL("./fixtures/Live/", import.meta.url));
+const SYNTHETIC = fromFileUrl(new URL("./fixtures/Synthetic/", import.meta.url));
+const HELP_DIR = fromFileUrl(new URL("./fixtures/Help/", import.meta.url));
 
-function livePath(name: string): string {
-  return `${LIVE}${name}`;
+function syntheticPath(name: string): string {
+  return `${SYNTHETIC}${name}`;
+}
+
+async function listHelpLyx(): Promise<string[]> {
+  const names: string[] = [];
+  for await (const entry of Deno.readDir(HELP_DIR)) {
+    if (entry.isFile && entry.name.endsWith(".lyx")) names.push(entry.name);
+  }
+  names.sort();
+  if (names.length === 0) throw new Error("no Help/*.lyx fixtures found");
+  return names;
 }
 
 async function renderFile(name: string) {
-  const filePath = livePath(name);
+  const filePath = syntheticPath(name);
   const text = await Deno.readTextFile(filePath);
   const ast = parse(text);
   return { filePath, text, ast, ...await renderLiveHtml(ast, { filePath }) };
 }
 
 Deno.test("Live contract - valid response is accepted", async () => {
-  const text = await Deno.readTextFile(livePath("headings_paragraphs.lyx"));
+  const text = await Deno.readTextFile(syntheticPath("headings_paragraphs.lyx"));
   const ast = parse(text);
-  const { response, warnings } = await buildLiveResponse(livePath("headings_paragraphs.lyx"), ast, text);
+  const { response, warnings } = await buildLiveResponse(syntheticPath("headings_paragraphs.lyx"), ast, text);
   const validated = validateLiveResponse({ ...response, warnings });
   assertEquals(validated.contract, LIVE_CONTRACT);
   assertEquals(validated.projection, "live");
@@ -102,7 +116,7 @@ Deno.test("Live contract - deferred fields are rejected", () => {
 });
 
 Deno.test("Live contract - CLI envelope distinguishes disk identity", async () => {
-  const result = await runCliTest(["preview", livePath("headings_paragraphs.lyx")]);
+  const result = await runCliTest(["preview", syntheticPath("headings_paragraphs.lyx")]);
   const validated = validateLiveResponse(result);
   assertEquals(validated.source.fresh, true);
   assertEquals(validated.source.lineEnding, "lf");
@@ -229,16 +243,26 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assert(!fig.includes("<figcaption>Figure 1: <div"), "figure number and caption must be one line");
 });
 
-Deno.test("Live renderer - Help Intro.lyx renders with TOC when present", async () => {
-  const filePath = fromFileUrl(new URL("./fixtures/Help/Intro.lyx", import.meta.url));
-  const text = await Deno.readTextFile(filePath);
-  const { html, diagnostics } = await renderLiveHtml(parse(text), { filePath });
-  assertStringIncludes(html, "<article class=\"lyx-live\">");
-  const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
-  assert(
-    unknown.length <= 5,
-    `Intro.lyx unknowns: ${unknown.map((d) => d.message).join("; ")}`,
-  );
+Deno.test({
+  name: "Live renderer - every Help/*.lyx renders",
+  timeout: 120000,
+  fn: async () => {
+    const names = await listHelpLyx();
+    const failures: string[] = [];
+    for (const name of names) {
+      const filePath = join(HELP_DIR, name);
+      try {
+        const text = await Deno.readTextFile(filePath);
+        const { html } = await renderLiveHtml(parse(text), { filePath });
+        if (!html.includes('<article class="lyx-live">')) {
+          failures.push(`${name}: missing article wrapper`);
+        }
+      } catch (error) {
+        failures.push(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    assertEquals(failures, [], failures.join("\n"));
+  },
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
@@ -281,7 +305,7 @@ Deno.test("Live CLI - parse failure does not emit html", async () => {
 });
 
 Deno.test("Live CLI - CRLF is recorded as crlf and does not spawn per-test LyX", async () => {
-  const src = await Deno.readTextFile(livePath("headings_paragraphs.lyx"));
+  const src = await Deno.readTextFile(syntheticPath("headings_paragraphs.lyx"));
   const tmp = await Deno.makeTempFile({ suffix: ".lyx" });
   try {
     await Deno.writeTextFile(tmp, src.replaceAll("\n", "\r\n"));
@@ -295,7 +319,7 @@ Deno.test("Live CLI - CRLF is recorded as crlf and does not spawn per-test LyX",
 });
 
 Deno.test("Live CLI - extra arguments are rejected", async () => {
-  const result = await runCliTest(["preview", livePath("hostile.lyx"), "layout"]);
+  const result = await runCliTest(["preview", syntheticPath("hostile.lyx"), "layout"]);
   assertEquals(result.code, "INVALID_FLAG");
 });
 

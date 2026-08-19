@@ -8,67 +8,25 @@
 
 // ── Inset types ──────────────────────────────────────────────────────────────
 
-/** Top-level inset type names (first word after \begin_inset). */
-export const KNOWN_INSET_TYPES: ReadonlySet<string> = new Set([
-  // Collapsible text insets
-  "Note",           // subtypes: Note, Comment, Greyedout
-  "ERT",            // Evil Red Text / TeX code
-  "Foot",           // Footnote
-  "Marginal",       // Marginal note
-  "Branch",         // Document branch
-  "Box",            // Box (with subtype: Boxed, Shaded, etc.)
-  "Float",          // Float (figure, table, algorithm)
-  "Wrap",           // Text wrap float
-  "Caption",        // Caption (Standard, etc.)
-  "Flex",           // Flex inset (custom from layout modules)
-  "Phantom",        // Phantom (Phantom, HPhantom, VPhantom)
+/**
+ * CST kind of a top-level inset type (first word after \begin_inset).
+ * Author-facing: how the inset is shaped in the file, not how Live HTML looks.
+ */
+export type InsetKind =
+  | "collapsible"
+  | "command"
+  | "content"
+  | "tabular"
+  | "spacing"
+  | "formatting"
+  | "misc";
 
-  // Command insets (key-value params)
-  "CommandInset",   // subtypes: citation, ref, label, bibitem, bibtex,
-                    //           include, index, nomencl, href, counter,
-                    //           line, toc
-
-  // Content
-  "Formula",        // Math formula (inline: $...$, display: \[...\])
-  "Graphics",       // Image include
-  "External",       // External material
-  "Include",        // Child document include
-  "listings",       // Code listing (note: lowercase in .lyx)
-  "Preview",        // Instant preview
-
-  // Tabular
-  "Tabular",        // Table
-
-  // Spacing
-  "space",          // Horizontal space (note: lowercase in .lyx)
-  "VSpace",         // Vertical space
-  "Newline",        // Line break
-  "Newpage",        // Page break
-  "Separator",      // Separator line
-  "Line",           // Horizontal line
-
-  // Text formatting
-  "Quotes",         // Quotation marks (subtype: sld, srd, fld, frd, etc.)
-  "SpecialChar",    // Special character
-  "IPA",            // IPA inset
-  "IPAMacro",       // IPA macro
-  "IPADeco",        // IPA decoration
-  "script",         // Subscript/Superscript (note: lowercase in .lyx)
-
-  // Misc
-  "Argument",       // Layout argument
-  "Info",           // Document info field
-  "FloatList",      // List of floats
-  "Index",          // Index entry (alternative to CommandInset index)
-  "Nomenclature",   // Nomenclature entry (alternative to CommandInset nomenclature)
-  "TOC",            // Table of contents
-  "Ending",         // Ending
-  "Accent",         // Accent
-
-  // Note: "Text" is NOT an inset type — it's the content section marker
-  // inside collapsible insets (written by InsetText::write).
-  // "status" is also NOT an inset type — it's the open/collapsed marker.
-]);
+export interface InsetMeta {
+  name: string;
+  kind: InsetKind;
+  /** Closed subtype list when LyX has one. Empty when the second word is open (Float, Quotes, Flex). */
+  subtypes: readonly string[];
+}
 
 /** Known CommandInset subtypes (second word after \begin_inset CommandInset). */
 export const KNOWN_COMMAND_INSET_TYPES: ReadonlySet<string> = new Set([
@@ -85,6 +43,55 @@ export const KNOWN_COMMAND_INSET_TYPES: ReadonlySet<string> = new Set([
   "line",
   "toc",
 ]);
+
+/**
+ * Built-in inset catalog for `lq schema`. Names match InsetCode.h / Inset.cpp.
+ * "Text" and "status" are not types — they are markers inside collapsible insets.
+ */
+export const INSET_CATALOG: readonly InsetMeta[] = [
+  { name: "Note", kind: "collapsible", subtypes: ["Note", "Comment", "Greyedout"] },
+  { name: "ERT", kind: "collapsible", subtypes: [] },
+  { name: "Foot", kind: "collapsible", subtypes: [] },
+  { name: "Marginal", kind: "collapsible", subtypes: [] },
+  { name: "Branch", kind: "collapsible", subtypes: [] },
+  { name: "Box", kind: "collapsible", subtypes: [] },
+  { name: "Float", kind: "collapsible", subtypes: [] },
+  { name: "Wrap", kind: "collapsible", subtypes: [] },
+  { name: "Caption", kind: "collapsible", subtypes: [] },
+  { name: "Flex", kind: "collapsible", subtypes: [] },
+  { name: "Phantom", kind: "collapsible", subtypes: ["Phantom", "HPhantom", "VPhantom"] },
+  { name: "CommandInset", kind: "command", subtypes: [...KNOWN_COMMAND_INSET_TYPES] },
+  { name: "Formula", kind: "content", subtypes: [] },
+  { name: "Graphics", kind: "content", subtypes: [] },
+  { name: "External", kind: "content", subtypes: [] },
+  { name: "Include", kind: "content", subtypes: [] },
+  { name: "listings", kind: "content", subtypes: [] },
+  { name: "Preview", kind: "content", subtypes: [] },
+  { name: "Tabular", kind: "tabular", subtypes: [] },
+  { name: "space", kind: "spacing", subtypes: [] },
+  { name: "VSpace", kind: "spacing", subtypes: [] },
+  { name: "Newline", kind: "spacing", subtypes: [] },
+  { name: "Newpage", kind: "spacing", subtypes: [] },
+  { name: "Separator", kind: "spacing", subtypes: [] },
+  { name: "Line", kind: "spacing", subtypes: [] },
+  { name: "Quotes", kind: "formatting", subtypes: [] },
+  { name: "SpecialChar", kind: "formatting", subtypes: [] },
+  { name: "IPA", kind: "formatting", subtypes: [] },
+  { name: "IPAMacro", kind: "formatting", subtypes: [] },
+  { name: "IPADeco", kind: "formatting", subtypes: [] },
+  { name: "script", kind: "formatting", subtypes: [] },
+  { name: "Argument", kind: "misc", subtypes: [] },
+  { name: "Info", kind: "misc", subtypes: [] },
+  { name: "FloatList", kind: "misc", subtypes: [] },
+  { name: "Index", kind: "misc", subtypes: [] },
+  { name: "Nomenclature", kind: "misc", subtypes: [] },
+  { name: "TOC", kind: "misc", subtypes: [] },
+  { name: "Ending", kind: "misc", subtypes: [] },
+  { name: "Accent", kind: "misc", subtypes: [] },
+];
+
+/** Top-level inset type names (first word after \begin_inset). */
+export const KNOWN_INSET_TYPES: ReadonlySet<string> = new Set(INSET_CATALOG.map((e) => e.name));
 
 /**
  * Extracts the primary inset type from the args of a \begin_inset line.

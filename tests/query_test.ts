@@ -100,13 +100,13 @@ Deno.test("Query Engine on LyX Document", async () => {
   const res7 = query(ast, 'layout:contains("a)b)c")');
   assertEquals(res7.length, 0); // Not in the template, but should not throw syntax error
 
-  // Test :not() pseudo-class — exact complement on the fixture: 11 Standard
+  // Test :not() pseudo-class — exact complement on the fixture: 12 Standard
   // layouts, one holds the document's two Formula insets (display + inline),
-  // so 10 have none.
+  // so 11 have none.
   const allStd = query(ast, 'layout[Standard]');
   const stdNoFormula = query(ast, 'layout[Standard]:not(inset[Formula])');
-  assertEquals(allStd.length, 11);
-  assertEquals(stdNoFormula.length, 10);
+  assertEquals(allStd.length, 12);
+  assertEquals(stdNoFormula.length, 11);
 
   // :not() with a non-matching inner selector should match everything
   const allStd2 = query(ast, 'layout[Standard]:not(inset[Nonexistent])');
@@ -140,11 +140,11 @@ Deno.test("Query Engine on LyX Document", async () => {
   assertEquals(adjParseError, true);
 
   // :not() with a bare :contains inner (DL115): the inner also matches the
-  // node's own text, so :contains/:not(:contains) partition. 59 layouts; 2
+  // node's own text, so :contains/:not(:contains) partition. 60 layouts; 2
   // hold "Section" — the Section heading (own text + label inset) and the
   // following Standard (ref inset) — both are excluded.
   const notContains = query(ast, 'layout:not(:contains("Section"))');
-  assertEquals(notContains.length, 57);
+  assertEquals(notContains.length, 58);
 
   // :adjacent() with a bare :contains inner matches the previous sibling's
   // FULL subtree, so the two layouts directly after a Section match — the
@@ -154,9 +154,9 @@ Deno.test("Query Engine on LyX Document", async () => {
 
   // :not() inner :contains also matches the node's own text (DL115): the
   // phrase "tracked changes" lives in one Standard's direct text, so that
-  // Standard is excluded — 10 of 11 remain.
+  // Standard is excluded — 11 of 12 remain.
   const notInnerContains = query(ast, 'layout[Standard]:not(:contains("tracked changes"))');
-  assertEquals(notInnerContains.length, 10);
+  assertEquals(notInnerContains.length, 11);
 
   // T6: Chained :contains() pseudo-classes work as AND
   // layout[Standard]:contains('writing'):contains('paper') matches only

@@ -5,7 +5,7 @@
  * Tests and acceptance tooling invoke this helper when a LyX binary is present.
  */
 import * as path from "@std/path";
-import { normalizeReaderHtml, type SemNode } from "./preview.ts";
+import { normalizeReaderHtml, type SemNode } from "../src/preview.ts";
 
 export interface XhtmlExportResult {
   body: string;

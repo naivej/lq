@@ -14,9 +14,9 @@ import {
   findLyxBinary,
   sanitizeXhtmlBody,
   XhtmlOracleError,
-} from "../src/xhtml_oracle.ts";
+} from "../tools/xhtml_oracle.ts";
 
-const LIVE = fromFileUrl(new URL("./fixtures/Live/", import.meta.url));
+const SYNTHETIC = fromFileUrl(new URL("./fixtures/Synthetic/", import.meta.url));
 const PARITY_FIXTURES = [
   "headings_paragraphs.lyx",
   "lists_quotes.lyx",
@@ -55,7 +55,7 @@ Deno.test({
       return;
     }
     for (const name of PARITY_FIXTURES) {
-      const file = `${LIVE}${name}`;
+      const file = `${SYNTHETIC}${name}`;
       let exported;
       try {
         exported = await exportSanitizedXhtml(binary, file, { timeoutMs: 30000 });

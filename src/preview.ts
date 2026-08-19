@@ -2,7 +2,7 @@
  * Live reader projection: lq-owned HTML for a saved .lyx file.
  *
  * The response is the M1 Live contract (dev log 129). LyX XHTML is not used
- * here; it is a development oracle in xhtml_oracle.ts.
+ * here; it is a development oracle in tools/xhtml_oracle.ts.
  */
 import type { BlockNode, DocumentNode, Node } from "./ast.ts";
 import { hashFile } from "./cache.ts";

@@ -566,10 +566,15 @@ export const HELP_PAGES: HelpPage[] = [
       ),
       sec(
         "Output",
-        "The response's 'data' contains six categories:\n" +
+        "The response's 'data' contains seven categories:\n" +
           "  documentLayouts      Styles valid for this document class (e.g. Section, Standard).\n" +
           "  insetLayouts         Layouts valid inside insets (e.g. Plain Layout).\n" +
-          "  insets               Valid inset types (e.g. Formula, Foot, CommandInset).\n" +
+          "  insets               Valid inset type names (e.g. Formula, Foot, CommandInset).\n" +
+          "  insetCatalog         Each inset's CST kind and closed subtypes. Describes the file\n" +
+          "                       shape for writing. kind is collapsible, command,\n" +
+          "                       content, tabular, spacing, formatting, or misc. subtypes is a\n" +
+          "                       closed list when LyX has one (Note, CommandInset, Phantom);\n" +
+          "                       otherwise empty. Class InsetLayout names are collapsible.\n" +
           "  commandInsetSubtypes Valid CommandInset subtypes (e.g. citation, ref, label).\n" +
           "  inlineProperties     Valid inline property keys (e.g. family, lang).\n" +
           "  headingHierarchy     Heading layouts with their TocLevel values.\n\n" +
