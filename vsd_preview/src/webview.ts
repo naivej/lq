@@ -48,7 +48,7 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .banner { padding: 0.4rem 0.6rem; margin-bottom: 0.75rem; border-left: 3px solid var(--vscode-editorWarning-foreground); }
 .banner.error { border-left-color: var(--vscode-errorForeground); }
 .banner.pending { border-left-color: var(--vscode-editorInfo-foreground); }
-article.lyx-live { max-width: 46em; margin: 0 auto; line-height: 1.45; }
+article.lyx-live { max-width: 100%; margin: 0 auto; line-height: 1.45; }
 article.lyx-live section { margin: 0 0 1rem; }
 article.lyx-live h1, article.lyx-live h2, article.lyx-live h3, article.lyx-live h4 { margin: 0.8em 0 0.4em; }
 h1.title { font-size: 1.85em; text-align: center; font-weight: bold; margin: 0.4em 0 0.6em; }
@@ -98,6 +98,22 @@ h2.bibliography { font-size: 1.3em; }
 div.bibitem { margin: 0.6em 0 0.6em 1.5em; text-indent: -1.5em; }
 span.ref, span.citation { }
 img { max-width: 100%; height: auto; }
+div.wrap { float: right; margin: 0.4em 0 1em 1em; }
+div.wrap.wrap-left { float: left; margin: 0.4em 1em 1em 0; }
+div.wrap img { width: 100%; height: auto; display: block; }
+div.wrap .plain_layout { margin: 0 0 0.35em; text-align: center; font-size: 0.9em; }
+div.marginal {
+  float: right;
+  clear: right;
+  width: 12em;
+  max-width: 35%;
+  margin: 0 0 1em 1em;
+  padding: 0.7em 0.8em;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-editorWidget-background);
+  font-size: 0.85em;
+}
+div.marginal .plain_layout { margin: 0; }
 .diagnostics { font-size: 0.85em; opacity: 0.85; }
 </style>
 </head>

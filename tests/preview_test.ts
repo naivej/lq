@@ -341,9 +341,17 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertEquals(unknown.map((d) => d.message), []);
   assertStringIncludes(html, '<div class="marginal">');
   assertStringIncludes(html, "This is a margin note.");
-  assertStringIncludes(html, 'class="wrap"');
+  assertStringIncludes(html, 'class="wrap wrap-left"');
   assertStringIncludes(html, "width: 40%");
   assertStringIncludes(html, "This is a wrapped figure float.");
+  assertStringIncludes(html, 'data-filename="2D-intensity-plot.pdf"');
+  assertStringIncludes(html, "width: 100%");
+  assertStringIncludes(html, 'data-filename="Star-structure.pdf"');
+  assertStringIncludes(html, "width: 50%");
+  assert(
+    html.includes("data:image/png;base64,") || html.includes("2D-intensity-plot.pdf"),
+    "PDF figures must still name the source file",
+  );
   assertStringIncludes(html, '<code class="listings C++">');
   assertStringIncludes(html, "int a=5;");
   assertStringIncludes(html, '<div class="float-listings">');

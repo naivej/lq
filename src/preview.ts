@@ -200,7 +200,10 @@ interface RenderCtx {
   table: number;
   equation: number;
   inTitle: boolean;
+  inWrap: boolean;
   filePath?: string;
+  systemDocDir?: string;
+  magickPath?: string;
   labels: Map<string, string>;
   bib: Map<string, Citation>;
   citedKeys: string[];
@@ -514,6 +517,14 @@ export async function renderLiveHtml(
   ast: DocumentNode,
   options: { filePath?: string; layoutsDir?: string } = {},
 ): Promise<{ html: string; warnings: string[]; diagnostics: LiveDiagnostic[] }> {
+  let layoutsDir = options.layoutsDir;
+  if (!layoutsDir) {
+    try {
+      layoutsDir = await getDefaultLayoutsDir();
+    } catch {
+      layoutsDir = undefined;
+    }
+  }
   const ctx: RenderCtx = {
     warnings: [],
     diagnostics: [],
@@ -523,14 +534,17 @@ export async function renderLiveHtml(
     table: 0,
     equation: 0,
     inTitle: false,
+    inWrap: false,
     filePath: options.filePath,
+    systemDocDir: layoutsDir ? path.resolve(layoutsDir, "..", "doc") : undefined,
+    magickPath: findMagick(layoutsDir),
     labels: new Map(),
     bib: new Map(),
     citedKeys: [],
     bibfiles: "",
     btprint: "",
     outline: [],
-    layoutHtml: await loadLayoutHtml(ast, options.layoutsDir),
+    layoutHtml: await loadLayoutHtml(ast, layoutsDir),
   };
   indexDocument(findBody(ast), ctx);
   await loadBibliography(ctx);
@@ -1053,8 +1067,80 @@ function parseXmlAttrs(raw: string): Record<string, string> {
 
 function widthToCss(width: string | undefined): string {
   if (!width || width === "none") return "";
-  if (width.endsWith("col%")) return `${width.slice(0, -4)}%`;
-  return width;
+  const w = width.replace(/^["']|["']$/g, "").trim();
+  const pct = /^([\d.]+)(?:col|text)%$/i.exec(w);
+  if (pct) return `${pct[1]}%`;
+  return w;
+}
+
+function fileExists(p: string): boolean {
+  try {
+    return Deno.statSync(p).isFile;
+  } catch {
+    return false;
+  }
+}
+
+function findMagick(layoutsDir?: string): string | undefined {
+  const env = Deno.env.get("MAGICK_BINARY");
+  if (env && fileExists(env)) return env;
+  const candidates: string[] = [];
+  if (layoutsDir) {
+    const root = path.resolve(layoutsDir, "..", "..");
+    candidates.push(
+      path.join(root, "imagemagick", "magick.exe"),
+      path.join(root, "imagemagick", "magick"),
+    );
+  }
+  const localApp = Deno.env.get("LOCALAPPDATA");
+  if (localApp) {
+    candidates.push(path.join(localApp, "Programs", "LyX 2.5", "imagemagick", "magick.exe"));
+  }
+  for (const c of candidates) {
+    if (fileExists(c)) return c;
+  }
+  return undefined;
+}
+
+const WEB_IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;
+const rasterCache = new Map<string, string>();
+
+function rasterizeToPngDataUri(filepath: string, magickPath?: string): string | undefined {
+  const st = (() => {
+    try {
+      return Deno.statSync(filepath);
+    } catch {
+      return null;
+    }
+  })();
+  if (!st?.isFile) return undefined;
+  const key = `${filepath}|${st.size}|${st.mtime?.getTime() ?? 0}`;
+  const cached = rasterCache.get(key);
+  if (cached) return cached;
+  if (!magickPath) return undefined;
+  try {
+    const magickDir = path.dirname(magickPath);
+    const gsBin = path.resolve(magickDir, "..", "ghostscript", "bin");
+    const env = { ...Deno.env.toObject() };
+    if (fileExists(path.join(gsBin, "gswin64c.exe")) || fileExists(path.join(gsBin, "gs"))) {
+      env.PATH = `${gsBin}${path.DELIMITER}${env.PATH ?? ""}`;
+    }
+    const result = new Deno.Command(magickPath, {
+      args: ["-density", "120", `${filepath}[0]`, "png:-"],
+      stdout: "piped",
+      stderr: "piped",
+      env,
+    }).outputSync();
+    if (!result.success || result.stdout.length === 0) return undefined;
+    let binary = "";
+    const bytes = result.stdout;
+    for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]);
+    const uri = `data:image/png;base64,${btoa(binary)}`;
+    rasterCache.set(key, uri);
+    return uri;
+  } catch {
+    return undefined;
+  }
 }
 
 function renderTabular(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
@@ -1140,7 +1226,17 @@ function renderCaptionInline(block: BlockNode, ctx: RenderCtx): string {
 
 function renderWrap(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
   const width = widthToCss(findProperty(block, "width")) || "50%";
-  return `<div class="wrap" style="width: ${escapeLiveHtml(width)}">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  const placement = (findProperty(block, "placement") ?? "").toLowerCase();
+  const side = placement === "l" || placement === "i" ? "left" : "right";
+  const prev = ctx.inWrap;
+  ctx.inWrap = true;
+  let inner = "";
+  try {
+    inner = renderInsetLayouts(block, parentState, ctx);
+  } finally {
+    ctx.inWrap = prev;
+  }
+  return `<div class="wrap wrap-${side}" style="width: ${escapeLiveHtml(width)}">${inner}</div>`;
 }
 
 function listingLanguage(params: string): string {
@@ -1216,22 +1312,46 @@ function renderFloat(block: BlockNode, kind: string, parentState: TraversalState
   return html;
 }
 
+function resolveGraphicPath(filename: string, ctx: RenderCtx): string {
+  const tries: string[] = [];
+  if (ctx.filePath) tries.push(path.resolve(path.dirname(ctx.filePath), filename));
+  if (ctx.systemDocDir) tries.push(path.resolve(ctx.systemDocDir, filename));
+  for (const p of tries) {
+    if (fileExists(p)) return p;
+  }
+  return tries[0] ?? filename;
+}
+
+function graphicBoxStyle(block: BlockNode, ctx: RenderCtx): string {
+  const width = ctx.inWrap ? "100%" : widthToCss(findProperty(block, "width"));
+  const height = ctx.inWrap ? "" : widthToCss(findProperty(block, "height"));
+  const styles: string[] = [];
+  if (width && width !== "0" && width !== "0pt") styles.push(`width: ${width}`);
+  if (height && height !== "0" && height !== "0pt") styles.push(`height: ${height}`);
+  return styles.length ? ` style="${escapeLiveHtml(styles.join("; "))}"` : "";
+}
+
 function renderGraphics(block: BlockNode, ctx: RenderCtx): string {
   const filename = findProperty(block, "filename") ?? "";
   const base = filename.split(/[/\\]/).pop() ?? filename;
   let src = "";
   let filepath = "";
-  if (filename && ctx.filePath) {
-    filepath = path.resolve(path.dirname(ctx.filePath), filename);
-    try {
-      src = path.toFileUrl(filepath).href;
-    } catch {
-      src = "";
+  if (filename) {
+    filepath = resolveGraphicPath(filename, ctx);
+    if (fileExists(filepath) && !WEB_IMAGE.test(filepath)) {
+      src = rasterizeToPngDataUri(filepath, ctx.magickPath) ?? "";
+    }
+    if (!src) {
+      try {
+        src = path.toFileUrl(filepath).href;
+      } catch {
+        src = "";
+      }
     }
   }
   const srcAttr = src ? ` src="${escapeLiveHtml(src)}"` : "";
-  const fpAttr = filepath ? ` data-filepath="${escapeLiveHtml(filepath)}"` : "";
-  return `<img${srcAttr}${fpAttr} data-filename="${escapeLiveHtml(base)}" alt="${escapeLiveHtml(base)}">`;
+  const fpAttr = filepath && !src.startsWith("data:") ? ` data-filepath="${escapeLiveHtml(filepath)}"` : "";
+  return `<img${srcAttr}${fpAttr}${graphicBoxStyle(block, ctx)} data-filename="${escapeLiveHtml(base)}" alt="${escapeLiveHtml(base)}">`;
 }
 
 function lastName(part: string): string {
