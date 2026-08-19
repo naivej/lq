@@ -56,7 +56,12 @@ Deno.test({
     }
     for (const name of PARITY_FIXTURES) {
       const file = `${LIVE}${name}`;
-      const exported = await exportSanitizedXhtml(binary, file, { timeoutMs: 30000 });
+      let exported;
+      try {
+        exported = await exportSanitizedXhtml(binary, file, { timeoutMs: 30000 });
+      } catch (error) {
+        throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
+      }
       assert(exported.sanitized.length > 0, name);
       assertSanitized(exported.sanitized);
       const live = normalizeReaderHtml((await renderLiveHtml(parse(await Deno.readTextFile(file)), { filePath: file })).html);

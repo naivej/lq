@@ -205,6 +205,14 @@ interface RenderCtx {
   citedKeys: string[];
   bibfiles: string;
   btprint: string;
+  outline: OutlineEntry[];
+}
+
+interface OutlineEntry {
+  level: number;
+  number: string;
+  text: string;
+  id: string;
 }
 
 const HEADING: Record<string, { tag: string; level: number }> = {
@@ -317,22 +325,33 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
   const headingCounters = new Map<number, number>();
   let currentHeading = "";
 
-  const walk = (list: Node[], floatNo: string | undefined) => {
+  const walk = (list: Node[], floatNo: string | undefined, atBody: boolean) => {
     for (const n of list) {
       if (n.type !== "block") continue;
       if (n.tag === "deeper") {
-        walk(n.children, floatNo);
+        walk(n.children, floatNo, atBody);
         continue;
       }
       if (n.tag === "layout") {
         const layout = (n.args ?? "").trim();
         const heading = HEADING[layout];
-        if (heading) currentHeading = headingNumber(layout, heading.level, headingCounters).trim();
-        walk(n.children, floatNo);
+        if (heading) {
+          currentHeading = headingNumber(layout, heading.level, headingCounters).trim();
+          if (atBody) {
+            const text = headingPlainText(n);
+            ctx.outline.push({
+              level: heading.level,
+              number: currentHeading,
+              text,
+              id: sectionId(currentHeading, text),
+            });
+          }
+        }
+        walk(n.children, floatNo, false);
         continue;
       }
       if (n.tag !== "inset") {
-        walk(n.children, floatNo);
+        walk(n.children, floatNo, atBody);
         continue;
       }
       const kind = insetKind(n);
@@ -346,7 +365,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
           ctx.table += 1;
           num = String(ctx.table);
         }
-        walk(n.children, num);
+        walk(n.children, num, false);
         continue;
       }
       if (kind.startsWith("CommandInset label")) {
@@ -374,10 +393,10 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         ctx.bibfiles = findProperty(n, "bibfiles") ?? ctx.bibfiles;
         ctx.btprint = findProperty(n, "btprint") ?? ctx.btprint;
       }
-      walk(n.children, floatNo);
+      walk(n.children, floatNo, false);
     }
   };
-  walk(nodes, undefined);
+  walk(nodes, undefined, true);
   ctx.figure = 0;
   ctx.table = 0;
   ctx.equation = 0;
@@ -417,6 +436,7 @@ export async function renderLiveHtml(
     citedKeys: [],
     bibfiles: "",
     btprint: "",
+    outline: [],
   };
   indexDocument(findBody(ast), ctx);
   await loadBibliography(ctx);
@@ -460,10 +480,36 @@ function headingNumber(layout: string, level: number, counters: Map<number, numb
   for (const key of [...counters.keys()]) {
     if (key > level) counters.delete(key);
   }
-  const start = level >= 1 ? 1 : level;
+  const start = counters.has(0) ? 0 : counters.has(-1) ? -1 : 1;
   const parts: number[] = [];
-  for (let l = start; l <= level; l++) parts.push(counters.get(l) ?? 1);
-  return `${parts.join(".")} `;
+  for (let l = start; l <= level; l++) {
+    const n = counters.get(l);
+    if (n !== undefined) parts.push(n);
+  }
+  return parts.length ? `${parts.join(".")} ` : "";
+}
+
+function sectionId(number: string, text: string): string {
+  const n = number.trim();
+  if (n) return `sec-${n.replaceAll(".", "-")}`;
+  const slug = text.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40);
+  return `sec-${slug || "x"}`;
+}
+
+function headingPlainText(layout: BlockNode): string {
+  let out = "";
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type === "text") out += expandSpecialInText(n.text);
+      else if (n.type === "property" && n.key === "SpecialChar") out += specialChar(n.value ?? "");
+      else if (n.type === "block") {
+        if (n.tag === "inset" && insetKind(n).startsWith("CommandInset label")) continue;
+        walk(n.children);
+      }
+    }
+  };
+  walk(layout.children);
+  return out.replace(/\s+/g, " ").trim();
 }
 
 function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
@@ -501,7 +547,9 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
     if (heading) {
       closeSections(heading.level);
       const number = headingNumber(item.layout, heading.level, counters);
-      html += `<section><${heading.tag}>${number}${renderLayoutInline(item.node, ctx)}</${heading.tag}>`;
+      const text = headingPlainText(item.node);
+      const id = sectionId(number, text);
+      html += `<section id="${escapeLiveHtml(id)}"><${heading.tag}>${number}${renderLayoutInline(item.node, ctx)}</${heading.tag}>`;
       openLevels.push(heading.level);
       i++;
       continue;
@@ -908,6 +956,33 @@ function formatInlineCite(command: string, keys: string[], bib: Map<string, Cita
   return parts.map((p) => typeof p === "string" ? p : `${p.who} (${p.year})`).join("; ");
 }
 
+function renderToc(ctx: RenderCtx): string {
+  if (ctx.outline.length === 0) return "";
+  const items = ctx.outline;
+  let html = `<nav class="toc"><h2 class="toc">Contents</h2><ol>`;
+  let prev = items[0].level;
+  for (let i = 0; i < items.length; i++) {
+    const e = items[i];
+    if (i > 0) {
+      if (e.level > prev) html += "<ol>";
+      else if (e.level === prev) html += "</li>";
+      else {
+        html += "</li>";
+        for (let l = prev; l > e.level; l--) html += "</ol></li>";
+      }
+    }
+    const label = e.number ? `${e.number} ${e.text}` : e.text;
+    html += `<li><a href="#${escapeLiveHtml(e.id)}">${escapeLiveHtml(label)}</a>`;
+    prev = e.level;
+  }
+  html += "</li>";
+  const first = items[0].level;
+  const last = items[items.length - 1].level;
+  for (let l = last; l > first; l--) html += "</ol></li>";
+  html += "</ol></nav>";
+  return html;
+}
+
 function renderBibliography(ctx: RenderCtx): string {
   const citedOnly = ctx.btprint === "btPrintCited" || ctx.citedKeys.length > 0;
   const items = (citedOnly ? ctx.citedKeys : [...ctx.bib.keys()]).filter((k, i, a) => a.indexOf(k) === i);
@@ -939,7 +1014,8 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
     return `<span class="ref">${escapeLiveHtml(resolved)}</span>`;
   }
   if (subtype === "bibtex") return renderBibliography(ctx);
-  if (subtype === "label" || subtype === "index_print" || subtype === "toc" || subtype === "nomenclature_print") {
+  if (subtype === "toc") return renderToc(ctx);
+  if (subtype === "label" || subtype === "index_print" || subtype === "nomenclature_print") {
     return "";
   }
   if (subtype === "href") {

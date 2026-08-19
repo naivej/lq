@@ -87,6 +87,12 @@ span.formula:has(math[display="block"]) > .eqno {
   grid-column: 3;
   justify-self: end;
 }
+nav.toc { margin: 1.5em 0 2em; }
+h2.toc { font-size: 1.3em; margin-bottom: 0.4em; }
+nav.toc ol { list-style: none; padding-left: 1.2em; margin: 0.2em 0; }
+nav.toc > ol { padding-left: 0; }
+nav.toc a { color: inherit; text-decoration: none; }
+nav.toc a:hover { text-decoration: underline; }
 div.bibliography { margin-top: 2em; }
 h2.bibliography { font-size: 1.3em; }
 div.bibitem { margin: 0.6em 0 0.6em 1.5em; text-indent: -1.5em; }

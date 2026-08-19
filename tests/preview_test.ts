@@ -229,7 +229,19 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assert(!fig.includes("<figcaption>Figure 1: <div"), "figure number and caption must be one line");
 });
 
-Deno.test("Live renderer - SpecialChar and quiet insets in Additional.lyx", async () => {
+Deno.test("Live renderer - Help Intro.lyx renders with TOC when present", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/Intro.lyx", import.meta.url));
+  const text = await Deno.readTextFile(filePath);
+  const { html, diagnostics } = await renderLiveHtml(parse(text), { filePath });
+  assertStringIncludes(html, "<article class=\"lyx-live\">");
+  const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
+  assert(
+    unknown.length <= 5,
+    `Intro.lyx unknowns: ${unknown.map((d) => d.message).join("; ")}`,
+  );
+});
+
+Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
   const filePath = fromFileUrl(new URL("./fixtures/Help/Additional.lyx", import.meta.url));
   const text = await Deno.readTextFile(filePath);
   const { html, diagnostics } = await renderLiveHtml(parse(text), { filePath });
@@ -238,6 +250,11 @@ Deno.test("Live renderer - SpecialChar and quiet insets in Additional.lyx", asyn
   assertStringIncludes(html, "⇒");
   assert(!html.includes("<h1 class=\"title\">Additional \\SpecialChar"), "title SpecialChar must expand");
   assertStringIncludes(html, "User&#39;s Guide.");
+  assertStringIncludes(html, ">2.1 How LyX Uses LaTeX</");
+  assertStringIncludes(html, 'id="sec-2-1"');
+  assertStringIncludes(html, "<nav class=\"toc\">");
+  assertStringIncludes(html, "href=\"#sec-2-1\"");
+  assertStringIncludes(html, "2.1 How LyX Uses LaTeX");
   const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
   assert(
     unknown.length <= 3,
