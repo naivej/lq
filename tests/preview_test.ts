@@ -154,10 +154,20 @@ Deno.test("Live renderer - lists and quotes", async () => {
   assertStringIncludes(html, "A quoted line.");
 });
 
+Deno.test("Live renderer - missing layoutsDir still uses the hardcoded floor", async () => {
+  const filePath = syntheticPath("headings_paragraphs.lyx");
+  const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), {
+    filePath,
+    layoutsDir: "Z:\\lq-no-such-layouts",
+  });
+  assertStringIncludes(html, "<h2>1 Introduction</h2>");
+  assertStringIncludes(html, "<h3>1.1 Details</h3>");
+});
+
 Deno.test("Live renderer - table, figure, footnote, formula", async () => {
   const { html } = await renderFile("table_figure_foot_math.lyx");
   assertStringIncludes(html, "<table>");
-  assertStringIncludes(html, "<td>");
+  assertStringIncludes(html, "<td");
   assertStringIncludes(html, ">A</");
   assertStringIncludes(html, 'class="foot"');
   assertStringIncludes(html, "Footnote body.");
@@ -228,11 +238,16 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assertStringIncludes(html, "∑");
   assert(!html.includes("\\begin{equation}"), "display math must not dump the TeX environment");
   assert(!html.includes('stretchy="true"'), "\\left/\\right must not emit stretchy fences");
-  assertStringIncludes(html, '<span class="ref">1</span>');
-  assertStringIncludes(html, '<span class="ref">1.1</span>');
+  assertStringIncludes(html, '<a class="ref" href="#sec_Section_label">1</a>');
+  assertStringIncludes(html, '<a class="ref" href="#subsec_subsec_label">1.1</a>');
+  assertStringIncludes(html, 'id="sec_Section_label"');
   assert(!html.includes("sec:Section_label"), "refs must resolve to numbers, not raw keys");
+  assertStringIncludes(html, 'href="#LyXCite-Abernethy2003"');
   assertStringIncludes(html, "Abernethy et al.");
   assertStringIncludes(html, "References");
+  assertStringIncludes(html, "colspan=");
+  assertStringIncludes(html, "border-top:");
+  assert(!html.includes('<div class="date">'), "preamble \\date is LaTeX-only; native XHTML omits it");
   assertStringIncludes(html, "data-filename=\"beamer-g4.jpg\"");
   assertStringIncludes(html, "data-filepath=");
   const fig = html.slice(html.indexOf("<figure"), html.indexOf("</figure>") + 9);
@@ -265,6 +280,16 @@ Deno.test({
   },
 });
 
+Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mode as UNKNOWN", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/Math.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, '<article class="lyx-live">');
+  const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
+  assertEquals(unknown.map((d) => d.message), []);
+  assertStringIncludes(html, "<kbd");
+  assert(!html.includes('<span class="info">math-mode</span>'), "Info shortcuts must not dump the raw LFUN name as body text");
+});
+
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
   const filePath = fromFileUrl(new URL("./fixtures/Help/Additional.lyx", import.meta.url));
   const text = await Deno.readTextFile(filePath);
@@ -279,6 +304,20 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, "<nav class=\"toc\">");
   assertStringIncludes(html, "href=\"#sec-2-1\"");
   assertStringIncludes(html, "2.1 How LyX Uses LaTeX");
+  const labeling = html.indexOf("The final output contains no page numbers");
+  assert(labeling !== -1, "Additional.lyx Labeling example missing");
+  const labelingBefore = html.slice(Math.max(0, labeling - 160), labeling);
+  assert(
+    labelingBefore.includes("<ol") || labelingBefore.includes("<li"),
+    `Labeling should use HTMLTag ol, got: …${labelingBefore.slice(-80)}`,
+  );
+  assert(!labelingBefore.includes('class="labeling"'), "Labeling must not fall back to a generic div");
+  assertStringIncludes(html, '<a class="url" href="https://www.ams.org/publications/authors/tex/amslatex">');
+  assertStringIncludes(html, "<code>");
+  assert(!html.includes("<code><div"), "Flex Code must stay inline");
+  assertStringIncludes(html, "<dt>Current");
+  assertStringIncludes(html, "Current Address</dt>");
+  assertStringIncludes(html, 'class="box-frameless"');
   const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
   assert(
     unknown.length <= 3,

@@ -17,6 +17,7 @@ import {
 import * as path from "@std/path";
 import { parseBibtex, type Citation } from "./bib.ts";
 import { renderFormulaHtml, unwrapLatexSource } from "./latex_math.ts";
+import { getDefaultLayoutsDir, getLayoutHtmlForClass, type LayoutHtml } from "./schema.ts";
 
 export const LIVE_CONTRACT = "lyx-preview/live-1";
 export const LIVE_PROJECTION = "live";
@@ -206,7 +207,17 @@ interface RenderCtx {
   bibfiles: string;
   btprint: string;
   outline: OutlineEntry[];
+  layoutHtml: Map<string, LayoutHtml> | null;
 }
+
+type LayoutRole =
+  | { kind: "heading"; tag: string; level: number }
+  | { kind: "list"; tag: string; item: string }
+  | { kind: "env"; tag: string; item: string }
+  | { kind: "title" }
+  | { kind: "front" }
+  | { kind: "abstract" }
+  | { kind: "flow" };
 
 interface OutlineEntry {
   level: number;
@@ -242,6 +253,54 @@ const ENV: Record<string, { tag: string; item: string }> = {
   "Verbatim*": { tag: "pre", item: "NONE" },
   "LyX-Code": { tag: "pre", item: "NONE" },
 };
+
+function headingLevelFromTag(tag: string, name: string): number {
+  if (tag === "h1") return name === "Part" || name === "Part*" ? -1 : 0;
+  if (tag === "h2") return 1;
+  if (tag === "h3") return 2;
+  if (tag === "h4") return 3;
+  if (tag === "h5") return 4;
+  if (tag === "h6") return 5;
+  return 1;
+}
+
+function roleFromHtml(name: string, spec: LayoutHtml | undefined): LayoutRole | undefined {
+  if (name === "Abstract") return { kind: "abstract" };
+  if (name === "Title" || spec?.htmlTitle) return { kind: "title" };
+  if (spec?.category === "FrontMatter") return { kind: "front" };
+  const tag = spec?.htmlTag?.toLowerCase();
+  if (tag && /^h[1-6]$/.test(tag)) {
+    return { kind: "heading", tag, level: spec?.tocLevel ?? headingLevelFromTag(tag, name) };
+  }
+  if (tag === "ul" || tag === "ol" || tag === "dl") {
+    return { kind: "list", tag, item: (spec?.htmlItem ?? (tag === "dl" ? "dd" : "li")).toLowerCase() };
+  }
+  if (tag === "blockquote" || tag === "pre") {
+    return { kind: "env", tag, item: spec?.htmlItem ?? (tag === "pre" ? "NONE" : "div") };
+  }
+  return undefined;
+}
+
+function fallbackRole(name: string): LayoutRole {
+  if (name === "Title") return { kind: "title" };
+  if (name === "Abstract") return { kind: "abstract" };
+  if (name === "Author" || name === "Date" || name === "Subtitle") return { kind: "front" };
+  const heading = HEADING[name];
+  if (heading) return { kind: "heading", tag: heading.tag, level: heading.level };
+  const list = LIST[name];
+  if (list) return { kind: "list", tag: list.tag, item: list.item };
+  const env = ENV[name];
+  if (env) return { kind: "env", tag: env.tag, item: env.item };
+  return { kind: "flow" };
+}
+
+function layoutRole(name: string, html: Map<string, LayoutHtml> | null): LayoutRole {
+  return roleFromHtml(name, html?.get(name)) ?? fallbackRole(name);
+}
+
+function role(name: string, ctx: RenderCtx): LayoutRole {
+  return layoutRole(name, ctx.layoutHtml);
+}
 
 const SKIP_LAYOUT_PROPS = new Set([
   "align",
@@ -292,6 +351,11 @@ function layoutSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "standard";
 }
 
+/** LyX `xml::cleanAttr`: non-ASCII-alnum → `_` (`sec:Section_label` → `sec_Section_label`). */
+function xmlId(name: string): string {
+  return name.replace(/[^A-Za-z0-9]/g, "_");
+}
+
 function findBody(ast: DocumentNode): Node[] {
   const doc = ast.children.find((n): n is BlockNode => n.type === "block" && n.tag === "document");
   const body = doc?.children.find((n): n is BlockNode => n.type === "block" && n.tag === "body");
@@ -334,8 +398,8 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       }
       if (n.tag === "layout") {
         const layout = (n.args ?? "").trim();
-        const heading = HEADING[layout];
-        if (heading) {
+        const heading = role(layout, ctx);
+        if (heading.kind === "heading") {
           currentHeading = headingNumber(layout, heading.level, headingCounters).trim();
           if (atBody) {
             const text = headingPlainText(n);
@@ -417,9 +481,38 @@ async function loadBibliography(ctx: RenderCtx): Promise<void> {
   }
 }
 
+function documentTextclass(ast: DocumentNode): string | undefined {
+  const walk = (nodes: Node[]): string | undefined => {
+    for (const n of nodes) {
+      if (n.type === "property" && n.key === "textclass" && n.value) return n.value;
+      if (n.type === "block") {
+        const found = walk(n.children);
+        if (found) return found;
+      }
+    }
+    return undefined;
+  };
+  return walk(ast.children);
+}
+
+async function loadLayoutHtml(
+  ast: DocumentNode,
+  layoutsDir?: string,
+): Promise<Map<string, LayoutHtml> | null> {
+  const textclass = documentTextclass(ast);
+  if (!textclass) return null;
+  try {
+    const dir = layoutsDir || await getDefaultLayoutsDir();
+    const map = await getLayoutHtmlForClass(textclass, dir);
+    return map.size > 0 ? map : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function renderLiveHtml(
   ast: DocumentNode,
-  options: { filePath?: string } = {},
+  options: { filePath?: string; layoutsDir?: string } = {},
 ): Promise<{ html: string; warnings: string[]; diagnostics: LiveDiagnostic[] }> {
   const ctx: RenderCtx = {
     warnings: [],
@@ -437,6 +530,7 @@ export async function renderLiveHtml(
     bibfiles: "",
     btprint: "",
     outline: [],
+    layoutHtml: await loadLayoutHtml(ast, options.layoutsDir),
   };
   indexDocument(findBody(ast), ctx);
   await loadBibliography(ctx);
@@ -527,47 +621,47 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
 
   while (i < items.length) {
     const item = items[i];
-    const heading = HEADING[item.layout];
-    if (item.layout === "Title") {
+    const layout = role(item.layout, ctx);
+    if (layout.kind === "title") {
       html += `<h1 class="title">${renderLayoutInline(item.node, ctx, true)}</h1>`;
       i++;
       continue;
     }
-    if (item.layout === "Author" || item.layout === "Date" || item.layout === "Subtitle") {
+    if (layout.kind === "front") {
       html += `<div class="${layoutSlug(item.layout)}">${renderLayoutInline(item.node, ctx, true)}</div>`;
       i++;
       continue;
     }
-    if (item.layout === "Abstract") {
+    if (layout.kind === "abstract") {
       const [chunk, next] = renderAbstract(items, i, ctx);
       html += chunk;
       i = next;
       continue;
     }
-    if (heading) {
-      closeSections(heading.level);
-      const number = headingNumber(item.layout, heading.level, counters);
+    if (layout.kind === "heading") {
+      closeSections(layout.level);
+      const number = headingNumber(item.layout, layout.level, counters);
       const text = headingPlainText(item.node);
       const id = sectionId(number, text);
-      html += `<section id="${escapeLiveHtml(id)}"><${heading.tag}>${number}${renderLayoutInline(item.node, ctx)}</${heading.tag}>`;
-      openLevels.push(heading.level);
+      html += `<section id="${escapeLiveHtml(id)}"><${layout.tag}>${number}${renderLayoutInline(item.node, ctx)}</${layout.tag}>`;
+      openLevels.push(layout.level);
       i++;
       continue;
     }
-    if (LIST[item.layout]) {
+    if (layout.kind === "list") {
       const [chunk, next] = renderList(items, i, ctx);
       html += chunk;
       i = next;
       continue;
     }
-    if (ENV[item.layout]) {
+    if (layout.kind === "env") {
       const [chunk, next] = renderEnv(items, i, ctx);
       html += chunk;
       i = next;
       continue;
     }
     const inner = renderLayoutInline(item.node, ctx);
-    if (inner.trim().length === 0 && !ENV[item.layout]) {
+    if (inner.trim().length === 0) {
       i++;
       continue;
     }
@@ -582,9 +676,14 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
   return html;
 }
 
+function isListLayout(name: string, ctx: RenderCtx): boolean {
+  return role(name, ctx).kind === "list";
+}
+
 function renderList(items: FlowItem[], start: number, ctx: RenderCtx): [string, number] {
   const first = items[start];
-  const spec = LIST[first.layout];
+  const spec = role(first.layout, ctx);
+  if (spec.kind !== "list") return ["", start];
   const depth = first.depth;
   let i = start;
   let html = `<${spec.tag}>`;
@@ -593,11 +692,11 @@ function renderList(items: FlowItem[], start: number, ctx: RenderCtx): [string, 
     if (item.depth < depth) break;
     if (item.depth === depth) {
       if (item.layout !== first.layout) break;
-      if (first.layout === "Description") {
+      if (first.layout === "Description" || spec.tag === "dl") {
         const { label, rest } = splitDescription(item.node, ctx);
         html += `<dt>${label}</dt><dd>${rest}`;
         i++;
-        if (i < items.length && items[i].depth > depth && LIST[items[i].layout]) {
+        if (i < items.length && items[i].depth > depth && isListLayout(items[i].layout, ctx)) {
           const [nested, next] = renderList(items, i, ctx);
           html += nested;
           i = next;
@@ -606,14 +705,14 @@ function renderList(items: FlowItem[], start: number, ctx: RenderCtx): [string, 
       } else {
         html += `<${spec.item}>${renderLayoutInline(item.node, ctx)}`;
         i++;
-        if (i < items.length && items[i].depth > depth && LIST[items[i].layout]) {
+        if (i < items.length && items[i].depth > depth && isListLayout(items[i].layout, ctx)) {
           const [nested, next] = renderList(items, i, ctx);
           html += nested;
           i = next;
         }
         html += `</${spec.item}>`;
       }
-    } else if (LIST[item.layout]) {
+    } else if (isListLayout(item.layout, ctx)) {
       const [nested, next] = renderList(items, i, ctx);
       html += nested;
       i = next;
@@ -627,7 +726,8 @@ function renderList(items: FlowItem[], start: number, ctx: RenderCtx): [string, 
 
 function renderEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string, number] {
   const first = items[start];
-  const spec = ENV[first.layout];
+  const spec = role(first.layout, ctx);
+  if (spec.kind !== "env") return ["", start];
   let i = start;
   if (spec.item === "NONE") {
     let body = "";
@@ -648,12 +748,46 @@ function renderEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string, n
 }
 
 function splitDescription(layout: BlockNode, _ctx: RenderCtx): { label: string; rest: string } {
-  const raw = collectVisibleText(layout);
-  const cut = raw.search(/[\t ]/);
-  if (cut === -1) return { label: escapeLiveHtml(raw), rest: "" };
+  let label = "";
+  let rest = "";
+  let inRest = false;
+  const walk = (nodes: Node[], state: TraversalState) => {
+    for (const n of nodes) {
+      if (n.type === "property") {
+        advanceTraversalState(state, n.key, n.value);
+        continue;
+      }
+      if (traversalRegion(state) === "deleted") continue;
+      if (inRest) {
+        if (n.type === "text") rest += n.text;
+        else if (n.type === "block") rest += collectVisibleText(n);
+        continue;
+      }
+      if (n.type === "text") {
+        const cut = n.text.search(/[ \t]/);
+        if (cut === -1) {
+          label += n.text;
+        } else {
+          label += n.text.slice(0, cut);
+          rest += n.text.slice(cut + 1);
+          inRest = true;
+        }
+        continue;
+      }
+      if (n.type === "block") {
+        const kind = n.tag === "inset" ? insetKind(n) : "";
+        if (kind === "space" || kind.startsWith("space ")) {
+          label += "\u00a0";
+          continue;
+        }
+        walk(n.children, enterTraversalState(state));
+      }
+    }
+  };
+  walk(layout.children, createTraversalState());
   return {
-    label: escapeLiveHtml(raw.slice(0, cut)),
-    rest: escapeLiveHtml(raw.slice(cut + 1)),
+    label: escapeLiveHtml(label.replace(/\s+/g, " ").trim()),
+    rest: escapeLiveHtml(rest.replace(/\s+/g, " ").trim()),
   };
 }
 
@@ -791,8 +925,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return "";
   }
   if (kind === "Info" || kind.startsWith("Info ")) {
-    const arg = findProperty(block, "arg") ?? collectVisibleText(block);
-    return arg ? `<span class="info">${escapeLiveHtml(arg)}</span>` : "";
+    return renderInfo(block);
   }
   if (kind === "Tabular") return renderTabular(block, parentState, ctx);
   if (kind.startsWith("Float ")) return renderFloat(block, kind, parentState, ctx);
@@ -807,15 +940,20 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind.startsWith("space ") || kind === "space") return "\u00a0";
   if (kind.startsWith("Index ") || kind === "Index") return "";
+  if (kind.startsWith("IndexMacro ") || kind === "IndexMacro") return "";
+  if (kind.startsWith("Phantom ") || kind === "Phantom") return "\u200b";
   if (kind === "Text") return renderInsetLayouts(block, parentState, ctx);
   if (kind === "Flex Code" || kind.startsWith("Flex Code")) {
-    return `<code>${renderInsetLayouts(block, parentState, ctx)}</code>`;
+    return `<code>${renderFlexInline(block, ctx)}</code>`;
   }
   if (kind === "Flex URL" || kind.startsWith("Flex URL")) {
-    const url = collectVisibleText(block).trim();
-    return `<span class="url">${escapeLiveHtml(url)}</span>`;
+    const url = flattenFlow(block.children, 0).map((item) => collectVisibleText(item.node)).join("").trim();
+    return `<a class="url" href="${escapeLiveHtml(url)}">${escapeLiveHtml(url)}</a>`;
   }
-  if (kind.startsWith("Flex ") || kind.startsWith("Box ") || kind.startsWith("Branch ")) {
+  if (kind.startsWith("Box ")) {
+    return renderBox(block, kind, parentState, ctx);
+  }
+  if (kind.startsWith("Flex ") || kind.startsWith("Branch ")) {
     return renderInsetLayouts(block, parentState, ctx);
   }
   warnOnce(ctx, `Unknown inset '${kind}' rendered as an escaped fallback.`);
@@ -857,25 +995,91 @@ function renderCell(block: BlockNode, parentState: TraversalState, ctx: RenderCt
   return nested.map((item) => renderLayoutInline(item.node, ctx)).join("");
 }
 
+function parseXmlAttrs(raw: string): Record<string, string> {
+  const attrs: Record<string, string> = {};
+  const re = /([a-zA-Z_:-]+)="([^"]*)"/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(raw))) attrs[m[1]] = m[2];
+  return attrs;
+}
+
+function widthToCss(width: string | undefined): string {
+  if (!width || width === "none") return "";
+  if (width.endsWith("col%")) return `${width.slice(0, -4)}%`;
+  return width;
+}
+
 function renderTabular(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
   const meta = block.children
     .filter((c): c is { type: "text"; text: string } => c.type === "text")
     .map((c) => c.text)
     .join("");
-  const rows = Number(/rows="(\d+)"/.exec(meta)?.[1] ?? 0);
   const cols = Number(/columns="(\d+)"/.exec(meta)?.[1] ?? 0);
+  const colAttrs = [...meta.matchAll(/<column\b([^>]*)>/g)].map((m) => parseXmlAttrs(m[1]));
+  const cellAttrs = [...meta.matchAll(/<cell\b([^>]*)>/g)].map((m) => parseXmlAttrs(m[1]));
   const cells = collectBlocks(block, (b) => b.tag === "inset" && insetKind(b) === "Text");
-  let html = "<table><tbody>";
-  const count = rows > 0 && cols > 0 ? rows * cols : cells.length;
   const usedCols = cols > 0 ? cols : Math.max(1, cells.length);
-  for (let i = 0; i < count; i++) {
-    if (i % usedCols === 0) html += "<tr>";
+  let html = "<table><tbody>";
+  let c = 0;
+  for (let i = 0; i < cellAttrs.length; i++) {
+    const attr = cellAttrs[i];
+    if (attr.multicolumn === "2") continue;
+    if (c === 0) html += "<tr>";
+    let span = 1;
+    if (attr.multicolumn === "1") {
+      for (let j = i + 1; j < cellAttrs.length && cellAttrs[j].multicolumn === "2"; j++) span++;
+    }
+    const styles: string[] = [];
+    const align = attr.alignment || colAttrs[c]?.alignment;
+    const valign = attr.valignment || colAttrs[c]?.valignment;
+    const width = widthToCss(attr.width || colAttrs[c]?.width);
+    if (align) styles.push(`text-align: ${align}`);
+    if (valign) styles.push(`vertical-align: ${valign}`);
+    if (width && width !== "0" && width !== "0pt") styles.push(`width: ${width}`);
+    if (attr.topline === "true") styles.push("border-top: 1px solid");
+    if (attr.bottomline === "true") styles.push("border-bottom: 1px solid");
+    if (attr.leftline === "true") styles.push("border-left: 1px solid");
+    if (attr.rightline === "true") styles.push("border-right: 1px solid");
+    const style = styles.length ? ` style="${styles.join("; ")}"` : "";
+    const spanAttr = span > 1 ? ` colspan="${span}"` : "";
     const cell = cells[i];
-    html += `<td>${cell ? renderCell(cell, parentState, ctx) : ""}</td>`;
-    if (i % usedCols === usedCols - 1) html += "</tr>";
+    html += `<td${spanAttr}${style}>${cell ? renderCell(cell, parentState, ctx) : ""}</td>`;
+    c += span;
+    if (c >= usedCols) {
+      html += "</tr>";
+      c = 0;
+    }
   }
+  if (c > 0) html += "</tr>";
   html += "</tbody></table>";
   return html;
+}
+
+function renderFlexInline(block: BlockNode, ctx: RenderCtx): string {
+  const nested = flattenFlow(block.children, 0);
+  if (nested.length === 0) return escapeLiveHtml(collectVisibleText(block));
+  return nested.map((item) => renderLayoutInline(item.node, ctx)).join("");
+}
+
+function renderBox(block: BlockNode, kind: string, parentState: TraversalState, ctx: RenderCtx): string {
+  const variant = kind.slice("Box ".length).trim() || "box";
+  const width = widthToCss(findProperty(block, "width"));
+  const style = width && width !== "100%" ? ` style="width: ${escapeLiveHtml(width)}"` : "";
+  return `<div class="box-${layoutSlug(variant)}"${style}>${renderInsetLayouts(block, parentState, ctx)}</div>`;
+}
+
+function renderInfo(block: BlockNode): string {
+  const type = (findProperty(block, "type") ?? "").toLowerCase();
+  const arg = findProperty(block, "arg") ?? collectVisibleText(block);
+  if (type === "icon") {
+    return arg ? `<span class="info-icon" title="${escapeLiveHtml(arg)}"></span>` : "";
+  }
+  if (type === "shortcut" || type === "shortcuts") {
+    return arg
+      ? `<kbd class="${type === "shortcuts" ? "shortcuts" : "shortcut"}">${escapeLiveHtml(arg)}</kbd>`
+      : "";
+  }
+  return arg ? `<span class="info">${escapeLiveHtml(arg)}</span>` : "";
 }
 
 function renderCaptionInline(block: BlockNode, ctx: RenderCtx): string {
@@ -1006,21 +1210,29 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
   const command = findProperty(block, "LatexCommand") ?? subtype;
   if (subtype === "citation") {
     const keys = (key || name).split(",").map((s) => s.trim()).filter(Boolean);
-    return `<span class="citation">${escapeLiveHtml(formatInlineCite(command, keys, ctx.bib))}</span>`;
+    return keys.map((k) => {
+      const text = formatInlineCite(command, [k], ctx.bib);
+      return `<a class="citation" href="#LyXCite-${escapeLiveHtml(xmlId(k))}">${escapeLiveHtml(text)}</a>`;
+    }).join("; ");
   }
   if (subtype === "ref" || subtype === "pageref" || subtype === "formatted") {
     const target = findProperty(block, "reference") ?? name;
     const resolved = ctx.labels.get(target) || target;
-    return `<span class="ref">${escapeLiveHtml(resolved)}</span>`;
+    const id = xmlId(target);
+    return `<a class="ref" href="#${escapeLiveHtml(id)}">${escapeLiveHtml(resolved)}</a>`;
   }
   if (subtype === "bibtex") return renderBibliography(ctx);
   if (subtype === "toc") return renderToc(ctx);
-  if (subtype === "label" || subtype === "index_print" || subtype === "nomenclature_print") {
+  if (subtype === "label") {
+    return name ? `<a id="${escapeLiveHtml(xmlId(name))}"></a>` : "";
+  }
+  if (subtype === "index_print" || subtype === "nomenclature_print") {
     return "";
   }
   if (subtype === "href") {
     const target = findProperty(block, "target") ?? name;
-    return `<span class="href">${escapeLiveHtml(target)}</span>`;
+    const label = name || target;
+    return `<a class="href" href="${escapeLiveHtml(target)}">${escapeLiveHtml(label)}</a>`;
   }
   const visible = key || name;
   return visible ? `<span class="command-inset">${escapeLiveHtml(visible)}</span>` : "";

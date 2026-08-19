@@ -1,5 +1,4 @@
-import { getSchemaForClass } from "../src/schema.ts";
-import { getDefaultLayoutsDir } from "../src/cli.ts";
+import { getSchemaForClass, getLayoutHtmlForClass, getDefaultLayoutsDir } from "../src/schema.ts";
 import { assert, assertEquals } from "@std/assert";
 
 Deno.test("Schema parsing for book class", async () => {
@@ -39,4 +38,27 @@ Deno.test("Schema parsing for book class", async () => {
   const command = schema.insets.find((e) => e.name === "CommandInset");
   assertEquals(command?.kind, "command");
   assert(command?.subtypes.includes("citation"), "CommandInset subtypes include citation");
+  assertEquals(
+    JSON.stringify(schema).includes("htmlTag"),
+    false,
+    "lq schema JSON must not carry renderer HTML keys",
+  );
+});
+
+Deno.test("Layout HTML lookup is renderer-private and resolves CopyStyle", async () => {
+  const layoutsDir = await getDefaultLayoutsDir();
+  const html = await getLayoutHtmlForClass("article", layoutsDir);
+  assert(html.size > 0, "article.layout should yield Style HTML keys");
+  assertEquals(html.get("Section")?.htmlTag?.toLowerCase(), "h2");
+  assertEquals(html.get("Section")?.tocLevel, 1);
+  assertEquals(html.get("Itemize")?.htmlTag?.toLowerCase(), "ul");
+  assertEquals(html.get("Labeling")?.htmlTag?.toLowerCase(), "ol");
+  assertEquals(html.get("Quotation")?.htmlTag?.toLowerCase(), "blockquote", "CopyStyle Quote must inherit HTMLTag");
+  assertEquals(html.get("Title")?.htmlTitle, true);
+  assertEquals(html.get("LyX-Code")?.htmlTag, undefined, "LyX-Code has no HTMLTag; fallback tables still apply");
+  const koma = await getLayoutHtmlForClass("scrbook", layoutsDir);
+  assertEquals(koma.get("Labeling")?.htmlTag?.toLowerCase(), "ol", "later Style Labeling must merge, not replace");
+  assertEquals(koma.get("Section")?.htmlTag?.toLowerCase(), "h2");
+  const missing = await getLayoutHtmlForClass("article", "Z:\\lq-no-such-layouts");
+  assertEquals(missing.size, 0);
 });

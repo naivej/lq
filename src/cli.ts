@@ -1,7 +1,7 @@
 import { parse } from "./parser.ts";
 import { serialize } from "./serializer.ts";
 import { query, parseSelector, buildScopePredicate, buildTraversalStateIndex, selectorNoteScope, isValidNthMatchFormula, type ScopePredicate, type SelectorPart } from "./query.ts";
-import { getSchemaForClass, INSET_LAYOUTS, INSET_CATALOG, INLINE_PROPERTIES } from "./schema.ts";
+import { getSchemaForClass, INSET_LAYOUTS, INSET_CATALOG, INLINE_PROPERTIES, getDefaultLayoutsDir } from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode, TextNode } from "./ast.ts";
@@ -43,6 +43,8 @@ import * as path from "@std/path";
 import { HOME_PAGE, findByAlias, findByReach } from "./help.ts";
 import { renderPage, type RichMode } from "./help_render.ts";
 import { buildLiveResponse } from "./preview.ts";
+
+export { getDefaultLayoutsDir };
 
 /**
  * Map every text node in the tree to its parent children list + index.
@@ -194,103 +196,6 @@ async function configFileExists(statePaths: StatePaths): Promise<boolean> {
     return stat.isFile;
   } catch {
     return false;
-  }
-}
-
-// Helper to get default layouts dir based on OS.
-// Scans for installed LyX versions instead of hardcoding a version number.
-export async function getDefaultLayoutsDir(): Promise<string> {
-  if (Deno.build.os === "windows") {
-    const bases = [
-      Deno.env.get("PROGRAMFILES"),
-      Deno.env.get("LOCALAPPDATA") ? path.join(Deno.env.get("LOCALAPPDATA")!, "Programs") : null,
-    ].filter(Boolean) as string[];
-
-    const candidates: { version: number[]; dir: string }[] = [];
-    for (const base of bases) {
-      try {
-        for await (const entry of Deno.readDir(base)) {
-          const m = entry.name.match(/^LyX (\d+(?:\.\d+)*)$/);
-          if (m && entry.isDirectory) {
-            const layoutsDir = path.join(base, entry.name, "Resources", "layouts");
-            try {
-              const stat = await Deno.stat(layoutsDir);
-              if (stat.isDirectory) {
-                const version = m[1].split(".").map(Number);
-                candidates.push({ version, dir: layoutsDir });
-              }
-            } catch { /* skip */ }
-          }
-        }
-      } catch { /* base dir not readable */ }
-    }
-
-    // Sort by version descending, pick highest
-    candidates.sort((a, b) => {
-      for (let i = 0; i < Math.max(a.version.length, b.version.length); i++) {
-        const va = a.version[i] ?? 0;
-        const vb = b.version[i] ?? 0;
-        if (va !== vb) return vb - va;
-      }
-      return 0;
-    });
-
-    if (candidates.length > 0) return candidates[0].dir;
-
-    // Fallback: hardcoded common paths
-    const fallbacks = [
-      path.join(Deno.env.get("LOCALAPPDATA") ?? "", "Programs", "LyX 2.5", "Resources", "layouts"),
-      "C:\\Program Files\\LyX 2.5\\Resources\\layouts",
-    ];
-    for (const f of fallbacks) {
-      try {
-        const stat = await Deno.stat(f);
-        if (stat.isDirectory) return f;
-      } catch { /* skip */ }
-    }
-    return "C:\\Program Files\\LyX 2.5\\Resources\\layouts";
-  } else if (Deno.build.os === "darwin") {
-    const bases = ["/Applications"];
-    const candidates: { version: number[]; dir: string }[] = [];
-    for (const base of bases) {
-      try {
-        for await (const entry of Deno.readDir(base)) {
-          const m = entry.name.match(/^LyX(\d+(?:\.\d+)*)\.app$/);
-          if (m && entry.isDirectory) {
-            const layoutsDir = path.join(base, entry.name, "Contents", "Resources", "layouts");
-            try {
-              const stat = await Deno.stat(layoutsDir);
-              if (stat.isDirectory) {
-                const version = m[1].split(".").map(Number);
-                candidates.push({ version, dir: layoutsDir });
-              }
-            } catch { /* skip */ }
-          }
-        }
-      } catch { /* base dir not readable */ }
-    }
-
-    candidates.sort((a, b) => {
-      for (let i = 0; i < Math.max(a.version.length, b.version.length); i++) {
-        const va = a.version[i] ?? 0;
-        const vb = b.version[i] ?? 0;
-        if (va !== vb) return vb - va;
-      }
-      return 0;
-    });
-
-    if (candidates.length > 0) return candidates[0].dir;
-    return "/Applications/LyX.app/Contents/Resources/layouts";
-  } else {
-    // Linux: check common paths
-    const linuxPaths = ["/usr/share/lyx/layouts", "/usr/local/share/lyx/layouts"];
-    for (const p of linuxPaths) {
-      try {
-        const stat = await Deno.stat(p);
-        if (stat.isDirectory) return p;
-      } catch { /* skip */ }
-    }
-    return "/usr/share/lyx/layouts";
   }
 }
 
