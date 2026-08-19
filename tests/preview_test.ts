@@ -244,6 +244,9 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assert(!html.includes("sec:Section_label"), "refs must resolve to numbers, not raw keys");
   assertStringIncludes(html, 'href="#LyXCite-Abernethy2003"');
   assertStringIncludes(html, "Abernethy et al.");
+  assertStringIncludes(html, "Abernethy, Colin D. et al. (2003)");
+  assertStringIncludes(html, "In: <i>J. Am. Chem. Soc.</i>");
+  assertStringIncludes(html, "doi: 10.1021/ja0276321");
   assertStringIncludes(html, "References");
   assertStringIncludes(html, "colspan=");
   assertStringIncludes(html, "border-top:");
@@ -288,6 +291,10 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertEquals(unknown.map((d) => d.message), []);
   assertStringIncludes(html, "<kbd");
   assert(!html.includes('<span class="info">math-mode</span>'), "Info shortcuts must not dump the raw LFUN name as body text");
+  assertStringIncludes(html, "class=\"typewriter\"");
+  assertStringIncludes(html, "class=\"sans\"");
+  assertStringIncludes(html, "\u2423");
+  assertStringIncludes(html, "<mo>↓</mo>");
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
@@ -318,6 +325,7 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, "<dt>Current");
   assertStringIncludes(html, "Current Address</dt>");
   assertStringIncludes(html, 'class="box-frameless"');
+  assertStringIncludes(html, '<span class="noun">');
   const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
   assert(
     unknown.length <= 3,

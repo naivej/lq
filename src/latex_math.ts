@@ -63,6 +63,14 @@ const GREEK: Record<string, string> = {
   to: "→",
   rightarrow: "→",
   leftarrow: "←",
+  downarrow: "↓",
+  uparrow: "↑",
+  leftrightarrow: "↔",
+  Rightarrow: "⇒",
+  Leftarrow: "⇐",
+  Downarrow: "⇓",
+  Uparrow: "⇑",
+  Leftrightarrow: "⇔",
   partial: "∂",
 };
 
@@ -271,7 +279,7 @@ class Parser {
     }
     if (GREEK[name]) {
       const ch = GREEK[name];
-      if (ch.length === 1 && /[⋅…⋯×±∓≤≥≠∈⊂→←∂∞]/.test(ch)) return `<mo>${ch}</mo>`;
+      if (ch.length === 1 && /[⋅…⋯×±∓≤≥≠∈⊂→←↓↑↔⇒⇐⇓⇑⇔∂∞]/.test(ch)) return `<mo>${ch}</mo>`;
       return `<mi>${ch}</mi>`;
     }
     // Unknown command: skip one optional group and show the name.

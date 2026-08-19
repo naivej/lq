@@ -15,7 +15,7 @@ import {
   type TraversalState,
 } from "./text_utils.ts";
 import * as path from "@std/path";
-import { parseBibtex, type Citation } from "./bib.ts";
+import { formatBibliographyEntry, parseBibtex, type Citation } from "./bib.ts";
 import { renderFormulaHtml, unwrapLatexSource } from "./latex_math.ts";
 import { getDefaultLayoutsDir, getLayoutHtmlForClass, type LayoutHtml } from "./schema.ts";
 
@@ -819,18 +819,32 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
   const open: string[] = [];
 
   const closeAll = () => {
-    while (open.length) html += `</${open.pop()}>`;
+    while (open.length) {
+      const k = open.pop()!;
+      html += (INLINE[k] ?? { close: `</${k}>` }).close;
+    }
   };
 
-  const setInline = (tag: string | null, want: boolean) => {
-    const idx = open.lastIndexOf(tag ?? "");
-    if (want && tag && idx === -1) {
-      html += `<${tag}>`;
-      open.push(tag);
-    } else if (!want && tag && idx !== -1) {
+  const INLINE: Record<string, { open: string; close: string }> = {
+    em: { open: "<em>", close: "</em>" },
+    strong: { open: "<strong>", close: "</strong>" },
+    u: { open: "<u>", close: "</u>" },
+    s: { open: "<s>", close: "</s>" },
+    typewriter: { open: '<span class="typewriter">', close: "</span>" },
+    sans: { open: '<span class="sans">', close: "</span>" },
+  };
+
+  const setInline = (key: string, want: boolean) => {
+    const spec = INLINE[key];
+    if (!spec) return;
+    const idx = open.lastIndexOf(key);
+    if (want && idx === -1) {
+      html += spec.open;
+      open.push(key);
+    } else if (!want && idx !== -1) {
       while (open.length > idx) {
-        const t = open.pop()!;
-        html += `</${t}>`;
+        const k = open.pop()!;
+        html += (INLINE[k] ?? { close: `</${k}>` }).close;
       }
     }
   };
@@ -841,6 +855,8 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     setInline("strong", p.series === "bold");
     setInline("u", p.bar === "under" || p.uuline === "on");
     setInline("s", p.strikeout === "on" || p.xout === "on");
+    setInline("typewriter", p.family === "typewriter");
+    setInline("sans", p.family === "sans");
   };
 
   for (const child of children) {
@@ -860,7 +876,7 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
       if (
         child.key === "emph" || child.key === "series" || child.key === "shape" ||
         child.key === "bar" || child.key === "strikeout" || child.key === "xout" ||
-        child.key === "uuline" || child.key === "noun"
+        child.key === "uuline" || child.key === "noun" || child.key === "family"
       ) {
         syncFont();
       }
@@ -938,11 +954,14 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind.startsWith("Quotes ")) {
     return escapeLiveHtml(quoteChar(kind));
   }
-  if (kind.startsWith("space ") || kind === "space") return "\u00a0";
+  if (kind.startsWith("space ") || kind === "space") return spaceChar(kind);
   if (kind.startsWith("Index ") || kind === "Index") return "";
   if (kind.startsWith("IndexMacro ") || kind === "IndexMacro") return "";
   if (kind.startsWith("Phantom ") || kind === "Phantom") return "\u200b";
   if (kind === "Text") return renderInsetLayouts(block, parentState, ctx);
+  if (kind === "Flex Noun" || kind.startsWith("Flex Noun")) {
+    return `<span class="noun">${renderFlexInline(block, ctx)}</span>`;
+  }
   if (kind === "Flex Code" || kind.startsWith("Flex Code")) {
     return `<code>${renderFlexInline(block, ctx)}</code>`;
   }
@@ -1072,7 +1091,7 @@ function renderInfo(block: BlockNode): string {
   const type = (findProperty(block, "type") ?? "").toLowerCase();
   const arg = findProperty(block, "arg") ?? collectVisibleText(block);
   if (type === "icon") {
-    return arg ? `<span class="info-icon" title="${escapeLiveHtml(arg)}"></span>` : "";
+    return arg ? `<span class="info-icon" title="${escapeLiveHtml(arg)}">${escapeLiveHtml(arg)}</span>` : "";
   }
   if (type === "shortcut" || type === "shortcuts") {
     return arg
@@ -1194,9 +1213,7 @@ function renderBibliography(ctx: RenderCtx): string {
   let html = `<div class="bibliography"><h2 class="bibliography">References</h2>`;
   for (const key of items) {
     const c = ctx.bib.get(key);
-    const body = c
-      ? `${escapeLiveHtml(c.author ?? "Unknown")}. ${escapeLiveHtml(c.year ?? "")}. ${escapeLiveHtml(c.title ?? key)}.`
-      : escapeLiveHtml(key);
+    const body = c ? formatBibliographyEntry(c) : escapeLiveHtml(key);
     html += `<div class="bibitem" id="LyXCite-${escapeLiveHtml(key)}">${body}</div>`;
   }
   html += "</div>";
@@ -1236,6 +1253,15 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
   }
   const visible = key || name;
   return visible ? `<span class="command-inset">${escapeLiveHtml(visible)}</span>` : "";
+}
+
+function spaceChar(kind: string): string {
+  const arg = kind.startsWith("space ") ? kind.slice("space ".length).trim() : "";
+  if (arg.includes("textvisiblespace")) return "\u2423";
+  if (arg.includes("thinspace")) return "\u2009";
+  if (arg.includes("negthinspace") || arg.includes("negmedspace") || arg.includes("negthickspace")) return "";
+  if (arg.includes("hfill") || arg.includes("hfill")) return " ";
+  return "\u00a0";
 }
 
 function quoteChar(kind: string): string {
