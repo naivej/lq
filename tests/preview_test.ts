@@ -30,7 +30,7 @@ async function renderFile(name: string) {
   const filePath = livePath(name);
   const text = await Deno.readTextFile(filePath);
   const ast = parse(text);
-  return { filePath, text, ast, ...renderLiveHtml(ast) };
+  return { filePath, text, ast, ...await renderLiveHtml(ast, { filePath }) };
 }
 
 Deno.test("Live contract - valid response is accepted", async () => {
@@ -152,7 +152,8 @@ Deno.test("Live renderer - table, figure, footnote, formula", async () => {
   assertStringIncludes(html, "<figure");
   assertStringIncludes(html, 'data-filename="live-figure.png"');
   assertStringIncludes(html, "<figcaption>Figure 1: ");
-  assert(!html.includes("src="), "graphics must not emit a fetchable src in M1");
+  assertStringIncludes(html, "data-filepath=");
+  assertStringIncludes(html, 'src="file:');
 });
 
 Deno.test("Live renderer - hostile strings stay escaped", async () => {
@@ -201,7 +202,7 @@ Deno.test("Live renderer - title, author, abstract, and math", async () => {
 Deno.test("Live renderer - my_template front matter and math", async () => {
   const filePath = fromFileUrl(new URL("./fixtures/my_template.lyx", import.meta.url));
   const text = await Deno.readTextFile(filePath);
-  const { html } = renderLiveHtml(parse(text));
+  const { html } = await renderLiveHtml(parse(text), { filePath });
   assertStringIncludes(html, '<h1 class="title">Title</h1>');
   assertStringIncludes(html, '<div class="author">My name');
   assertStringIncludes(html, '<span class="abstract_label">Abstract</span>');
@@ -211,6 +212,14 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assertStringIncludes(html, "<mi>ζ</mi>");
   assertStringIncludes(html, "∑");
   assert(!html.includes("\\begin{equation}"), "display math must not dump the TeX environment");
+  assert(!html.includes('stretchy="true"'), "\\left/\\right must not emit stretchy fences");
+  assertStringIncludes(html, '<span class="ref">1</span>');
+  assertStringIncludes(html, '<span class="ref">1.1</span>');
+  assert(!html.includes("sec:Section_label"), "refs must resolve to numbers, not raw keys");
+  assertStringIncludes(html, "Abernethy et al.");
+  assertStringIncludes(html, "References");
+  assertStringIncludes(html, "data-filename=\"beamer-g4.jpg\"");
+  assertStringIncludes(html, "data-filepath=");
 });
 
 Deno.test("Live renderer - escape helper is applied to source-derived text", () => {
@@ -257,8 +266,8 @@ Deno.test("Live comparison - incidental ids and classes are ignored", () => {
 });
 
 Deno.test("Live CSP floor - restrictive policy string has no remote sources", () => {
-  const csp = "default-src 'none'; img-src 'none'; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+  const csp = "default-src 'none'; img-src vscode-webview: data:; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
   assertStringIncludes(csp, "default-src 'none'");
   assertStringIncludes(csp, "script-src 'none'");
-  assert(!/https?:/.test(csp));
+  assert(!/https?:\/\//.test(csp), "CSP must not allow remote http(s) URLs");
 });

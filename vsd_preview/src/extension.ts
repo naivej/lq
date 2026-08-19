@@ -1,3 +1,4 @@
+import { dirname } from "node:path";
 import * as vscode from "vscode";
 import { AdapterError, PreviewSession } from "./previewSession";
 import { discoverLqBinary, runLivePreview } from "./lqClient";
@@ -43,11 +44,20 @@ class LivePreviewPanel {
       void LivePreviewPanel.current.refresh();
       return;
     }
+    const roots = new Map<string, vscode.Uri>();
+    for (const folder of vscode.workspace.workspaceFolders ?? []) {
+      roots.set(folder.uri.toString(), folder.uri);
+    }
+    roots.set(document.uri.toString(), vscode.Uri.file(dirname(document.uri.fsPath)));
     const panel = vscode.window.createWebviewPanel(
       VIEW_TYPE,
       titleFor(document),
       column,
-      { enableScripts: false, retainContextWhenHidden: true, localResourceRoots: [] },
+      {
+        enableScripts: false,
+        retainContextWhenHidden: true,
+        localResourceRoots: [...roots.values()],
+      },
     );
     LivePreviewPanel.current = new LivePreviewPanel(panel, document);
   }
@@ -75,12 +85,19 @@ class LivePreviewPanel {
 
   private paint(error?: string): void {
     this.panel.title = titleFor(this.document);
+    const html = this.session.lastValid
+      ? rewriteLocalImages(this.session.lastValid.html, this.panel.webview)
+      : undefined;
+    const render = this.session.lastValid && html
+      ? { ...this.session.lastValid, html }
+      : this.session.lastValid;
     this.panel.webview.html = renderWebviewHtml({
       title: this.panel.title,
       stale: this.session.stale,
       pending: this.pending,
       error,
-      render: this.session.lastValid,
+      render,
+      imgCsp: `${this.panel.webview.cspSource} data:`,
     });
   }
 
@@ -88,6 +105,17 @@ class LivePreviewPanel {
     if (LivePreviewPanel.current === this) LivePreviewPanel.current = undefined;
     for (const d of this.disposables) d.dispose();
   }
+}
+
+function rewriteLocalImages(html: string, webview: vscode.Webview): string {
+  return html.replace(/<img\b[^>]*>/gi, (tag) => {
+    const fp = /data-filepath="([^"]*)"/.exec(tag)?.[1];
+    if (!fp) return tag;
+    const decoded = fp.replaceAll("&amp;", "&");
+    const uri = webview.asWebviewUri(vscode.Uri.file(decoded)).toString();
+    if (/\ssrc="/.test(tag)) return tag.replace(/\ssrc="[^"]*"/, ` src="${uri}"`);
+    return tag.replace("<img", `<img src="${uri}"`);
+  });
 }
 
 function titleFor(document: vscode.TextDocument): string {

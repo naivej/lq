@@ -1,7 +1,10 @@
 import type { LiveRender } from "./previewSession";
 
-export const WEBVIEW_CSP =
-  "default-src 'none'; img-src 'none'; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+export function liveWebviewCsp(imgSrc = "'none'"): string {
+  return `default-src 'none'; img-src ${imgSrc}; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
+}
+
+export const WEBVIEW_CSP = liveWebviewCsp("'none'");
 
 export function escapeHostText(value: string): string {
   return value
@@ -18,6 +21,7 @@ export function renderWebviewHtml(options: {
   pending: boolean;
   error?: string;
   render?: LiveRender;
+  imgCsp?: string;
 }): string {
   const status = options.error
     ? `<div class="banner error">${escapeHostText(options.error)}</div>`
@@ -37,7 +41,7 @@ export function renderWebviewHtml(options: {
 <html>
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="${WEBVIEW_CSP}">
+<meta http-equiv="Content-Security-Policy" content="${liveWebviewCsp(options.imgCsp ?? "'none'")}">
 <title>${escapeHostText(options.title)}</title>
 <style>
 body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin: 0; padding: 1rem 1.25rem 2rem; }
@@ -63,9 +67,26 @@ td, th { border: 1px solid var(--vscode-panel-border); padding: 0.25em 0.5em; }
 .foot_intitle:hover .foot_intitle_inner, .foot_intitle:focus-within .foot_intitle_inner { display: inline; }
 span.formula { }
 math { font-family: "Cambria Math", "Latin Modern Math", "STIX Two Math", serif; font-size: 1.05em; }
-math[display="block"] { display: block; margin: 1em 0; text-align: center; }
-span.formula:has(math[display="block"]) { display: block; margin: 1em 0; }
-span.eqno { float: right; }
+span.formula:has(math[display="block"]) {
+  display: grid;
+  grid-template-columns: 4em 1fr 4em;
+  align-items: center;
+  width: 100%;
+  margin: 1.2em 0;
+}
+span.formula:has(math[display="block"]) > math {
+  grid-column: 2;
+  justify-self: center;
+}
+span.formula:has(math[display="block"]) > .eqno {
+  grid-column: 3;
+  justify-self: end;
+}
+div.bibliography { margin-top: 2em; }
+h2.bibliography { font-size: 1.3em; }
+div.bibitem { margin: 0.6em 0 0.6em 1.5em; text-indent: -1.5em; }
+span.ref, span.citation { }
+img { max-width: 100%; height: auto; }
 .diagnostics { font-size: 0.85em; opacity: 0.85; }
 </style>
 </head>

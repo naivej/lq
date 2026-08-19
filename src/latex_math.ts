@@ -220,9 +220,25 @@ class Parser {
     let name = "";
     while (this.i < this.s.length && /[A-Za-z]/.test(this.s[this.i])) name += this.s[this.i++];
     this.skipSpace();
-    if (name === "left" || name === "right") {
-      const delim = this.readDelimiter();
-      return `<mo stretchy="true">${escapeLiveHtml(delim)}</mo>`;
+    if (name === "left") {
+      const open = this.readDelimiter();
+      const parts: string[] = [];
+      while (this.i < this.s.length && this.s[this.i] !== "}") {
+        this.skipSpace();
+        if (this.startsCommand("right")) {
+          this.i += 1 + "right".length;
+          const close = this.readDelimiter();
+          const inner = parts.length === 1 ? parts[0] : parts.length ? `<mrow>${parts.join("")}</mrow>` : "";
+          return `<mrow><mo>${escapeLiveHtml(open)}</mo>${inner}<mo>${escapeLiveHtml(close)}</mo></mrow>`;
+        }
+        parts.push(this.parseWithScripts());
+      }
+      const inner = parts.length === 1 ? parts[0] : parts.length ? `<mrow>${parts.join("")}</mrow>` : "";
+      return `<mrow><mo>${escapeLiveHtml(open)}</mo>${inner}</mrow>`;
+    }
+    if (name === "right") {
+      const close = this.readDelimiter();
+      return `<mo>${escapeLiveHtml(close)}</mo>`;
     }
     if (name === "frac") {
       const a = this.parseGroupOrAtom();
@@ -313,6 +329,13 @@ class Parser {
     }
     if (parts.length === 1) return parts[0];
     return `<mrow>${parts.join("")}</mrow>`;
+  }
+
+  private startsCommand(name: string): boolean {
+    if (this.s[this.i] !== "\\") return false;
+    if (!this.s.startsWith(name, this.i + 1)) return false;
+    const after = this.s[this.i + 1 + name.length];
+    return !after || !/[A-Za-z]/.test(after);
   }
 
   private skipSpace(): void {

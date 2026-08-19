@@ -59,7 +59,7 @@ Deno.test({
       const exported = await exportSanitizedXhtml(binary, file, { timeoutMs: 30000 });
       assert(exported.sanitized.length > 0, name);
       assertSanitized(exported.sanitized);
-      const live = normalizeReaderHtml(renderLiveHtml(parse(await Deno.readTextFile(file))).html);
+      const live = normalizeReaderHtml((await renderLiveHtml(parse(await Deno.readTextFile(file)), { filePath: file })).html);
       assert(
         semanticEqual(live, exported.normalized),
         `${name} Live vs oracle:\n${formatSem(live)}\n---\n${formatSem(exported.normalized)}`,

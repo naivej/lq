@@ -1,4 +1,8 @@
 import { assertEquals, assertStringIncludes } from "@std/assert";
+
+function assertFalse(cond: boolean, msg: string): void {
+  if (cond) throw new Error(msg);
+}
 import { latexToMathML, renderFormulaHtml, unwrapLatexSource } from "../src/latex_math.ts";
 
 Deno.test("unwrapLatexSource - dollar, equation, label", () => {
@@ -22,6 +26,8 @@ Deno.test("latexToMathML - scripts, greek, sum, delimiters", () => {
   assertStringIncludes(display, "<mi>ℓ</mi>");
   assertStringIncludes(display, "∑");
   assertStringIncludes(display, "munderover");
+  assertStringIncludes(display, "<mrow><mo>(</mo><mi>x</mi><mo>)</mo></mrow>");
+  if (display.includes('stretchy="true"')) throw new Error("fences must not be stretchy");
 });
 
 Deno.test("renderFormulaHtml - MathML plus TeX annotation, escaped", () => {
@@ -29,7 +35,7 @@ Deno.test("renderFormulaHtml - MathML plus TeX annotation, escaped", () => {
   assertStringIncludes(html, "<math");
   assertStringIncludes(html, 'encoding="application/x-tex"');
   assertStringIncludes(html, "a&lt;b");
-  assert(!html.includes("<b>"));
+  assertFalse(html.includes("<b>"), "less-than must stay escaped");
 });
 
 Deno.test("latexToMathML - unknown commands stay escaped mtext-like mi", () => {

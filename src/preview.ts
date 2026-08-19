@@ -15,6 +15,7 @@ import {
   type TraversalState,
 } from "./text_utils.ts";
 import * as path from "@std/path";
+import { parseBibtex, type Citation } from "./bib.ts";
 import { renderFormulaHtml, unwrapLatexSource } from "./latex_math.ts";
 
 export const LIVE_CONTRACT = "lyx-preview/live-1";
@@ -198,6 +199,12 @@ interface RenderCtx {
   table: number;
   equation: number;
   inTitle: boolean;
+  filePath?: string;
+  labels: Map<string, string>;
+  bib: Map<string, Citation>;
+  citedKeys: string[];
+  bibfiles: string;
+  btprint: string;
 }
 
 const HEADING: Record<string, { tag: string; level: number }> = {
@@ -291,7 +298,95 @@ function diagnostic(ctx: RenderCtx, code: string, message: string): void {
   }
 }
 
-export function renderLiveHtml(ast: DocumentNode): { html: string; warnings: string[]; diagnostics: LiveDiagnostic[] } {
+function indexDocument(nodes: Node[], ctx: RenderCtx): void {
+  const headingCounters = new Map<number, number>();
+  let currentHeading = "";
+
+  const walk = (list: Node[], floatNo: string | undefined) => {
+    for (const n of list) {
+      if (n.type !== "block") continue;
+      if (n.tag === "deeper") {
+        walk(n.children, floatNo);
+        continue;
+      }
+      if (n.tag === "layout") {
+        const layout = (n.args ?? "").trim();
+        const heading = HEADING[layout];
+        if (heading) currentHeading = headingNumber(layout, heading.level, headingCounters).trim();
+        walk(n.children, floatNo);
+        continue;
+      }
+      if (n.tag !== "inset") {
+        walk(n.children, floatNo);
+        continue;
+      }
+      const kind = insetKind(n);
+      if (kind.startsWith("Float ")) {
+        const variant = kind.slice("Float ".length).trim();
+        let num = floatNo;
+        if (variant === "figure") {
+          ctx.figure += 1;
+          num = String(ctx.figure);
+        } else if (variant === "table") {
+          ctx.table += 1;
+          num = String(ctx.table);
+        }
+        walk(n.children, num);
+        continue;
+      }
+      if (kind.startsWith("CommandInset label")) {
+        const name = findProperty(n, "name");
+        if (name) ctx.labels.set(name, floatNo ?? currentHeading);
+        continue;
+      }
+      if (kind === "Formula" || kind.startsWith("Formula")) {
+        const src = formulaSource(n);
+        const { display } = unwrapLatexSource(src);
+        if (display) {
+          ctx.equation += 1;
+          const lab = /\\label\{([^}]+)\}/.exec(src);
+          if (lab) ctx.labels.set(lab[1], String(ctx.equation));
+        }
+        continue;
+      }
+      if (kind.startsWith("CommandInset citation")) {
+        const key = findProperty(n, "key") ?? "";
+        for (const k of key.split(",").map((s) => s.trim()).filter(Boolean)) {
+          if (!ctx.citedKeys.includes(k)) ctx.citedKeys.push(k);
+        }
+      }
+      if (kind.startsWith("CommandInset bibtex")) {
+        ctx.bibfiles = findProperty(n, "bibfiles") ?? ctx.bibfiles;
+        ctx.btprint = findProperty(n, "btprint") ?? ctx.btprint;
+      }
+      walk(n.children, floatNo);
+    }
+  };
+  walk(nodes, undefined);
+  ctx.figure = 0;
+  ctx.table = 0;
+  ctx.equation = 0;
+}
+
+async function loadBibliography(ctx: RenderCtx): Promise<void> {
+  if (!ctx.filePath || !ctx.bibfiles) return;
+  const dir = path.dirname(ctx.filePath);
+  for (const raw of ctx.bibfiles.split(/\s+/).filter(Boolean)) {
+    const name = raw.toLowerCase().endsWith(".bib") ? raw : `${raw}.bib`;
+    const full = path.resolve(dir, name);
+    try {
+      const parsed = parseBibtex(await Deno.readTextFile(full));
+      for (const c of parsed) ctx.bib.set(c.key, c);
+    } catch {
+      warnOnce(ctx, `Could not read bibliography file '${name}'.`);
+    }
+  }
+}
+
+export async function renderLiveHtml(
+  ast: DocumentNode,
+  options: { filePath?: string } = {},
+): Promise<{ html: string; warnings: string[]; diagnostics: LiveDiagnostic[] }> {
   const ctx: RenderCtx = {
     warnings: [],
     diagnostics: [],
@@ -301,7 +396,15 @@ export function renderLiveHtml(ast: DocumentNode): { html: string; warnings: str
     table: 0,
     equation: 0,
     inTitle: false,
+    filePath: options.filePath,
+    labels: new Map(),
+    bib: new Map(),
+    citedKeys: [],
+    bibfiles: "",
+    btprint: "",
   };
+  indexDocument(findBody(ast), ctx);
+  await loadBibliography(ctx);
   const inner = renderFlowItems(flattenFlow(findBody(ast), 0), ctx);
   return {
     html: `<article class="lyx-live">${inner}</article>`,
@@ -315,7 +418,7 @@ export async function buildLiveResponse(
   ast: DocumentNode,
   text: string,
 ): Promise<LiveRenderResult> {
-  const rendered = renderLiveHtml(ast);
+  const rendered = await renderLiveHtml(ast, { filePath: path.resolve(filePath) });
   const resolved = path.resolve(filePath);
   const response: LivePreviewResponse = {
     contract: LIVE_CONTRACT,
@@ -621,11 +724,11 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Tabular") return renderTabular(block, parentState, ctx);
   if (kind.startsWith("Float ")) return renderFloat(block, kind, parentState, ctx);
-  if (kind === "Graphics") return renderGraphics(block);
+  if (kind === "Graphics") return renderGraphics(block, ctx);
   if (kind === "Caption" || kind.startsWith("Caption ")) {
     return renderInsetLayouts(block, parentState, ctx);
   }
-  if (kind.startsWith("CommandInset ")) return renderCommandInset(block, kind);
+  if (kind.startsWith("CommandInset ")) return renderCommandInset(block, kind, ctx);
   if (kind === "Newline" || kind.startsWith("Newline ")) return "<br>";
   if (kind.startsWith("Quotes ")) {
     return escapeLiveHtml(quoteChar(kind));
@@ -700,9 +803,13 @@ function renderFloat(block: BlockNode, kind: string, parentState: TraversalState
   const variant = kind.slice("Float ".length).trim() || "figure";
   const caption = collectBlocks(block, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
   const tabular = collectBlocks(block, (b) => b.tag === "inset" && insetKind(b) === "Tabular");
-  const graphics = collectBlocks(block, (b) => b.tag === "inset" && insetKind(b) === "Graphics");
+  const graphics = collectBlocks(
+    block,
+    (b) => b.tag === "inset" && insetKind(b) === "Graphics",
+    (b) => b.tag === "inset" && insetKind(b) === "Tabular",
+  );
   let body = "";
-  for (const g of graphics) body += renderGraphics(g);
+  for (const g of graphics) body += renderGraphics(g, ctx);
   for (const t of tabular) body += renderTabular(t, parentState, ctx);
   let cap = "";
   for (const c of caption) cap += renderInsetLayouts(c, parentState, ctx);
@@ -718,23 +825,83 @@ function renderFloat(block: BlockNode, kind: string, parentState: TraversalState
   return `<figure class="float-${layoutSlug(variant)}">${body}${capHtml}</figure>`;
 }
 
-function renderGraphics(block: BlockNode): string {
+function renderGraphics(block: BlockNode, ctx: RenderCtx): string {
   const filename = findProperty(block, "filename") ?? "";
   const base = filename.split(/[/\\]/).pop() ?? filename;
-  return `<img data-filename="${escapeLiveHtml(base)}" alt="">`;
+  let src = "";
+  let filepath = "";
+  if (filename && ctx.filePath) {
+    filepath = path.resolve(path.dirname(ctx.filePath), filename);
+    try {
+      src = path.toFileUrl(filepath).href;
+    } catch {
+      src = "";
+    }
+  }
+  const srcAttr = src ? ` src="${escapeLiveHtml(src)}"` : "";
+  const fpAttr = filepath ? ` data-filepath="${escapeLiveHtml(filepath)}"` : "";
+  return `<img${srcAttr}${fpAttr} data-filename="${escapeLiveHtml(base)}" alt="${escapeLiveHtml(base)}">`;
 }
 
-function renderCommandInset(block: BlockNode, kind: string): string {
+function lastName(part: string): string {
+  if (part.includes(",")) return part.split(",")[0].trim();
+  const bits = part.trim().split(/\s+/);
+  return bits[bits.length - 1] ?? part;
+}
+
+function shortAuthor(author?: string): string {
+  if (!author) return "Unknown";
+  const people = author.split(/\s+and\s+/i);
+  const last = lastName(people[0]);
+  return people.length > 1 ? `${last} et al.` : last;
+}
+
+function formatInlineCite(command: string, keys: string[], bib: Map<string, Citation>): string {
+  const parts = keys.map((key) => {
+    const c = bib.get(key);
+    if (!c) return key;
+    const who = shortAuthor(c.author);
+    const year = c.year ?? "";
+    return { who, year };
+  });
+  const parenthetical = command === "citep" || command === "parencite" || command === "cite";
+  if (parenthetical) {
+    return `(${parts.map((p) => typeof p === "string" ? p : `${p.who} ${p.year}`.trim()).join("; ")})`;
+  }
+  return parts.map((p) => typeof p === "string" ? p : `${p.who} (${p.year})`).join("; ");
+}
+
+function renderBibliography(ctx: RenderCtx): string {
+  const citedOnly = ctx.btprint === "btPrintCited" || ctx.citedKeys.length > 0;
+  const items = (citedOnly ? ctx.citedKeys : [...ctx.bib.keys()]).filter((k, i, a) => a.indexOf(k) === i);
+  if (items.length === 0) return "";
+  let html = `<div class="bibliography"><h2 class="bibliography">References</h2>`;
+  for (const key of items) {
+    const c = ctx.bib.get(key);
+    const body = c
+      ? `${escapeLiveHtml(c.author ?? "Unknown")}. ${escapeLiveHtml(c.year ?? "")}. ${escapeLiveHtml(c.title ?? key)}.`
+      : escapeLiveHtml(key);
+    html += `<div class="bibitem" id="LyXCite-${escapeLiveHtml(key)}">${body}</div>`;
+  }
+  html += "</div>";
+  return html;
+}
+
+function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): string {
   const subtype = kind.slice("CommandInset ".length).trim();
   const name = findProperty(block, "name") ?? "";
   const key = findProperty(block, "key") ?? "";
+  const command = findProperty(block, "LatexCommand") ?? subtype;
   if (subtype === "citation") {
-    return `<span class="citation">${escapeLiveHtml(key || name)}</span>`;
+    const keys = (key || name).split(",").map((s) => s.trim()).filter(Boolean);
+    return `<span class="citation">${escapeLiveHtml(formatInlineCite(command, keys, ctx.bib))}</span>`;
   }
   if (subtype === "ref" || subtype === "pageref" || subtype === "formatted") {
     const target = findProperty(block, "reference") ?? name;
-    return `<span class="ref">${escapeLiveHtml(target)}</span>`;
+    const resolved = ctx.labels.get(target) || target;
+    return `<span class="ref">${escapeLiveHtml(resolved)}</span>`;
   }
+  if (subtype === "bibtex") return renderBibliography(ctx);
   if (subtype === "label" || subtype === "index_print" || subtype === "toc" || subtype === "nomenclature_print") {
     return "";
   }
@@ -771,14 +938,18 @@ function findProperty(block: BlockNode, key: string): string | undefined {
   return undefined;
 }
 
-function collectBlocks(root: BlockNode, pred: (b: BlockNode) => boolean): BlockNode[] {
+function collectBlocks(
+  root: BlockNode,
+  pred: (b: BlockNode) => boolean,
+  skip?: (b: BlockNode) => boolean,
+): BlockNode[] {
   const out: BlockNode[] = [];
   const walk = (nodes: Node[]) => {
     for (const n of nodes) {
-      if (n.type === "block") {
-        if (pred(n)) out.push(n);
-        else walk(n.children);
-      }
+      if (n.type !== "block") continue;
+      if (skip?.(n)) continue;
+      if (pred(n)) out.push(n);
+      else walk(n.children);
     }
   };
   walk(root.children);
