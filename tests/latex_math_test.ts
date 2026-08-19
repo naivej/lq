@@ -42,6 +42,18 @@ Deno.test("renderFormulaHtml - MathML plus TeX annotation, escaped", () => {
   assertFalse(html.includes("<b>"), "less-than must stay escaped");
 });
 
+Deno.test("latexToMathML - cases and pmatrix become mtable", () => {
+  const cases = latexToMathML("\\begin{cases}A & B>0\\end{cases}");
+  assertStringIncludes(cases, "<mtable>");
+  assertStringIncludes(cases, "<mtd>");
+  assertStringIncludes(cases, "<mi>A</mi>");
+  const pmatrix = latexToMathML("\\begin{pmatrix}a & b\\\\c & d\\end{pmatrix}");
+  assertStringIncludes(pmatrix, "<mtable>");
+  assertStringIncludes(pmatrix, "<mo>(</mo>");
+  assertStringIncludes(pmatrix, "<mi>a</mi>");
+  assertStringIncludes(pmatrix, "<mi>d</mi>");
+});
+
 Deno.test("latexToMathML - unknown commands stay escaped mtext-like mi", () => {
   const html = latexToMathML("\\unknown{x}");
   if (html.includes("<script")) throw new Error("unknown command must not become a script");

@@ -5,6 +5,7 @@
  * here; it is a development oracle in tools/xhtml_oracle.ts.
  */
 import type { BlockNode, DocumentNode, Node } from "./ast.ts";
+import { parse } from "./parser.ts";
 import { hashFile } from "./cache.ts";
 import {
   advanceTraversalState,
@@ -198,6 +199,7 @@ interface RenderCtx {
   titleFoot: number;
   figure: number;
   table: number;
+  algorithm: number;
   equation: number;
   inTitle: boolean;
   inWrap: boolean;
@@ -215,6 +217,7 @@ interface RenderCtx {
   nomencl: NomenclEntry[];
   layoutCounters: Map<string, number>;
   bibitem: number;
+  includeStack: string[];
 }
 
 interface NomenclEntry {
@@ -314,6 +317,20 @@ function layoutRole(name: string, html: Map<string, LayoutHtml> | null): LayoutR
 
 function role(name: string, ctx: RenderCtx): LayoutRole {
   return layoutRole(name, ctx.layoutHtml);
+}
+
+function alignAttr(node: BlockNode): string {
+  let value = "";
+  for (const c of node.children) {
+    if (c.type === "property" && c.key === "align" && c.value) {
+      value = c.value.toLowerCase();
+      break;
+    }
+  }
+  if (value === "center" || value === "left" || value === "right") {
+    return ` style="text-align: ${value}"`;
+  }
+  return "";
 }
 
 function staticLayoutLabel(name: string, ctx: RenderCtx): string {
@@ -501,6 +518,9 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         } else if (variant === "table") {
           ctx.table += 1;
           num = String(ctx.table);
+        } else if (variant === "algorithm") {
+          ctx.algorithm += 1;
+          num = String(ctx.algorithm);
         }
         walk(n.children, num, false);
         continue;
@@ -508,6 +528,9 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       if (kind.startsWith("CommandInset label")) {
         const name = findProperty(n, "name");
         if (name) ctx.labels.set(name, floatNo ?? currentHeading);
+        continue;
+      }
+      if (kind === "FormulaMacro" || kind.startsWith("FormulaMacro")) {
         continue;
       }
       if (kind === "Formula" || kind.startsWith("Formula")) {
@@ -542,6 +565,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
   walk(nodes, undefined, true);
   ctx.figure = 0;
   ctx.table = 0;
+  ctx.algorithm = 0;
   ctx.equation = 0;
 }
 
@@ -636,6 +660,7 @@ export async function renderLiveHtml(
     titleFoot: 0,
     figure: 0,
     table: 0,
+    algorithm: 0,
     equation: 0,
     inTitle: false,
     inWrap: false,
@@ -653,6 +678,7 @@ export async function renderLiveHtml(
     nomencl: [],
     layoutCounters: new Map(),
     bibitem: 0,
+    includeStack: [],
   };
   indexDocument(findBody(ast), ctx);
   await loadBibliography(ctx);
@@ -804,7 +830,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
         items[i - 1].layout !== item.layout ||
         items[i - 1].depth !== item.depth;
       const label = firstOfRun ? staticLayoutLabel(item.layout, ctx) : "";
-      html += `<div class="${layoutSlug(item.layout)}">${label}${inner}</div>`;
+      html += `<div class="${layoutSlug(item.layout)}"${alignAttr(item.node)}>${label}${inner}</div>`;
     }
     i++;
   }
@@ -1109,6 +1135,9 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const n = ctx.footnote;
     return `<span class="foot"><span class="foot_label">${n}</span><span class="foot_inner">${renderInsetLayouts(block, parentState, ctx)}</span></span>`;
   }
+  if (kind === "FormulaMacro" || kind.startsWith("FormulaMacro")) {
+    return "";
+  }
   if (kind === "Formula" || kind.startsWith("Formula ") || kind.startsWith("Formula")) {
     const source = formulaSource(block);
     const { display } = unwrapLatexSource(source);
@@ -1141,6 +1170,9 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind === "Graphics") return renderGraphics(block, ctx);
   if (kind === "Caption" || kind.startsWith("Caption ")) {
     return renderInsetLayouts(block, parentState, ctx);
+  }
+  if (kind.startsWith("CommandInset include") || kind.startsWith("CommandInset input")) {
+    return renderInclude(block, ctx);
   }
   if (kind.startsWith("CommandInset ")) return renderCommandInset(block, kind, ctx);
   if (kind === "Newline" || kind.startsWith("Newline ")) return "<br>";
@@ -1493,6 +1525,9 @@ function renderFloat(block: BlockNode, kind: string, parentState: TraversalState
   } else if (variant === "table") {
     ctx.table += 1;
     prefix = `Table ${ctx.table}: `;
+  } else if (variant === "algorithm") {
+    ctx.algorithm += 1;
+    prefix = `Algorithm ${ctx.algorithm}: `;
   }
   let html = `<figure class="float-${layoutSlug(variant)}">`;
   for (const item of flattenFlow(block.children, 0)) {
@@ -1506,6 +1541,35 @@ function renderFloat(block: BlockNode, kind: string, parentState: TraversalState
   }
   html += "</figure>";
   return html;
+}
+
+function renderInclude(block: BlockNode, ctx: RenderCtx): string {
+  const filename = findProperty(block, "filename") ?? "";
+  const command = (findProperty(block, "LatexCommand") ?? "").toLowerCase();
+  if (!filename) return "";
+  const listing = command.includes("verbatim") || command.includes("lstinput");
+  const resolved = resolveGraphicPath(filename, ctx);
+  if (listing) {
+    try {
+      return `<pre class="include">${escapeLiveHtml(Deno.readTextFileSync(resolved))}</pre>`;
+    } catch {
+      return "";
+    }
+  }
+  const base = filename.split(/[/\\]/).pop() ?? filename;
+  if (!base.toLowerCase().endsWith(".lyx")) return "";
+  if (ctx.includeStack.includes(resolved)) return "";
+  try {
+    const ast = parse(Deno.readTextFileSync(resolved));
+    ctx.includeStack.push(resolved);
+    try {
+      return renderFlowItems(flattenFlow(findBody(ast), 0), ctx);
+    } finally {
+      ctx.includeStack.pop();
+    }
+  } catch {
+    return "";
+  }
 }
 
 function resolveGraphicPath(filename: string, ctx: RenderCtx): string {
@@ -1785,6 +1849,7 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
     const label = name || target;
     return `<a class="href" href="${escapeLiveHtml(target)}">${escapeLiveHtml(label)}</a>`;
   }
+  if (subtype === "include") return renderInclude(block, ctx);
   if (subtype === "bibitem") {
     const label = findProperty(block, "label") ?? "";
     let shown = label;

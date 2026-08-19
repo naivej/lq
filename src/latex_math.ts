@@ -74,6 +74,17 @@ const GREEK: Record<string, string> = {
   partial: "∂",
 };
 
+const MATRIX_ENV: Record<string, { open: string; close: string }> = {
+  matrix: { open: "", close: "" },
+  pmatrix: { open: "(", close: ")" },
+  bmatrix: { open: "[", close: "]" },
+  Bmatrix: { open: "{", close: "}" },
+  vmatrix: { open: "|", close: "|" },
+  Vmatrix: { open: "∥", close: "∥" },
+  cases: { open: "{", close: "" },
+  array: { open: "", close: "" },
+};
+
 const LARGEOP = new Set(["sum", "prod", "int", "oint"]);
 const LARGEOP_CHAR: Record<string, string> = {
   sum: "∑",
@@ -281,7 +292,12 @@ class Parser {
       this.readGroupText();
       return "";
     }
-    if (name === "begin" || name === "end") {
+    if (name === "begin") {
+      const env = this.readGroupText();
+      if (MATRIX_ENV[env]) return this.parseMatrix(env);
+      return "";
+    }
+    if (name === "end") {
       this.readGroupText();
       return "";
     }
@@ -296,6 +312,83 @@ class Parser {
     // Unknown command: skip one optional group and show the name.
     if (this.s[this.i] === "{") this.readGroupText();
     return `<mi>${escapeLiveHtml("\\" + name)}</mi>`;
+  }
+
+  private parseMatrix(env: string): string {
+    this.skipSpace();
+    if (this.s[this.i] === "[") {
+      this.i++;
+      this.parseExprUntil("]");
+      if (this.s[this.i] === "]") this.i++;
+    }
+    this.skipSpace();
+    if (this.s[this.i] === "{") this.readGroupText();
+    const rows: string[][] = [];
+    let row: string[] = [];
+    const flush = () => {
+      if (row.length) {
+        rows.push(row);
+        row = [];
+      }
+    };
+    while (this.i < this.s.length) {
+      this.skipSpace();
+      if (this.s[this.i] === "\n" || this.s[this.i] === "\r") {
+        this.i++;
+        continue;
+      }
+      if (this.startsCommand("end")) {
+        this.i += 1 + "end".length;
+        this.readGroupText();
+        flush();
+        break;
+      }
+      row.push(this.parseMatrixCell() || "<mrow/>");
+      this.skipSpace();
+      if (this.s[this.i] === "&") {
+        this.i++;
+        continue;
+      }
+      if (this.s.startsWith("\\\\", this.i)) {
+        this.i += 2;
+        this.skipSpace();
+        if (this.s[this.i] === "[") {
+          this.i++;
+          this.parseExprUntil("]");
+          if (this.s[this.i] === "]") this.i++;
+        }
+        flush();
+        continue;
+      }
+      flush();
+      if (this.startsCommand("end")) continue;
+      break;
+    }
+    const table = `<mtable>${
+      rows.map((r) => `<mtr>${r.map((c) => `<mtd>${c}</mtd>`).join("")}</mtr>`).join("")
+    }</mtable>`;
+    const fences = MATRIX_ENV[env] ?? { open: "", close: "" };
+    if (!fences.open && !fences.close) return table;
+    const close = fences.close ? `<mo>${escapeLiveHtml(fences.close)}</mo>` : "";
+    return `<mrow><mo>${escapeLiveHtml(fences.open)}</mo>${table}${close}</mrow>`;
+  }
+
+  private parseMatrixCell(): string {
+    const parts: string[] = [];
+    while (this.i < this.s.length) {
+      this.skipSpace();
+      if (this.s[this.i] === "&") break;
+      if (this.s.startsWith("\\\\", this.i)) break;
+      if (this.startsCommand("end")) break;
+      if (this.s[this.i] === "\n" || this.s[this.i] === "\r") {
+        this.i++;
+        continue;
+      }
+      parts.push(this.parseWithScripts());
+    }
+    if (parts.length === 0) return "";
+    if (parts.length === 1) return parts[0];
+    return `<mrow>${parts.join("")}</mrow>`;
   }
 
   private readDelimiter(): string {

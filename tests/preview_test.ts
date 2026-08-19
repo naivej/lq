@@ -297,6 +297,11 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, "\u2423");
   assertStringIncludes(html, "<mo>↓</mo>");
   assertStringIncludes(html, "<mfrac>");
+  assertStringIncludes(html, "<mtable>");
+  assert(
+    !html.includes('encoding="application/x-tex">\\newcommand{\\qG}'),
+    "FormulaMacro must not be rendered as a formula",
+  );
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
@@ -354,6 +359,7 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, 'class="multicol"');
   assertStringIncludes(html, "column-count: 2");
   assertStringIncludes(html, "The Adventure of the Empty House");
+  assert(!html.includes("{100.125}"), "non-LyX include (.tex) must be omitted like native XHTML");
 });
 
 Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph", async () => {
@@ -406,6 +412,12 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, 'id="LyXCite-Mittelbach"');
   assertStringIncludes(html, '<span class="bibtexlabel">');
   assertStringIncludes(html, "The LaTeX Companion");
+  assertStringIncludes(html, 'style="text-align: right"');
+  assertStringIncludes(html, "This paragraph is right aligned");
+  assertStringIncludes(html, 'style="text-align: center"');
+  assertStringIncludes(html, "this one is centered");
+  assertStringIncludes(html, 'style="text-align: left"');
+  assertStringIncludes(html, "this one is left aligned");
 });
 
 Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings", async () => {
@@ -433,6 +445,10 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, "Example Listing float");
   assertStringIncludes(html, "def func(param):");
   assertStringIncludes(html, 'data-filename="Abstract.pdf"');
+  assertStringIncludes(html, "<figcaption>Algorithm 1: ");
+  assertStringIncludes(html, "Example Algorithm float");
+  assertStringIncludes(html, "This is a small dummy child document");
+  assertStringIncludes(html, "External Subsection 1");
 });
 
 Deno.test("Live renderer - escape helper is applied to source-derived text", () => {
