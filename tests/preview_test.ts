@@ -317,6 +317,10 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
     !html.includes("<mtext></mtext><annotation encoding=\"application/x-tex\"></annotation>"),
     "display formulas whose body starts with \\int must not collapse to empty MathML",
   );
+  assertStringIncludes(html, "(something)");
+  assertStringIncludes(html, "<mo>⟨</mo>");
+  assertStringIncludes(html, "updiagonalstrike");
+  assertStringIncludes(html, "mod ");
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
@@ -432,6 +436,8 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, '<a href="#idx-');
   assertStringIncludes(html, 'id="idx-');
   assertStringIncludes(html, 'style="text-align: right"');
+  assertStringIncludes(html, 'mathvariant="double-struck"');
+  assertStringIncludes(html, "<mo>↻</mo>");
   assertStringIncludes(html, "This paragraph is right aligned");
   assertStringIncludes(html, 'style="text-align: center"');
   assertStringIncludes(html, "this one is centered");

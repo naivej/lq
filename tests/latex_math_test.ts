@@ -74,6 +74,18 @@ Deno.test("latexToMathML - common symbols, accents, and left-array", () => {
   const tinted = latexToMathML("\\textcolor{red}{\\int A=B}");
   assertStringIncludes(tinted, 'mathcolor="red"');
   assertStringIncludes(tinted, "∫");
+  const brack = latexToMathML("{A \\brack B}");
+  assertStringIncludes(brack, "<mfrac");
+  assertStringIncludes(brack, "<mo>[</mo>");
+  assertStringIncludes(latexToMathML("a\\pmod b"), "mod");
+  assertStringIncludes(latexToMathML("\\Bra{\\psi}"), "⟨");
+  assertStringIncludes(latexToMathML("\\cancel{x}"), "updiagonalstrike");
+  const aligned = latexToMathML("\\begin{aligned}A&=B\\\\C&=D\\end{aligned}");
+  assertStringIncludes(aligned, "<mtable>");
+  assertStringIncludes(aligned, "<mi>C</mi>");
+  const tagged = renderFormulaHtml("\\begin{equation}A+B=C\\tag{something}\\end{equation}", 9);
+  assertStringIncludes(tagged, "(something)");
+  assertFalse(tagged.includes("(9)"), "\\tag replaces the sequential equation number");
 });
 
 Deno.test("latexToMathML - unknown commands stay escaped mtext-like mi", () => {

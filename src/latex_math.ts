@@ -100,6 +100,12 @@ const SYM_MO: Record<string, string> = {
   checkmark: "✓", maltese: "✠",
   euro: "€", yen: "¥", pounds: "£", copyright: "©", P: "¶",
   complement: "∁", therefore: "∴", because: "∵",
+  Box: "□", bigcirc: "○", setminus: "∖", bigstar: "★",
+  blacklozenge: "◆", blacktriangle: "▲", blacktriangledown: "▼",
+  circledR: "®", diagup: "╱", diagdown: "╲",
+  lhd: "◃", rhd: "▹", unlhd: "⊴", unrhd: "⊵",
+  circeq: "≗", circlearrowright: "↻", circlearrowleft: "↺",
+  mathcircumflex: "^",
 };
 
 const MATRIX_ENV: Record<string, { open: string; close: string }> = {
@@ -112,18 +118,27 @@ const MATRIX_ENV: Record<string, { open: string; close: string }> = {
   Vmatrix: { open: "∥", close: "∥" },
   cases: { open: "{", close: "" },
   array: { open: "", close: "" },
+  aligned: { open: "", close: "" },
+  alignedat: { open: "", close: "" },
+  gathered: { open: "", close: "" },
+  split: { open: "", close: "" },
+  subarray: { open: "", close: "" },
 };
 
 const LARGEOP = new Set([
   "sum", "prod", "int", "oint", "iint", "iiint", "iiiint",
   "bigcap", "bigcup", "bigvee", "bigwedge", "bigodot", "bigoplus", "bigotimes",
   "bigsqcup", "biguplus", "coprod",
+  "oiint", "sqint", "sqiint", "fint", "dotsint",
+  "ointclockwise", "ointctrclockwise", "landupint", "landdownint",
 ]);
 const LARGEOP_CHAR: Record<string, string> = {
   sum: "∑", prod: "∏", int: "∫", oint: "∮", iint: "∬", iiint: "∭", iiiint: "⨌",
   bigcap: "⋂", bigcup: "⋃", bigvee: "⋁", bigwedge: "⋀",
   bigodot: "⨀", bigoplus: "⨁", bigotimes: "⨂", bigsqcup: "⨆", biguplus: "⨄",
   coprod: "∐",
+  oiint: "∯", sqint: "∰", sqiint: "∰", fint: "⨏", dotsint: "∫⋯",
+  ointclockwise: "∲", ointctrclockwise: "∳", landupint: "∫", landdownint: "∫",
 };
 
 const OPNAME = new Set([
@@ -177,13 +192,29 @@ export function unwrapLatexSource(source: string): { display: boolean; body: str
   return { display, body: s };
 }
 
+function extractTag(body: string): { star: boolean; text: string } | undefined {
+  const m = /\\tag(\*)?\{([^{}]*)\}/.exec(body);
+  if (!m) return undefined;
+  return { star: m[1] === "*", text: m[2] };
+}
+
 export function renderFormulaHtml(source: string, equationNo?: number): string {
   const { display, body } = unwrapLatexSource(source);
   const inner = latexToMathML(body);
   const displayAttr = display ? ' display="block"' : "";
   const math =
     `<math xmlns="http://www.w3.org/1998/Math/MathML"${displayAttr}><semantics>${inner}<annotation encoding="application/x-tex">${escapeLiveHtml(body)}</annotation></semantics></math>`;
-  const eqno = equationNo !== undefined ? `<span class="eqno">(${equationNo})</span>` : "";
+  const tagged = extractTag(body);
+  let eqno = "";
+  if (display) {
+    if (tagged) {
+      eqno = tagged.star
+        ? `<span class="eqno">${escapeLiveHtml(tagged.text)}</span>`
+        : `<span class="eqno">(${escapeLiveHtml(tagged.text)})</span>`;
+    } else if (equationNo !== undefined) {
+      eqno = `<span class="eqno">(${equationNo})</span>`;
+    }
+  }
   return `<span class="formula">${math}${eqno}</span>`;
 }
 
@@ -209,6 +240,18 @@ class Parser {
         continue;
       }
       parts.push(this.parseWithScripts());
+      this.skipSpace();
+      if (this.startsCommand("brack") || this.startsCommand("brace")) {
+        const which = this.startsCommand("brack") ? "brack" : "brace";
+        this.i += 1 + which.length;
+        const right = this.parseWithScripts();
+        const left = parts.pop() ?? "";
+        const open = which === "brack" ? "[" : "{";
+        const close = which === "brack" ? "]" : "}";
+        parts.push(
+          `<mrow><mo>${open}</mo><mfrac linethickness="0">${left}${right}</mfrac><mo>${close}</mo></mrow>`,
+        );
+      }
     }
     if (parts.length === 0) return "";
     if (parts.length === 1) return parts[0];
@@ -391,6 +434,85 @@ class Parser {
       const inner = this.parseGroupOrAtom();
       return `<menclose notation="box">${inner}</menclose>`;
     }
+    if (name === "mathds") {
+      const inner = this.parseGroupOrAtom();
+      return `<mstyle mathvariant="double-struck">${inner}</mstyle>`;
+    }
+    if (name === "pmod") {
+      const inner = this.parseGroupOrAtom();
+      return `<mrow><mo>(</mo><mtext>mod </mtext>${inner}<mo>)</mo></mrow>`;
+    }
+    if (name === "pod") {
+      const inner = this.parseGroupOrAtom();
+      return `<mrow><mo>(</mo>${inner}<mo>)</mo></mrow>`;
+    }
+    if (name === "Bra") {
+      return `<mrow><mo>⟨</mo>${this.parseGroupOrAtom()}<mo>|</mo></mrow>`;
+    }
+    if (name === "Ket") {
+      return `<mrow><mo>|</mo>${this.parseGroupOrAtom()}<mo>⟩</mo></mrow>`;
+    }
+    if (name === "Braket") {
+      return `<mrow><mo>⟨</mo>${this.parseGroupOrAtom()}<mo>⟩</mo></mrow>`;
+    }
+    if (name === "cancel") {
+      return `<menclose notation="updiagonalstrike">${this.parseGroupOrAtom()}</menclose>`;
+    }
+    if (name === "bcancel") {
+      return `<menclose notation="downdiagonalstrike">${this.parseGroupOrAtom()}</menclose>`;
+    }
+    if (name === "xcancel") {
+      return `<menclose notation="updiagonalstrike downdiagonalstrike">${this.parseGroupOrAtom()}</menclose>`;
+    }
+    if (name === "cancelto") {
+      const to = this.parseGroupOrAtom();
+      const inner = this.parseGroupOrAtom();
+      return `<msup><menclose notation="updiagonalstrike">${inner}</menclose>${to}</msup>`;
+    }
+    if (name === "sideset") {
+      this.parseGroupOrAtom();
+      this.parseGroupOrAtom();
+      return this.parseWithScripts();
+    }
+    if (name === "splitfrac" || name === "splitdfrac") {
+      const a = this.parseGroupOrAtom();
+      const b = this.parseGroupOrAtom();
+      return `<mfrac>${a}${b}</mfrac>`;
+    }
+    if (name === "substack") {
+      const raw = this.readGroupText();
+      const rows = raw.split(/\\\\/).map((row) => `<mtr><mtd>${latexToMathML(row.trim())}</mtd></mtr>`);
+      return `<mtable>${rows.join("")}</mtable>`;
+    }
+    if (name === "intertext" || name === "shortintertext") {
+      const inner = this.readGroupText();
+      return `<mtext>${escapeLiveHtml(inner)}</mtext>`;
+    }
+    if (name === "varliminf") return `<munder><mi>lim</mi><mo>―</mo></munder>`;
+    if (name === "varlimsup") return `<mover><mi>lim</mi><mo>―</mo></mover>`;
+    if (name === "varprojlim") return `<munder><mi>lim</mi><mo>←</mo></munder>`;
+    if (name === "varinjlim") return `<munder><mi>lim</mi><mo>→</mo></munder>`;
+    if (name === "relax") return "";
+    if (name === "footnotesize" || name === "scriptsize") return this.parseWithScripts();
+    if (name === "unit") {
+      const inner = this.s[this.i] === "{" ? this.readGroupText() : this.readColorWord();
+      return `<mtext>${escapeLiveHtml(inner)}</mtext>`;
+    }
+    if (name === "uptau") return "<mi>τ</mi>";
+    if (name === "uppi") return "<mi>π</mi>";
+    if (name === "upmu") return "<mi>μ</mi>";
+    if (name === "upnu") return "<mi>ν</mi>";
+    if (name === "hfill" || name === "negmedspace" || name === "negthickspace" || name === "negthinspace") {
+      return "<mspace width='0.2em'/>";
+    }
+    if (name === "hdotsfor" || name === "dotfill") {
+      if (this.s[this.i] === "{") this.readGroupText();
+      return "<mo>⋯</mo>";
+    }
+    if (name === "hrulefill") return "<mo>─</mo>";
+    if (name === "lefteqn" || name === "shoveleft" || name === "oldstylenums") {
+      return this.parseGroupOrAtom();
+    }
     if (name === "mathbf" || name === "boldsymbol" || name === "mathsf" || name === "mathtt" ||
       name === "mathit" || name === "mathcal" || name === "mathfrak" || name === "mathbb" ||
       name === "mathscr") {
@@ -444,7 +566,7 @@ class Parser {
       const base = this.parseGroupOrAtom();
       return name === "underset" ? `<munder>${base}${acc}</munder>` : `<mover>${base}${acc}</mover>`;
     }
-    if (/^x(?:long)?(?:left|right|leftright|Left|Right|Leftright)/.test(name)) {
+    if (/^x/.test(name) && /arrow|harpoon|hook/.test(name)) {
       if (this.s[this.i] === "[") {
         this.i++;
         this.parseExprUntil("]");
