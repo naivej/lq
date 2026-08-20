@@ -175,8 +175,10 @@ Deno.test("Live renderer - table, figure, footnote, formula", async () => {
   assertStringIncludes(html, "E=mc^{2}");
   assertStringIncludes(html, "<figure");
   assertStringIncludes(html, 'data-filename="live-figure.png"');
-  assertStringIncludes(html, "<figcaption>Figure 1: ");
-  assert(!html.includes("<figcaption>Figure 1: <div"), "caption must stay on one line");
+  assertStringIncludes(html, "<figcaption");
+  assertStringIncludes(html, "Figure 1: ");
+  assertStringIncludes(html, 'class="float-caption-Standard"');
+  assert(!/<figcaption[^>]*>Figure 1: <div/.test(html), "caption must stay on one line");
   assertStringIncludes(html, "data-filepath=");
   assertStringIncludes(html, 'src="file:');
 });
@@ -256,11 +258,12 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assertStringIncludes(html, "data-filename=\"beamer-g4.jpg\"");
   assertStringIncludes(html, "data-filepath=");
   const fig = html.slice(html.indexOf("<figure"), html.indexOf("</figure>") + 9);
-  const capAt = fig.indexOf("<figcaption>");
+  const capAt = fig.indexOf("<figcaption");
   const tableAt = fig.indexOf("<table");
   assert(capAt !== -1 && tableAt !== -1 && capAt < tableAt, "figure caption must appear above the figure body");
-  assertStringIncludes(fig, "<figcaption>Figure 1: Figure caption");
-  assert(!fig.includes("<figcaption>Figure 1: <div"), "figure number and caption must be one line");
+  assertStringIncludes(fig, "Figure 1: Figure caption");
+  assertStringIncludes(fig, 'class="float-caption-Standard"');
+  assert(!/<figcaption[^>]*>Figure 1: <div/.test(fig), "figure number and caption must be one line");
 });
 
 Deno.test({
@@ -521,7 +524,9 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, "This is a margin note.");
   assertStringIncludes(html, 'class="wrap wrap-left"');
   assertStringIncludes(html, "width: 40%");
-  assertStringIncludes(html, "<figcaption>Figure 6.1: ");
+  assertStringIncludes(html, "<figcaption");
+  assertStringIncludes(html, "Figure 6.1: ");
+  assertStringIncludes(html, 'class="float-caption-Standard"');
   assertStringIncludes(html, "This is a wrapped figure float.");
   assertStringIncludes(html, 'href="#fig_This_is_a">6.1</a>');
   assertStringIncludes(html, 'data-filename="2D-intensity-plot.pdf"');
@@ -535,7 +540,8 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, '<code class="listings C++">');
   assertStringIncludes(html, "int a=5;");
   assertStringIncludes(html, '<div class="float-listings">');
-  assertStringIncludes(html, "<div class=\"listings-caption\">Listing 8.1: ");
+  assertStringIncludes(html, "listings-caption");
+  assertStringIncludes(html, "Listing 8.1: ");
   assertStringIncludes(html, "Example Listing float");
   assertStringIncludes(html, 'href="#lst_Example_Listing">8.1</a>');
   assertStringIncludes(html, 'href="#lst_file_listing">8.2</a>');
@@ -545,7 +551,7 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, "Listing 8.3: ");
   assertStringIncludes(html, "def func(param):");
   assertStringIncludes(html, 'data-filename="Abstract.pdf"');
-  assertStringIncludes(html, "<figcaption>Algorithm 3.1: ");
+  assertStringIncludes(html, "Algorithm 3.1: ");
   assertStringIncludes(html, "Example Algorithm float");
   assertStringIncludes(html, "This is a small dummy child document");
   assertStringIncludes(html, "External Subsection 1");
@@ -553,6 +559,26 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assert(
     !html.includes("\\end_header"),
     "lstinputlisting of this file must honor firstline/lastline, not dump the whole .lyx source",
+  );
+  // Caption Below / Unnumbered (native float-caption-{type}; caption* has no number prefix)
+  assertStringIncludes(html, 'class="float-caption-Below"');
+  assertStringIncludes(html, "A caption marked as being below the table.");
+  const belowAt = html.indexOf("A caption marked as being below the table.");
+  assert(belowAt !== -1, "Caption Below text missing");
+  const belowCap = html.lastIndexOf("<figcaption", belowAt);
+  assert(belowCap !== -1 && html.slice(belowCap, belowAt).includes("float-caption-Below"), "Below class on figcaption");
+  assert(/Table \d/.test(html.slice(belowCap, belowAt)), "Caption Below keeps Table N: prefix");
+  assertStringIncludes(html, 'class="float-caption-Unnumbered"');
+  assertStringIncludes(html, "Continued Example Phone List");
+  const contAt = html.indexOf("Continued Example Phone List");
+  const contSpan = html.lastIndexOf("<span", contAt);
+  assert(
+    contSpan !== -1 && html.slice(contSpan, contAt).includes("float-caption-Unnumbered"),
+    "longtable Caption Unnumbered wraps with float-caption-Unnumbered",
+  );
+  assert(
+    !html.slice(Math.max(0, contAt - 80), contAt).includes("Table "),
+    "Caption Unnumbered must not get a Table N: prefix",
   );
 });
 

@@ -1375,7 +1375,9 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Graphics") return renderGraphics(block, ctx);
   if (kind === "Caption" || kind.startsWith("Caption ")) {
-    return renderInsetLayouts(block, parentState, ctx);
+    const type = captionTypeFromKind(kind);
+    const inner = renderInsetLayouts(block, parentState, ctx);
+    return `<span class="float-caption-${escapeLiveHtml(type)}">${inner}</span>`;
   }
   if (kind.startsWith("CommandInset include") || kind.startsWith("CommandInset input")) {
     return renderInclude(block, ctx);
@@ -1791,9 +1793,34 @@ function floatCaptionPrefix(variant: string, num: string | undefined): string {
   return `${name} ${num}: `;
 }
 
+/** `Caption Below` → `Below`; bare `Caption` → `Standard` (native type_). */
+function captionTypeFromKind(kind: string): string {
+  if (!kind.startsWith("Caption")) return "Standard";
+  const rest = kind.slice("Caption".length).trim();
+  return rest || "Standard";
+}
+
+function captionBlocks(root: BlockNode): BlockNode[] {
+  return collectBlocks(root, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
+}
+
+function captionsAreUnnumbered(captions: BlockNode[]): boolean {
+  return captions.length > 0 &&
+    captions.every((c) => captionTypeFromKind(insetKind(c)) === "Unnumbered");
+}
+
+/** Native InsetCaption::xhtml adds `float-caption-{type}` (Below, Unnumbered, …). */
+function captionClassAttr(captions: BlockNode[]): string {
+  if (captions.length === 0) return "";
+  const type = captionTypeFromKind(insetKind(captions[0]));
+  return ` class="float-caption-${escapeLiveHtml(type)}"`;
+}
+
 function listingTakesNumber(block: BlockNode): boolean {
   if ((findProperty(block, "inline") ?? "").toLowerCase() === "true") return false;
-  return collectBlocks(block, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption")).length > 0;
+  const captions = captionBlocks(block);
+  if (captions.length === 0) return false;
+  return !captionsAreUnnumbered(captions);
 }
 
 function includeIsListings(block: BlockNode): boolean {
@@ -1802,13 +1829,19 @@ function includeIsListings(block: BlockNode): boolean {
 }
 
 function renderCaptionedFloat(block: BlockNode, variant: string, ctx: RenderCtx): string {
-  const prefix = floatCaptionPrefix(variant, takeFloatNumber(ctx, variant));
+  const allCaptions = captionBlocks(block);
+  const numbered = !captionsAreUnnumbered(allCaptions);
+  const prefix = numbered
+    ? floatCaptionPrefix(variant, takeFloatNumber(ctx, variant))
+    : "";
   let html = `<figure class="float-${layoutSlug(variant)}">`;
   for (const item of flattenFlow(block.children, 0)) {
     const captions = collectBlocks(item.node, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
     if (captions.length > 0) {
       const cap = captions.map((c) => renderCaptionInline(c, ctx)).join("");
-      html += `<figcaption>${prefix}${cap}</figcaption>`;
+      // Number once per float; only the first caption block gets the prefix.
+      const usePrefix = prefix && html.indexOf("<figcaption") === -1 ? prefix : "";
+      html += `<figcaption${captionClassAttr(captions)}>${usePrefix}${cap}</figcaption>`;
       continue;
     }
     html += `<div class="float-body">${renderLayoutInline(item.node, ctx)}</div>`;
@@ -1876,7 +1909,7 @@ function listingCode(block: BlockNode): string {
 function renderListings(block: BlockNode, _parentState: TraversalState, ctx: RenderCtx): string {
   const lang = listingLanguage(findProperty(block, "lstparams") ?? "");
   const inline = (findProperty(block, "inline") ?? "").toLowerCase() === "true";
-  const captions = collectBlocks(block, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
+  const captions = captionBlocks(block);
   const captionHtml = captions.map((c) => renderCaptionInline(c, ctx)).join("");
   const cls = lang ? `listings ${escapeLiveHtml(lang)}` : "listings";
   const code = `<code class="${cls}">${escapeLiveHtml(listingCode(block))}</code>`;
@@ -1884,7 +1917,7 @@ function renderListings(block: BlockNode, _parentState: TraversalState, ctx: Ren
   let html = `<div class="float-listings">`;
   if (captionHtml) {
     const prefix = listingTakesNumber(block) ? floatCaptionPrefix("listing", takeFloatNumber(ctx, "listing")) : "";
-    html += `<div class="listings-caption">${prefix}${captionHtml}</div>`;
+    html += `<div class="listings-caption"${captionClassAttr(captions)}>${prefix}${captionHtml}</div>`;
   }
   html += `${code}</div>`;
   return html;
