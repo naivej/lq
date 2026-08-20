@@ -244,6 +244,9 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assertStringIncludes(html, '<a class="ref" href="#subsec_subsec_label">1.1</a>');
   assertStringIncludes(html, 'id="sec_Section_label"');
   assert(!html.includes("sec:Section_label"), "refs must resolve to numbers, not raw keys");
+  assertStringIncludes(html, "<h4>1.1.1 Subsubsection");
+  assertStringIncludes(html, 'class="float-table"');
+  assertStringIncludes(html, "Table 1: Table caption");
   assertStringIncludes(html, ">A Appendix");
   assertStringIncludes(html, 'href="#LyXCite-Abernethy2003"');
   assertStringIncludes(html, "Abernethy et al.");
@@ -443,6 +446,11 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, '<span class="layout-label">Definition.');
   assertStringIncludes(html, '<span class="layout-label">Example.');
   assertStringIncludes(html, 'class="index"');
+  // Inline SpecialChar (inline-properties pass)
+  assertStringIncludes(html, "\u2026"); // ldots
+  assertStringIncludes(html, "\u00ad"); // softhyphen
+  assertStringIncludes(html, "\u2044"); // breakableslash
+  assertStringIncludes(html, "LaTeX2\u03b5");
 });
 
 Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph", async () => {
@@ -570,6 +578,11 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, "font-variant: small-caps"); // shape smallcaps
   assertStringIncludes(html, "This is the Small caps font shape");
   assertStringIncludes(html, "<s>"); // strikeout
+  assertStringIncludes(html, 'style="color: blue"');
+  assertStringIncludes(html, 'style="color: red"');
+  assertStringIncludes(html, 'style="color: green"');
+  assertStringIncludes(html, "\u2044"); // breakableslash
+  assertStringIncludes(html, "\u200b"); // allowbreak
   assertStringIncludes(html, "This paragraph is right aligned");
   assertStringIncludes(html, 'style="text-align: center"');
   assertStringIncludes(html, "this one is centered");
@@ -681,6 +694,9 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, 'class="citation"');
   assertStringIncludes(html, "<hr>");
   assertStringIncludes(html, 'class="index"');
+  assertStringIncludes(html, 'style="color: white"');
+  assertStringIncludes(html, 'style="color: yellow"');
+  assertStringIncludes(html, 'style="color: magenta"');
 });
 
 Deno.test("Live renderer - Help Formula-numbering.lyx refs and eqno", async () => {
