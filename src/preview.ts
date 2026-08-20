@@ -215,6 +215,7 @@ interface RenderCtx {
   outline: OutlineEntry[];
   layoutHtml: Map<string, LayoutHtml> | null;
   nomencl: NomenclEntry[];
+  index: IndexEntry[];
   layoutCounters: Map<string, number>;
   bibitem: number;
   includeStack: string[];
@@ -223,6 +224,12 @@ interface RenderCtx {
 interface NomenclEntry {
   symbol: string;
   desc: string;
+  sort: string;
+}
+
+interface IndexEntry {
+  terms: string[];
+  see: string;
   sort: string;
 }
 
@@ -559,6 +566,11 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         if (entry.symbol || entry.desc) ctx.nomencl.push(entry);
         continue;
       }
+      if (kind === "Index" || kind.startsWith("Index ")) {
+        const entry = collectIndexEntry(n);
+        if (entry.terms.length || entry.see) ctx.index.push(entry);
+        continue;
+      }
       walk(n.children, floatNo, false);
     }
   };
@@ -676,6 +688,7 @@ export async function renderLiveHtml(
     outline: [],
     layoutHtml: await loadLayoutHtml(ast, layoutsDir),
     nomencl: [],
+    index: [],
     layoutCounters: new Map(),
     bibitem: 0,
     includeStack: [],
@@ -725,7 +738,21 @@ function sectionId(number: string, text: string): string {
   return `sec-${slug || "x"}`;
 }
 
+function isOmittedInsetKind(kind: string): boolean {
+  return (
+    kind === "ERT" ||
+    kind === "Index" || kind.startsWith("Index ") ||
+    kind.startsWith("IndexMacro") ||
+    kind === "Nomenclature" || kind.startsWith("Nomenclature ") ||
+    kind === "Argument" || kind.startsWith("Argument ") ||
+    kind.startsWith("CommandInset label") ||
+    kind === "FormulaMacro" || kind.startsWith("FormulaMacro")
+  );
+}
+
 function headingPlainText(layout: BlockNode): string {
+  const short = argumentText(layout, "1");
+  if (short) return short.replace(/\s+/g, " ").trim();
   let out = "";
   const walk = (nodes: Node[]) => {
     for (const n of nodes) {
@@ -733,18 +760,7 @@ function headingPlainText(layout: BlockNode): string {
         if (!isStatusLine(n.text)) out += expandSpecialInText(n.text);
       } else if (n.type === "property" && n.key === "SpecialChar") out += specialChar(n.value ?? "");
       else if (n.type === "block") {
-        if (n.tag === "inset") {
-          const kind = insetKind(n);
-          if (
-            kind.startsWith("CommandInset label") ||
-            kind === "Index" || kind.startsWith("Index ") ||
-            kind.startsWith("IndexMacro") ||
-            kind === "ERT" ||
-            kind === "Nomenclature" || kind.startsWith("Nomenclature ")
-          ) {
-            continue;
-          }
-        }
+        if (n.tag === "inset" && isOmittedInsetKind(insetKind(n))) continue;
         walk(n.children);
       }
     }
@@ -974,9 +990,9 @@ function splitDescription(layout: BlockNode, ctx: RenderCtx): { label: string; r
       if (n.type === "text") {
         const cut = n.text.search(/[ \t]/);
         if (cut === -1) {
-          label += n.text;
+          label += escapeLiveHtml(n.text);
         } else {
-          label += n.text.slice(0, cut);
+          label += escapeLiveHtml(n.text.slice(0, cut));
           const tail = n.text.slice(cut + 1);
           if (tail) rest += escapeLiveHtml(expandSpecialInText(tail));
           inRest = true;
@@ -989,13 +1005,18 @@ function splitDescription(layout: BlockNode, ctx: RenderCtx): { label: string; r
           label += "\u00a0";
           continue;
         }
+        if (n.tag === "inset" && (isOmittedInsetKind(kind) || isInvisibleInset(n))) continue;
+        if (n.tag === "inset") {
+          label += renderInset(n, state, ctx);
+          continue;
+        }
         walk(n.children, enterTraversalState(state));
       }
     }
   };
   walk(layout.children, createTraversalState());
   return {
-    label: escapeLiveHtml(label.replace(/\s+/g, " ").trim()),
+    label: label.replace(/^\s+|\s+$/g, ""),
     rest: rest.trim(),
   };
 }
@@ -1266,13 +1287,16 @@ function renderInsetLayouts(block: BlockNode, parentState: TraversalState, ctx: 
 
 function formulaSource(block: BlockNode): string {
   const args = insetKind(block);
-  if (args.startsWith("Formula") && args.length > "Formula".length) {
-    return args.slice("Formula".length).trim();
-  }
-  return block.children
+  const fromArgs = args.startsWith("Formula") && args.length > "Formula".length
+    ? args.slice("Formula".length).trim()
+    : "";
+  const fromChildren = block.children
     .filter((c): c is { type: "text"; text: string } => c.type === "text")
     .map((c) => c.text)
-    .join("\n");
+    .join("\n")
+    .trim();
+  if (fromArgs && fromChildren) return `${fromArgs}\n${fromChildren}`;
+  return fromArgs || fromChildren;
 }
 
 function renderCell(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
@@ -1551,7 +1575,14 @@ function renderInclude(block: BlockNode, ctx: RenderCtx): string {
   const resolved = resolveGraphicPath(filename, ctx);
   if (listing) {
     try {
-      return `<pre class="include">${escapeLiveHtml(Deno.readTextFileSync(resolved))}</pre>`;
+      const raw = Deno.readTextFileSync(resolved);
+      const params = findProperty(block, "lstparams") ?? "";
+      const first = Number(/firstline\s*=\s*(\d+)/i.exec(params)?.[1] ?? 1);
+      const last = Number(/lastline\s*=\s*(\d+)/i.exec(params)?.[1] ?? 0);
+      const lines = raw.split(/\r?\n/);
+      const from = Math.max(1, first) - 1;
+      const to = last > 0 ? Math.min(last, lines.length) : lines.length;
+      return `<pre class="include">${escapeLiveHtml(lines.slice(from, to).join("\n"))}</pre>`;
     } catch {
       return "";
     }
@@ -1741,7 +1772,7 @@ function renderBibliography(ctx: RenderCtx): string {
 }
 
 function isStatusLine(text: string): boolean {
-  return /^(status|name|LatexCommand|LatexName|labelwidthstring)\s/.test(text);
+  return /^(status|name|LatexCommand|LatexName|labelwidthstring|range|pageformat|type|literal)\s/.test(text);
 }
 
 function nomenclText(block: BlockNode): string {
@@ -1808,6 +1839,69 @@ function renderNomenclature(ctx: RenderCtx): string {
   return html;
 }
 
+function collectIndexEntry(block: BlockNode): IndexEntry {
+  let term = "";
+  const terms: string[] = [];
+  let see = "";
+  let sort = "";
+  const flush = () => {
+    const t = term.replace(/\s+/g, " ").trim();
+    if (t) terms.push(t);
+    term = "";
+  };
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type === "property" && n.key === "SpecialChar") {
+        term += specialChar(n.value ?? "");
+        continue;
+      }
+      if (n.type === "text") {
+        if (!isStatusLine(n.text)) term += n.text;
+        continue;
+      }
+      if (n.type !== "block") continue;
+      if (n.tag === "inset") {
+        const kind = insetKind(n);
+        if (kind.startsWith("IndexMacro")) {
+          const text = nomenclText(n);
+          if (kind.includes("subentry")) {
+            flush();
+            term = text;
+            flush();
+          } else if (/\bsee\b/.test(kind)) {
+            see = text;
+          } else if (kind.includes("sortkey")) {
+            sort = text;
+          }
+          continue;
+        }
+        if (kind === "ERT" || isInvisibleInset(n) || isOmittedInsetKind(kind)) continue;
+      }
+      walk(n.children);
+    }
+  };
+  walk(block.children);
+  flush();
+  return { terms, see, sort: sort || terms.join(", ") };
+}
+
+function renderIndex(ctx: RenderCtx, title: string): string {
+  if (ctx.index.length === 0) return "";
+  const items = [...ctx.index].sort((a, b) => a.sort.localeCompare(b.sort, undefined, { sensitivity: "base" }));
+  const seen = new Set<string>();
+  let html = `<div class="index"><h2 class="index">${escapeLiveHtml(title || "Index")}</h2><ul class="index">`;
+  for (const e of items) {
+    const label = e.terms.join(", ");
+    const see = e.see ? `, see ${e.see}` : "";
+    const key = `${label}${see}`;
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    html += `<li>${escapeLiveHtml(label)}${e.see ? `, see ${escapeLiveHtml(e.see)}` : ""}</li>`;
+  }
+  html += "</ul></div>";
+  return html;
+}
+
 function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): string {
   const subtype = kind.slice("CommandInset ".length).trim();
   const name = findProperty(block, "name") ?? "";
@@ -1839,9 +1933,8 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
   if (subtype === "label") {
     return name ? `<a id="${escapeLiveHtml(xmlId(name))}"></a>` : "";
   }
-  if (subtype === "index_print" || subtype === "nomenclature_print") {
-    return "";
-  }
+  if (subtype === "nomenclature_print") return "";
+  if (subtype === "index_print") return renderIndex(ctx, findProperty(block, "name") || "Index");
   if (subtype === "nomencl_print") return renderNomenclature(ctx);
   if (subtype === "line") return "<hr>";
   if (subtype === "href") {
@@ -1966,7 +2059,10 @@ function collectVisibleText(block: BlockNode): string {
         continue;
       }
       if (traversalRegion(state) === "deleted") continue;
-      if (n.type === "text") out += n.text;
+      if (n.type === "text") {
+        if (!isStatusLine(n.text)) out += n.text;
+        continue;
+      }
       else if (n.type === "block") {
         if (n.tag === "inset") {
           const kind = insetKind(n);

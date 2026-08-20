@@ -119,7 +119,7 @@ Deno.test("Live contract - CLI envelope distinguishes disk identity", async () =
   const result = await runCliTest(["preview", syntheticPath("headings_paragraphs.lyx")]);
   const validated = validateLiveResponse(result);
   assertEquals(validated.source.fresh, true);
-  assertEquals(validated.source.lineEnding, "lf");
+  assertEquals(validated.source.lineEnding, detectLineEnding(await Deno.readTextFile(syntheticPath("headings_paragraphs.lyx"))));
   assert(validated.source.lineCount > 1);
   assertEquals(validated.capabilities.editing, false);
   assertEquals(validated.capabilities.mapping, false);
@@ -298,6 +298,10 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, "<mo>↓</mo>");
   assertStringIncludes(html, "<mfrac>");
   assertStringIncludes(html, "<mtable>");
+  assertStringIncludes(html, "<mi>A</mi>");
+  assertStringIncludes(html, "<mo>≈</mo>");
+  assertStringIncludes(html, "<mo>←</mo>");
+  assert(!html.includes('encoding="application/x-tex">$\\begin{cases}'), "multi-line cases must include the body, not only the first line");
   assert(
     !html.includes('encoding="application/x-tex">\\newcommand{\\qG}'),
     "FormulaMacro must not be rendered as a formula",
@@ -332,7 +336,7 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, '<dl class="description">');
   assertStringIncludes(html, "<dt>Address</dt>");
   assertStringIncludes(html, "<dt>Current");
-  assertStringIncludes(html, "Current Address</dt>");
+  assertStringIncludes(html, "Current\u00a0Address</dt>");
   assertStringIncludes(html, 'class="Frameless"');
   assertStringIncludes(html, '<span class="noun">');
   const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
@@ -418,6 +422,14 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, "this one is centered");
   assertStringIncludes(html, 'style="text-align: left"');
   assertStringIncludes(html, "this one is left aligned");
+  assertStringIncludes(html, "<dt>Vector\u00a0fonts</dt>");
+  assert(!html.includes("fontsrange"), "Index params must not leak into Description labels");
+  assert(!html.includes("status collapsedFonts"), "Index status must not leak into Description");
+  assertStringIncludes(html, '<div class="index">');
+  assertStringIncludes(html, '<h2 class="index">Index</h2>');
+  assertStringIncludes(html, "<li>Font, Types</li>");
+  assertStringIncludes(html, ">3.3.4.4 Short Titles</");
+  assert(!html.includes("HeadingsShort Titles"), "short-title Argument must not concatenate onto the long heading in the TOC");
 });
 
 Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings", async () => {
@@ -449,6 +461,20 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, "Example Algorithm float");
   assertStringIncludes(html, "This is a small dummy child document");
   assertStringIncludes(html, "External Subsection 1");
+  assertStringIncludes(html, '<pre class="include">');
+  assert(
+    !html.includes("\\end_header"),
+    "lstinputlisting of this file must honor firstline/lastline, not dump the whole .lyx source",
+  );
+});
+
+Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/Customization.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, '<article class="lyx-live">');
+  assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
+  assertStringIncludes(html, "<dt><code>Format</code></dt>");
+  assert(!html.includes("status collapsedFormat"), "Flex Code status must not leak into Description labels");
 });
 
 Deno.test("Live renderer - escape helper is applied to source-derived text", () => {
@@ -470,7 +496,7 @@ Deno.test("Live CLI - parse failure does not emit html", async () => {
 });
 
 Deno.test("Live CLI - CRLF is recorded as crlf and does not spawn per-test LyX", async () => {
-  const src = await Deno.readTextFile(syntheticPath("headings_paragraphs.lyx"));
+  const src = (await Deno.readTextFile(syntheticPath("headings_paragraphs.lyx"))).replaceAll("\r\n", "\n");
   const tmp = await Deno.makeTempFile({ suffix: ".lyx" });
   try {
     await Deno.writeTextFile(tmp, src.replaceAll("\n", "\r\n"));

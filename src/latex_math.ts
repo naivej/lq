@@ -12,70 +12,69 @@ function escapeLiveHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-const GREEK: Record<string, string> = {
-  alpha: "α",
-  beta: "β",
-  gamma: "γ",
-  delta: "δ",
-  epsilon: "ε",
-  zeta: "ζ",
-  eta: "η",
-  theta: "θ",
-  iota: "ι",
-  kappa: "κ",
-  lambda: "λ",
-  mu: "μ",
-  nu: "ν",
-  xi: "ξ",
-  pi: "π",
-  rho: "ρ",
-  sigma: "σ",
-  tau: "τ",
-  upsilon: "υ",
-  phi: "φ",
-  chi: "χ",
-  psi: "ψ",
-  omega: "ω",
-  Gamma: "Γ",
-  Delta: "Δ",
-  Theta: "Θ",
-  Lambda: "Λ",
-  Xi: "Ξ",
-  Pi: "Π",
-  Sigma: "Σ",
-  Phi: "Φ",
-  Psi: "Ψ",
-  Omega: "Ω",
-  ell: "ℓ",
-  infty: "∞",
-  cdot: "⋅",
-  ldots: "…",
-  dots: "…",
-  cdots: "⋯",
-  times: "×",
-  pm: "±",
-  mp: "∓",
-  leq: "≤",
-  geq: "≥",
-  neq: "≠",
-  in: "∈",
-  subset: "⊂",
-  to: "→",
-  rightarrow: "→",
-  leftarrow: "←",
-  downarrow: "↓",
-  uparrow: "↑",
-  leftrightarrow: "↔",
-  Rightarrow: "⇒",
-  Leftarrow: "⇐",
-  Downarrow: "⇓",
-  Uparrow: "⇑",
-  Leftrightarrow: "⇔",
-  partial: "∂",
+const SYM_MI: Record<string, string> = {
+  alpha: "α", beta: "β", gamma: "γ", delta: "δ", epsilon: "ε", varepsilon: "ε",
+  zeta: "ζ", eta: "η", theta: "θ", vartheta: "ϑ", iota: "ι", kappa: "κ", varkappa: "ϰ",
+  lambda: "λ", mu: "μ", nu: "ν", xi: "ξ", pi: "π", varpi: "ϖ", rho: "ρ", varrho: "ϱ",
+  sigma: "σ", varsigma: "ς", tau: "τ", upsilon: "υ", phi: "φ", varphi: "ϕ", chi: "χ",
+  psi: "ψ", omega: "ω",
+  Gamma: "Γ", varGamma: "Γ", Delta: "Δ", Theta: "Θ", Lambda: "Λ", Xi: "Ξ", Pi: "Π",
+  Sigma: "Σ", Phi: "Φ", Psi: "Ψ", Omega: "Ω", Upsilon: "Υ",
+  ell: "ℓ", aleph: "ℵ", hbar: "ℏ", hslash: "ℏ", imath: "ı", jmath: "ȷ",
+  wp: "℘", Re: "ℜ", Im: "ℑ", nabla: "∇", partial: "∂", infty: "∞",
+  emptyset: "∅", varnothing: "∅", mho: "℧", Bbbk: "k",
+  ellipsis: "…",
+};
+
+const SYM_MO: Record<string, string> = {
+  cdot: "⋅", ldots: "…", dots: "…", cdots: "⋯", vdots: "⋮", ddots: "⋱", iddots: "⋰",
+  times: "×", div: "÷", pm: "±", mp: "∓", ast: "∗", star: "⋆", circ: "∘", bullet: "•",
+  cap: "∩", cup: "∪", sqcap: "⊓", sqcup: "⊔", uplus: "⊎", vee: "∨", wedge: "∧",
+  oplus: "⊕", ominus: "⊖", otimes: "⊗", oslash: "⊘", odot: "⊙",
+  to: "→", gets: "←", rightarrow: "→", leftarrow: "←",
+  downarrow: "↓", uparrow: "↑", leftrightarrow: "↔",
+  Rightarrow: "⇒", Leftarrow: "⇐", Downarrow: "⇓", Uparrow: "⇑", Leftrightarrow: "⇔",
+  longrightarrow: "⟶", longleftarrow: "⟵", longleftrightarrow: "⟷",
+  Longrightarrow: "⟹", Longleftarrow: "⟸", Longleftrightarrow: "⟺",
+  mapsto: "↦", longmapsto: "⟼", leadsto: "⇝", dasharrow: "⇢",
+  hookleftarrow: "↩", hookrightarrow: "↪",
+  leftharpoonup: "↼", leftharpoondown: "↽", rightharpoonup: "⇀", rightharpoondown: "⇁",
+  rightleftharpoons: "⇌",
+  nearrow: "↗", searrow: "↘", swarrow: "↙", nwarrow: "↖",
+  updownarrow: "↕", Updownarrow: "⇕",
+  le: "≤", leq: "≤", ge: "≥", geq: "≥", geqq: "≧", leqq: "≦", ne: "≠", neq: "≠",
+  ll: "≪", gg: "≫", approx: "≈", sim: "∼", simeq: "≃", cong: "≅", equiv: "≡",
+  propto: "∝", asymp: "≍", doteq: "≐",
+  in: "∈", ni: "∋", notin: "∉", subset: "⊂", supset: "⊃", subseteq: "⊆", supseteq: "⊇",
+  sqsubseteq: "⊑", sqsupseteq: "⊒",
+  prec: "≺", succ: "≻", preceq: "≼", succeq: "≽",
+  parallel: "∥", nparallel: "∦", mid: "∣", nmid: "∤", perp: "⊥",
+  models: "⊨", vdash: "⊢", dashv: "⊣",
+  exists: "∃", nexists: "∄", forall: "∀", neg: "¬", lnot: "¬",
+  land: "∧", lor: "∨",
+  langle: "⟨", rangle: "⟩", lceil: "⌈", rceil: "⌉", lfloor: "⌊", rfloor: "⌋",
+  backslash: "\\", vert: "|", Vert: "∥",
+  inf: "inf",
+  angle: "∠", measuredangle: "∡", sphericalangle: "∢", triangle: "△",
+  triangleleft: "◃", triangleright: "▹", bigtriangleup: "△", bigtriangledown: "▽",
+  diamond: "⋄", Diamond: "◇", lozenge: "◊", Lozenge: "◊",
+  clubsuit: "♣", diamondsuit: "♦", heartsuit: "♥", spadesuit: "♠",
+  sharp: "♯", flat: "♭", natural: "♮",
+  dagger: "†", ddagger: "‡", dag: "†", ddag: "‡",
+  prime: "′", backprime: "‵",
+  bot: "⊥", top: "⊤", surd: "√",
+  coprod: "∐",
+  amalg: "⨿", wr: "≀",
+  lessgtr: "≶", gtrless: "≷",
+  smile: "⌣", frown: "⌢", bowtie: "⋈",
+  checkmark: "✓", maltese: "✠",
+  euro: "€", yen: "¥", pounds: "£", copyright: "©", P: "¶",
+  complement: "∁", therefore: "∴", because: "∵",
 };
 
 const MATRIX_ENV: Record<string, { open: string; close: string }> = {
   matrix: { open: "", close: "" },
+  smallmatrix: { open: "", close: "" },
   pmatrix: { open: "(", close: ")" },
   bmatrix: { open: "[", close: "]" },
   Bmatrix: { open: "{", close: "}" },
@@ -85,13 +84,46 @@ const MATRIX_ENV: Record<string, { open: string; close: string }> = {
   array: { open: "", close: "" },
 };
 
-const LARGEOP = new Set(["sum", "prod", "int", "oint"]);
+const LARGEOP = new Set([
+  "sum", "prod", "int", "oint", "iint", "iiint", "iiiint",
+  "bigcap", "bigcup", "bigvee", "bigwedge", "bigodot", "bigoplus", "bigotimes",
+  "bigsqcup", "biguplus", "coprod",
+]);
 const LARGEOP_CHAR: Record<string, string> = {
-  sum: "∑",
-  prod: "∏",
-  int: "∫",
-  oint: "∮",
+  sum: "∑", prod: "∏", int: "∫", oint: "∮", iint: "∬", iiint: "∭", iiiint: "⨌",
+  bigcap: "⋂", bigcup: "⋃", bigvee: "⋁", bigwedge: "⋀",
+  bigodot: "⨀", bigoplus: "⨁", bigotimes: "⨂", bigsqcup: "⨆", biguplus: "⨄",
+  coprod: "∐",
 };
+
+const OPNAME = new Set([
+  "sin", "cos", "tan", "cot", "sec", "csc", "arcsin", "arccos", "arctan",
+  "sinh", "cosh", "tanh", "ln", "log", "lg", "exp", "lim", "limsup", "liminf",
+  "max", "min", "sup", "inf", "det", "dim", "ker", "hom", "arg", "deg", "gcd",
+  "Pr", "mod", "bmod", "sgn",
+]);
+
+const ACCENT_OVER: Record<string, string> = {
+  hat: "^", widehat: "^", tilde: "˜", widetilde: "˜", bar: "¯", vec: "→",
+  dot: "˙", ddot: "¨", dddot: "⃛", ddddot: "⃜",
+  acute: "´", grave: "`", breve: "˘", check: "ˇ", mathring: "˚",
+  overline: "¯", overrightarrow: "→", overleftarrow: "←", overleftrightarrow: "↔",
+};
+
+const ACCENT_UNDER: Record<string, string> = {
+  underline: "_", underrightarrow: "→", underleftarrow: "←", underleftrightarrow: "↔",
+  utilde: "˜",
+};
+
+const SKIP_NEXT = new Set([
+  "displaystyle", "textstyle", "scriptstyle", "scriptscriptstyle",
+  "limits", "nolimits", "nonumber", "notag", "mathop",
+]);
+
+const SKIP_GROUP = new Set([
+  "tag", "label", "hspace", "vspace", "rule", "raisebox",
+  "leftroot", "uproot", "smashoperator", "adjustlimits",
+]);
 
 const ENV = /\\begin\{(equation\*?|align\*?|alignat\*?|flalign\*?|displaymath|multline\*?|gather\*?|eqnarray\*?)\}(?:\{[^}]*\})?([\s\S]*)\\end\{\1\}/;
 
@@ -259,10 +291,21 @@ class Parser {
       const close = this.readDelimiter();
       return `<mo>${escapeLiveHtml(close)}</mo>`;
     }
-    if (name === "frac" || name === "dfrac" || name === "tfrac" || name === "nicefrac" || name === "unitfrac") {
+    if (name === "frac" || name === "dfrac" || name === "tfrac" || name === "cfrac" ||
+      name === "nicefrac" || name === "unitfrac") {
+      if (name === "unitfrac" && this.s[this.i] === "[") {
+        this.i++;
+        this.parseExprUntil("]");
+        if (this.s[this.i] === "]") this.i++;
+      }
       const a = this.parseGroupOrAtom();
       const b = this.parseGroupOrAtom();
       return `<mfrac>${a}${b}</mfrac>`;
+    }
+    if (name === "binom" || name === "dbinom" || name === "tbinom") {
+      const a = this.parseGroupOrAtom();
+      const b = this.parseGroupOrAtom();
+      return `<mfrac linethickness="0">${a}${b}</mfrac>`;
     }
     if (name === "sqrt") {
       if (this.s[this.i] === "[") {
@@ -273,11 +316,14 @@ class Parser {
       }
       return `<msqrt>${this.parseGroupOrAtom()}</msqrt>`;
     }
-    if (name === "text" || name === "mathrm" || name === "textrm" || name === "operatorname") {
+    if (name === "text" || name === "mathrm" || name === "textrm" || name === "operatorname" ||
+      name === "mbox" || name === "textbf" || name === "textsf" || name === "texttt") {
       const inner = this.readGroupText();
       return `<mtext>${escapeLiveHtml(inner)}</mtext>`;
     }
-    if (name === "mathbf" || name === "boldsymbol" || name === "mathsf" || name === "mathtt" || name === "mathit") {
+    if (name === "mathbf" || name === "boldsymbol" || name === "mathsf" || name === "mathtt" ||
+      name === "mathit" || name === "mathcal" || name === "mathfrak" || name === "mathbb" ||
+      name === "mathscr") {
       const inner = this.parseGroupOrAtom();
       const variant = name === "mathbf" || name === "boldsymbol"
         ? "bold"
@@ -285,12 +331,77 @@ class Parser {
         ? "sans-serif"
         : name === "mathtt"
         ? "monospace"
+        : name === "mathcal" || name === "mathscr"
+        ? "script"
+        : name === "mathfrak"
+        ? "fraktur"
+        : name === "mathbb"
+        ? "double-struck"
         : "italic";
       return `<mstyle mathvariant="${variant}">${inner}</mstyle>`;
     }
-    if (name === "label") {
-      this.readGroupText();
+    if (name === "ce" || name === "ensuremath") {
+      if (this.s[this.i] === "{") {
+        const inner = this.readGroupText();
+        return `<mtext>${escapeLiveHtml(inner)}</mtext>`;
+      }
+      return this.parseWithScripts();
+    }
+    if (SKIP_NEXT.has(name)) return this.parseWithScripts();
+    if (SKIP_GROUP.has(name)) {
+      if (this.s[this.i] === "[") {
+        this.i++;
+        this.parseExprUntil("]");
+        if (this.s[this.i] === "]") this.i++;
+      }
+      if (this.s[this.i] === "{") this.readGroupText();
       return "";
+    }
+    if (name === "quad") return "<mspace width='1em'/>";
+    if (name === "qquad") return "<mspace width='2em'/>";
+    if (name === "," || name === "thinspace") return "<mspace width='0.16em'/>";
+    if (name === "phantom" || name === "hphantom" || name === "vphantom") {
+      this.parseGroupOrAtom();
+      return "<mspace width='0.4em'/>";
+    }
+    if (name === "not") {
+      const next = this.parseWithScripts();
+      if (next === "<mo>=</mo>") return "<mo>≠</mo>";
+      return `<menclose notation="updiagonalstrike">${next}</menclose>`;
+    }
+    if (name === "underset" || name === "overset" || name === "stackrel") {
+      const acc = this.parseGroupOrAtom();
+      const base = this.parseGroupOrAtom();
+      return name === "underset" ? `<munder>${base}${acc}</munder>` : `<mover>${base}${acc}</mover>`;
+    }
+    if (/^x(?:long)?(?:left|right|leftright|Left|Right|Leftright)/.test(name)) {
+      if (this.s[this.i] === "[") {
+        this.i++;
+        this.parseExprUntil("]");
+        if (this.s[this.i] === "]") this.i++;
+      }
+      if (this.s[this.i] === "{") this.readGroupText();
+      const core = name.replace(/^x/, "").replace(/^long/, "");
+      const ch = SYM_MO[core] ?? SYM_MO[name] ?? (name.toLowerCase().includes("left") ? "←" : "→");
+      return `<mo>${ch}</mo>`;
+    }
+    if (ACCENT_OVER[name]) {
+      const inner = this.parseGroupOrAtom();
+      return `<mover>${inner}<mo>${escapeLiveHtml(ACCENT_OVER[name])}</mo></mover>`;
+    }
+    if (ACCENT_UNDER[name]) {
+      const inner = this.parseGroupOrAtom();
+      return `<munder>${inner}<mo>${escapeLiveHtml(ACCENT_UNDER[name])}</mo></munder>`;
+    }
+    if (name === "overbrace" || name === "underbrace" || name === "overbracket" || name === "underbracket") {
+      const inner = this.parseGroupOrAtom();
+      const bar = name.startsWith("over") ? "⏞" : "⏟";
+      return name.startsWith("over")
+        ? `<mover>${inner}<mo>${bar}</mo></mover>`
+        : `<munder>${inner}<mo>${bar}</mo></munder>`;
+    }
+    if (/^(?:b|B)ig+[lrm]?$/.test(name) || name === "middle") {
+      return `<mo>${escapeLiveHtml(this.readDelimiter())}</mo>`;
     }
     if (name === "begin") {
       const env = this.readGroupText();
@@ -304,11 +415,9 @@ class Parser {
     if (LARGEOP.has(name)) {
       return `<mo largeop="true">${LARGEOP_CHAR[name]}</mo>`;
     }
-    if (GREEK[name]) {
-      const ch = GREEK[name];
-      if (ch.length === 1 && /[⋅…⋯×±∓≤≥≠∈⊂→←↓↑↔⇒⇐⇓⇑⇔∂∞]/.test(ch)) return `<mo>${ch}</mo>`;
-      return `<mi>${ch}</mi>`;
-    }
+    if (OPNAME.has(name)) return `<mi>${name}</mi>`;
+    if (SYM_MO[name]) return `<mo>${SYM_MO[name]}</mo>`;
+    if (SYM_MI[name]) return `<mi>${SYM_MI[name]}</mi>`;
     // Unknown command: skip one optional group and show the name.
     if (this.s[this.i] === "{") this.readGroupText();
     return `<mi>${escapeLiveHtml("\\" + name)}</mi>`;

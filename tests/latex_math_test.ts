@@ -54,6 +54,19 @@ Deno.test("latexToMathML - cases and pmatrix become mtable", () => {
   assertStringIncludes(pmatrix, "<mi>d</mi>");
 });
 
+Deno.test("latexToMathML - common symbols, accents, and left-array", () => {
+  assertStringIncludes(latexToMathML("\\approx"), "≈");
+  assertStringIncludes(latexToMathML("\\gets"), "←");
+  assertStringIncludes(latexToMathML("\\le"), "≤");
+  assertStringIncludes(latexToMathML("\\varepsilon"), "ε");
+  assertStringIncludes(latexToMathML("\\overrightarrow{a}"), "<mover>");
+  assertStringIncludes(latexToMathML("\\overrightarrow{a}"), "<mi>a</mi>");
+  const arr = latexToMathML("\\left[\\begin{array}{cc}a & b\\\\c & d\\end{array}\\right]");
+  assertStringIncludes(arr, "<mtable>");
+  assertStringIncludes(arr, "<mi>a</mi>");
+  assertStringIncludes(arr, "<mi>d</mi>");
+});
+
 Deno.test("latexToMathML - unknown commands stay escaped mtext-like mi", () => {
   const html = latexToMathML("\\unknown{x}");
   if (html.includes("<script")) throw new Error("unknown command must not become a script");
