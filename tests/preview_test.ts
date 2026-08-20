@@ -496,6 +496,20 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, 'class="preview"');
   const prevAt = html.indexOf('class="preview"');
   assert(prevAt !== -1 && html.slice(prevAt, prevAt + 200).includes("This is a line"), "Preview wraps demo line");
+  assertStringIncludes(html, 'class="Frameless"');
+  assertStringIncludes(html, 'class="marginal"');
+  assertStringIncludes(html, "<code>");
+  assertStringIncludes(html, 'class="url"');
+  assertStringIncludes(html, 'class="noun"');
+  // Quote-style table: multiple language marks (not only English eld/erd)
+  assertStringIncludes(html, "«");
+  assertStringIncludes(html, "»");
+  assertStringIncludes(html, "„");
+  assertStringIncludes(html, "「");
+  assertStringIncludes(html, "『");
+  assertStringIncludes(html, "《");
+  assertStringIncludes(html, "‹");
+  assertStringIncludes(html, "›");
   const helloLi = html.indexOf("<li>Hello");
   assert(helloLi !== -1, "UserGuide 3.4.6 Hello item missing");
   const helloAt = html.lastIndexOf("<ol", helloLi);
@@ -538,6 +552,11 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, "This is text with Double underlining on.");
   assertStringIncludes(html, 'font-size: x-small');
   assertStringIncludes(html, "This is the");
+  assertStringIncludes(html, 'font-style: oblique'); // shape slanted (native FT_SLANTED)
+  assertStringIncludes(html, "This is the Slanted font shape");
+  assertStringIncludes(html, "font-variant: small-caps"); // shape smallcaps
+  assertStringIncludes(html, "This is the Small caps font shape");
+  assertStringIncludes(html, "<s>"); // strikeout
   assertStringIncludes(html, "This paragraph is right aligned");
   assertStringIncludes(html, 'style="text-align: center"');
   assertStringIncludes(html, "this one is centered");
@@ -640,6 +659,18 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, "<kbd");
   assertStringIncludes(html, "“");
   assertStringIncludes(html, "<br>");
+});
+
+Deno.test("Live renderer - Help Formula-numbering.lyx refs and eqno", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/Formula-numbering.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, '<article class="lyx-live">');
+  assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
+  assert((html.match(/class="eqno"/g) ?? []).length >= 8, "Formula-numbering should emit equation numbers");
+  assertStringIncludes(html, 'class="ref"');
+  assertStringIncludes(html, "<hr>");
+  assertStringIncludes(html, "<br>");
+  assertStringIncludes(html, "<math");
 });
 
 Deno.test("Live renderer - Help Intro.lyx TOC, href, quotes, table", async () => {

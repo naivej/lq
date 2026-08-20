@@ -1264,7 +1264,8 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
 
   const syncFont = () => {
     const p = state.properties;
-    setInline("em", p.emph === "on" || p.shape === "italic" || p.shape === "slanted");
+    // Native XHTML: italic → <em>; slanted → font-style:oblique; smallcaps → font-variant:small-caps
+    setInline("em", p.emph === "on" || p.shape === "italic");
     setInline("strong", p.series === "bold");
     setInline("u", p.bar === "under");
     setInline("dline", p.uuline === "on");
@@ -1300,6 +1301,24 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     if (sizeCss && !open.includes(sizeKey)) {
       html += `<span style="font-size: ${sizeCss}">`;
       open.push(sizeKey);
+    }
+    const shape = (p.shape ?? "").toLowerCase();
+    const shapeCss = shape === "slanted"
+      ? "font-style: oblique"
+      : shape === "smallcaps"
+      ? "font-variant: small-caps"
+      : "";
+    const shapeKey = shapeCss ? `shape:${shape}` : "";
+    const shapeIdx = open.findIndex((k) => k.startsWith("shape:"));
+    if (shapeIdx !== -1 && open[shapeIdx] !== shapeKey) {
+      while (open.length > shapeIdx) {
+        const k = open.pop()!;
+        html += (INLINE[k] ?? { close: "</span>" }).close;
+      }
+    }
+    if (shapeCss && !open.includes(shapeKey)) {
+      html += `<span style="${shapeCss}">`;
+      open.push(shapeKey);
     }
   };
 
