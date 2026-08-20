@@ -224,6 +224,73 @@ export function latexToMathML(source: string): string {
   return body || `<mtext>${escapeLiveHtml(source)}</mtext>`;
 }
 
+function parseCdGroup(line: string, i: number): { text: string; next: number } {
+  if (line[i] === "{") {
+    let depth = 1;
+    i++;
+    const start = i;
+    while (i < line.length && depth > 0) {
+      if (line[i] === "{") depth++;
+      else if (line[i] === "}") depth--;
+      if (depth > 0) i++;
+    }
+    const text = line.slice(start, i);
+    if (line[i] === "}") i++;
+    return { text, next: i };
+  }
+  const start = i;
+  while (i < line.length && line[i] !== "@" && line[i] !== ">" && line[i] !== "<" &&
+    line[i] !== "A" && line[i] !== "V" && line[i] !== "|" && line[i] !== "=" && line[i] !== ".") {
+    i++;
+  }
+  return { text: line.slice(start, i), next: i };
+}
+
+function cdLabeledArrow(ch: string, over: string, under: string): string {
+  let inner = `<mo>${ch}</mo>`;
+  const top = over ? latexToMathML(over) : "";
+  const bot = under ? latexToMathML(under) : "";
+  if (top && bot) inner = `<munderover>${inner}${bot}${top}</munderover>`;
+  else if (top) inner = `<mover>${inner}${top}</mover>`;
+  else if (bot) inner = `<munder>${inner}${bot}</munder>`;
+  return inner;
+}
+
+function parseCdArrow(line: string, i: number): { html: string; next: number } {
+  if (line[i] !== "@") return { html: "", next: i };
+  i++;
+  if (line[i] === ".") return { html: "", next: i + 1 };
+  if (line[i] === "=") return { html: "<mo>=</mo>", next: i + 1 };
+  if (line[i] === "|") return { html: "<mo>∥</mo>", next: i + 1 };
+  if (line[i] === ">" || line[i] === "<") {
+    const dir = line[i];
+    const mark = dir;
+    i++;
+    const a = parseCdGroup(line, i);
+    i = a.next;
+    if (line[i] !== mark) return { html: cdLabeledArrow(dir === ">" ? "→" : "←", a.text, ""), next: i };
+    i++;
+    const b = parseCdGroup(line, i);
+    i = b.next;
+    if (line[i] === mark) i++;
+    return { html: cdLabeledArrow(dir === ">" ? "→" : "←", a.text, b.text), next: i };
+  }
+  if (line[i] === "A" || line[i] === "V") {
+    const mark = line[i];
+    const ch = mark === "A" ? "↑" : "↓";
+    i++;
+    const a = parseCdGroup(line, i);
+    i = a.next;
+    if (line[i] !== mark) return { html: cdLabeledArrow(ch, a.text, ""), next: i };
+    i++;
+    const b = parseCdGroup(line, i);
+    i = b.next;
+    if (line[i] === mark) i++;
+    return { html: cdLabeledArrow(ch, a.text, b.text), next: i };
+  }
+  return { html: "", next: i };
+}
+
 class Parser {
   constructor(private readonly s: string, private i = 0) {}
 
@@ -567,15 +634,21 @@ class Parser {
       return name === "underset" ? `<munder>${base}${acc}</munder>` : `<mover>${base}${acc}</mover>`;
     }
     if (/^x/.test(name) && /arrow|harpoon|hook/.test(name)) {
+      let under = "";
+      let over = "";
       if (this.s[this.i] === "[") {
         this.i++;
-        this.parseExprUntil("]");
+        under = this.parseExprUntil("]");
         if (this.s[this.i] === "]") this.i++;
       }
-      if (this.s[this.i] === "{") this.readGroupText();
+      if (this.s[this.i] === "{") over = this.parseGroupOrAtom();
       const core = name.replace(/^x/, "").replace(/^long/, "");
       const ch = SYM_MO[core] ?? SYM_MO[name] ?? (name.toLowerCase().includes("left") ? "←" : "→");
-      return `<mo>${ch}</mo>`;
+      const arrow = `<mo>${ch}</mo>`;
+      if (under && over) return `<munderover>${arrow}${under}${over}</munderover>`;
+      if (over) return `<mover>${arrow}${over}</mover>`;
+      if (under) return `<munder>${arrow}${under}</munder>`;
+      return arrow;
     }
     if (ACCENT_OVER[name]) {
       const inner = this.parseGroupOrAtom();
@@ -597,6 +670,7 @@ class Parser {
     }
     if (name === "begin") {
       const env = this.readGroupText();
+      if (env === "CD") return this.parseCD();
       if (MATRIX_ENV[env]) return this.parseMatrix(env);
       return "";
     }
@@ -613,6 +687,48 @@ class Parser {
     // Unknown command: skip one optional group and show the name.
     if (this.s[this.i] === "{") this.readGroupText();
     return `<mi>${escapeLiveHtml("\\" + name)}</mi>`;
+  }
+
+  private parseCD(): string {
+    const endAt = this.s.indexOf("\\end{CD}", this.i);
+    const raw = (endAt < 0 ? this.s.slice(this.i) : this.s.slice(this.i, endAt)).trim();
+    this.i = endAt < 0 ? this.s.length : endAt + "\\end{CD}".length;
+    const lines = raw.split(/\\\\/).map((l) => l.trim()).filter((l) => l.length > 0);
+    const rows = lines.map((line) => this.parseCdLine(line));
+    return `<mtable columnspacing="0.4em" rowspacing="0.4em">${
+      rows.map((r) => `<mtr>${r.map((c) => `<mtd>${c}</mtd>`).join("")}</mtr>`).join("")
+    }</mtable>`;
+  }
+
+  private parseCdLine(line: string): string[] {
+    const cells: string[] = [];
+    let i = 0;
+    const takeText = (): string => {
+      const start = i;
+      while (i < line.length && line[i] !== "@") i++;
+      const raw = line.slice(start, i).trim();
+      return raw ? latexToMathML(raw) : "";
+    };
+    if (!line.startsWith("@")) cells.push(takeText());
+    while (i < line.length) {
+      if (line[i] !== "@") {
+        cells.push(takeText());
+        continue;
+      }
+      const { html, next } = parseCdArrow(line, i);
+      i = next;
+      cells.push(html);
+      if (i < line.length && line[i] !== "@") cells.push(takeText());
+    }
+    if (line.startsWith("@")) {
+      const padded: string[] = [];
+      for (let c = 0; c < cells.length; c++) {
+        padded.push(cells[c]);
+        if (c < cells.length - 1) padded.push("");
+      }
+      return padded;
+    }
+    return cells;
   }
 
   private parseMatrix(env: string): string {

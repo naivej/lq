@@ -86,6 +86,15 @@ Deno.test("latexToMathML - common symbols, accents, and left-array", () => {
   const tagged = renderFormulaHtml("\\begin{equation}A+B=C\\tag{something}\\end{equation}", 9);
   assertStringIncludes(tagged, "(something)");
   assertFalse(tagged.includes("(9)"), "\\tag replaces the sequential equation number");
+  const xl = latexToMathML("F(a)\\xleftarrow[x>0]{x=a}F(x)");
+  assertStringIncludes(xl, "<munderover>");
+  assertStringIncludes(xl, "<mi>x</mi>");
+  const cd = latexToMathML("\\begin{CD}A@>>>B@>>>C\\\\@AAA@.@VVV\\\\F@<<<E@<<<D\\end{CD}");
+  assertStringIncludes(cd, "<mtable");
+  assertStringIncludes(cd, "<mi>A</mi>");
+  assertStringIncludes(cd, "<mi>F</mi>");
+  assertStringIncludes(cd, "→");
+  assertStringIncludes(cd, "↑");
 });
 
 Deno.test("latexToMathML - unknown commands stay escaped mtext-like mi", () => {

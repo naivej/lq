@@ -321,6 +321,8 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, "<mo>⟨</mo>");
   assertStringIncludes(html, "updiagonalstrike");
   assertStringIncludes(html, "mod ");
+  assertStringIncludes(html, "<munderover>");
+  assertStringIncludes(html, "<mtd><mi>A</mi></mtd><mtd><mo>→</mo></mtd><mtd><mi>B</mi></mtd>");
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
