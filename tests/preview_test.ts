@@ -359,6 +359,16 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   const subref = html.match(/href="#eq_b">\(([^)]+)\)/);
   assert(subref !== null && /a$/.test(subref[1]), `subequation ref should be like (Na), got ${subref?.[1]}`);
   assertStringIncludes(html, 'mathsize="75%"');
+  assertStringIncludes(html, 'class="href"');
+  assertStringIncludes(html, '<nav class="toc">');
+  assertStringIncludes(html, "„"); // Quotes gld German
+  assertStringIncludes(html, "“");
+  assertStringIncludes(html, "<h3>Command Scheme</h3>"); // Subsection* unnumbered
+  assertStringIncludes(html, "<h4>Advice for Integrals</h4>"); // Subsubsection*
+  assertStringIncludes(html, 'class="Boxed"');
+  assertStringIncludes(html, "<br>");
+  assertStringIncludes(html, "<hr>");
+  assertStringIncludes(html, 'class="index"');
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
@@ -417,6 +427,9 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, "column-count: 2");
   assertStringIncludes(html, "The Adventure of the Empty House");
   assert(!html.includes("{100.125}"), "non-LyX include (.tex) must be omitted like native XHTML");
+  assertStringIncludes(html, 'class="href"');
+  assertStringIncludes(html, 'class="Shadowbox"');
+  assertStringIncludes(html, '<pre class="lyx_code">');
 });
 
 Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph", async () => {
@@ -480,6 +493,9 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, 'class="Doublebox"');
   assertStringIncludes(html, "with rotated");
   assertStringIncludes(html, "This is a line");
+  assertStringIncludes(html, 'class="preview"');
+  const prevAt = html.indexOf('class="preview"');
+  assert(prevAt !== -1 && html.slice(prevAt, prevAt + 200).includes("This is a line"), "Preview wraps demo line");
   const helloLi = html.indexOf("<li>Hello");
   assert(helloLi !== -1, "UserGuide 3.4.6 Hello item missing");
   const helloAt = html.lastIndexOf("<ol", helloLi);
@@ -684,6 +700,36 @@ Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels",
     !html.includes("Information from previous versions of this document"),
     "deselected OutDated branch intro must omit",
   );
+  assertStringIncludes(html, 'class="href"');
+  assertStringIncludes(html, '<nav class="toc">');
+  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, 'class="noun"');
+  assertStringIncludes(html, 'class="url"');
+  assertStringIncludes(html, 'class="Shadowbox"');
+  assertStringIncludes(html, '<code class="listings');
+  assertStringIncludes(html, '<pre class="lyx_code">');
+  assertStringIncludes(html, '<blockquote class="quote">');
+  assertStringIncludes(html, "“");
+  assertStringIncludes(html, 'class="foot"');
+  assertStringIncludes(html, "<br>");
+});
+
+Deno.test("Live renderer - Help Development.lyx listings, Flex Code, Paragraph", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/Development.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, '<article class="lyx-live">');
+  assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
+  assertStringIncludes(html, 'class="href"');
+  assertStringIncludes(html, '<nav class="toc">');
+  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, "<code>");
+  assertStringIncludes(html, 'class="url"');
+  assertStringIncludes(html, '<code class="listings');
+  assertStringIncludes(html, "“");
+  assertStringIncludes(html, 'class="foot"');
+  assertStringIncludes(html, "<br>");
+  assertStringIncludes(html, "<h5>Suspended tests</h5>");
+  assertStringIncludes(html, 'class="bibitemlabel"');
 });
 
 Deno.test("Live renderer - escape helper is applied to source-derived text", () => {

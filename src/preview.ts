@@ -1421,7 +1421,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind.startsWith("IndexMacro ") || kind === "IndexMacro") return "";
   if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) return renderNomenclAnchor(ctx);
   if (kind === "Preview" || kind.startsWith("Preview ")) {
-    return renderInsetLayouts(block, parentState, ctx);
+    return `<div class="preview">${renderInsetLayouts(block, parentState, ctx)}</div>`;
   }
   if (kind.startsWith("script ")) {
     const tag = kind.includes("superscript") ? "sup" : kind.includes("subscript") ? "sub" : "";
