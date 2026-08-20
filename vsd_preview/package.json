@@ -13,7 +13,7 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:lyx"
+    
   ],
   "contributes": {
     "languages": [
