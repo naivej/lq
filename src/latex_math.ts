@@ -170,13 +170,16 @@ const SKIP_GROUP = new Set([
 ]);
 
 const ENV = /\\begin\{(equation\*?|align\*?|alignat\*?|flalign\*?|displaymath|multline\*?|gather\*?|eqnarray\*?)\}(?:\{[^}]*\})?([\s\S]*)\\end\{\1\}/;
+const NUMBERED_ENV = /^(equation|align|alignat|flalign|multline|gather|eqnarray)$/;
 
-export function unwrapLatexSource(source: string): { display: boolean; body: string } {
+export function unwrapLatexSource(source: string): { display: boolean; numbered: boolean; body: string } {
   let s = source.trim();
   let display = false;
+  let numbered = false;
   const env = ENV.exec(s);
   if (env && env.index === 0 && env[0].length === s.length) {
     display = true;
+    numbered = NUMBERED_ENV.test(env[1]);
     s = env[2].trim();
   } else if (s.startsWith("$$") && s.endsWith("$$")) {
     display = true;
@@ -188,7 +191,7 @@ export function unwrapLatexSource(source: string): { display: boolean; body: str
     s = s.slice(1, -1).trim();
   }
   s = s.replace(/\\label\{[^}]*\}/g, "").trim();
-  return { display, body: s };
+  return { display, numbered, body: s };
 }
 
 function extractTag(body: string): { star: boolean; text: string } | undefined {
@@ -198,21 +201,19 @@ function extractTag(body: string): { star: boolean; text: string } | undefined {
 }
 
 export function renderFormulaHtml(source: string, equationNo?: number | string): string {
-  const { display, body } = unwrapLatexSource(source);
+  const { display, numbered, body } = unwrapLatexSource(source);
   const inner = latexToMathML(body);
   const displayAttr = display ? ' display="block"' : "";
   const math =
     `<math xmlns="http://www.w3.org/1998/Math/MathML"${displayAttr}><semantics>${inner}<annotation encoding="application/x-tex">${escapeLiveHtml(body)}</annotation></semantics></math>`;
   const tagged = extractTag(body);
   let eqno = "";
-  if (display) {
-    if (tagged) {
-      eqno = tagged.star
-        ? `<span class="eqno">${escapeLiveHtml(tagged.text)}</span>`
-        : `<span class="eqno">(${escapeLiveHtml(tagged.text)})</span>`;
-    } else if (equationNo !== undefined) {
-      eqno = `<span class="eqno">(${equationNo})</span>`;
-    }
+  if (tagged) {
+    eqno = tagged.star
+      ? `<span class="eqno">${escapeLiveHtml(tagged.text)}</span>`
+      : `<span class="eqno">(${escapeLiveHtml(tagged.text)})</span>`;
+  } else if (numbered && equationNo !== undefined) {
+    eqno = `<span class="eqno">(${equationNo})</span>`;
   }
   return `<span class="formula">${math}${eqno}</span>`;
 }

@@ -584,8 +584,8 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       }
       if (kind === "Formula" || kind.startsWith("Formula")) {
         const src = formulaSource(n);
-        const { display } = unwrapLatexSource(src);
-        if (display) {
+        const { numbered } = unwrapLatexSource(src);
+        if (numbered) {
           const num = takeEquationNumber(ctx);
           const lab = /\\label\{([^}]+)\}/.exec(src);
           if (lab) ctx.labels.set(lab[1], num);
@@ -1234,8 +1234,8 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Formula" || kind.startsWith("Formula ") || kind.startsWith("Formula")) {
     const source = formulaSource(block);
-    const { display } = unwrapLatexSource(source);
-    const number = display ? takeEquationNumber(ctx) : undefined;
+    const { numbered } = unwrapLatexSource(source);
+    const number = numbered ? takeEquationNumber(ctx) : undefined;
     return renderFormulaHtml(source, number);
   }
   if (
@@ -1394,8 +1394,8 @@ function walkSubequationLabels(nodes: Node[], ctx: RenderCtx): void {
       }
       if (kind === "Formula" || kind.startsWith("Formula")) {
         const src = formulaSource(n);
-        const { display } = unwrapLatexSource(src);
-        if (display) {
+        const { numbered } = unwrapLatexSource(src);
+        if (numbered) {
           const num = takeEquationNumber(ctx);
           const lab = /\\label\{([^}]+)\}/.exec(src);
           if (lab) ctx.labels.set(lab[1], num);

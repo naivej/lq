@@ -323,6 +323,9 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, "mod ");
   assertStringIncludes(html, "<munderover>");
   assertStringIncludes(html, "<mtd><mi>A</mi></mtd><mtd><mo>→</mo></mtd><mtd><mi>B</mi></mtd>");
+  const cdAt = html.indexOf("<mtd><mi>A</mi></mtd><mtd><mo>→</mo></mtd><mtd><mi>B</mi></mtd>");
+  const cdChunk = html.slice(cdAt, html.indexOf("</math>", cdAt) + 7);
+  assert(!cdChunk.includes('class="eqno"'), "amscd \\[ \\] diagrams must not get equation numbers");
   assertStringIncludes(html, 'class="subequations"');
   const subref = html.match(/href="#eq_b">\(([^)]+)\)/);
   assert(subref !== null && /a$/.test(subref[1]), `subequation ref should be like (Na), got ${subref?.[1]}`);

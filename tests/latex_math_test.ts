@@ -6,15 +6,22 @@ function assertFalse(cond: boolean, msg: string): void {
 import { latexToMathML, renderFormulaHtml, unwrapLatexSource } from "../src/latex_math.ts";
 
 Deno.test("unwrapLatexSource - dollar, equation, label", () => {
-  assertEquals(unwrapLatexSource("$x$"), { display: false, body: "x" });
+  assertEquals(unwrapLatexSource("$x$"), { display: false, numbered: false, body: "x" });
   assertEquals(unwrapLatexSource("\\begin{equation}\nE=mc^{2}\n\\end{equation}"), {
     display: true,
+    numbered: true,
     body: "E=mc^{2}",
   });
   assertEquals(
     unwrapLatexSource("\\begin{equation}\\ell_{t}(x)\\label{eq:eq_label}\\end{equation}"),
-    { display: true, body: "\\ell_{t}(x)" },
+    { display: true, numbered: true, body: "\\ell_{t}(x)" },
   );
+  assertEquals(unwrapLatexSource("\\[E=mc^{2}\\]"), { display: true, numbered: false, body: "E=mc^{2}" });
+  assertEquals(unwrapLatexSource("\\begin{equation*}x\\end{equation*}"), {
+    display: true,
+    numbered: false,
+    body: "x",
+  });
 });
 
 Deno.test("latexToMathML - scripts, greek, sum, delimiters", () => {
@@ -86,6 +93,11 @@ Deno.test("latexToMathML - common symbols, accents, and left-array", () => {
   const tagged = renderFormulaHtml("\\begin{equation}A+B=C\\tag{something}\\end{equation}", 9);
   assertStringIncludes(tagged, "(something)");
   assertFalse(tagged.includes("(9)"), "\\tag replaces the sequential equation number");
+  const unnumbered = renderFormulaHtml("\\[E=mc^{2}\\]", 5);
+  assertStringIncludes(unnumbered, 'display="block"');
+  assertFalse(unnumbered.includes("(5)"), "\\[ \\] display math is not numbered");
+  const numbered = renderFormulaHtml("\\begin{equation}E=mc^{2}\\end{equation}", 3);
+  assertStringIncludes(numbered, "(3)");
   const xl = latexToMathML("F(a)\\xleftarrow[x>0]{x=a}F(x)");
   assertStringIncludes(xl, "<munderover>");
   assertStringIncludes(xl, "<mi>x</mi>");
