@@ -224,6 +224,8 @@ interface RenderCtx {
   bibitem: number;
   includeStack: string[];
   subeq: { parent: number; child: number } | null;
+  /** Header `\branch` name → selected (true when `\selected 1`). */
+  branches: Map<string, boolean>;
 }
 
 interface NomenclEntry {
@@ -570,6 +572,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       }
       const kind = insetKind(n);
       if (isInvisibleInset(n) || kind === "ERT") continue;
+      if (kind.startsWith("Branch ") && !branchProducesOutput(n, ctx)) continue;
       if (kind.startsWith("Float ") || kind.startsWith("Wrap ")) {
         const variant = kind.startsWith("Float ")
           ? kind.slice("Float ".length).trim()
@@ -701,6 +704,38 @@ function documentModules(ast: DocumentNode): string[] {
   return out;
 }
 
+/** Header `\branch Name` → `\selected 0|1` (missing branch = not selected). */
+function documentBranches(ast: DocumentNode): Map<string, boolean> {
+  const out = new Map<string, boolean>();
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type !== "block") continue;
+      if (n.tag === "branch") {
+        const name = (n.args ?? "").trim();
+        if (!name) continue;
+        const selected = n.children.some(
+          (c) => c.type === "property" && c.key === "selected" && c.value?.trim() === "1",
+        );
+        out.set(name, selected);
+        continue;
+      }
+      if (n.tag === "header" || n.tag === "document") walk(n.children);
+    }
+  };
+  walk(ast.children);
+  return out;
+}
+
+/** Native `InsetBranch::producesOutput`: selected XOR inverted. */
+function branchProducesOutput(block: BlockNode, ctx: RenderCtx): boolean {
+  const kind = insetKind(block);
+  const name = kind.startsWith("Branch ") ? kind.slice("Branch ".length).trim() : "";
+  const selected = name ? (ctx.branches.get(name) ?? false) : false;
+  const invertedRaw = (findProperty(block, "inverted") ?? "0").trim();
+  const inverted = invertedRaw === "1" || invertedRaw.toLowerCase() === "true";
+  return selected !== inverted;
+}
+
 async function loadLayoutHtml(
   ast: DocumentNode,
   layoutsDir?: string,
@@ -760,6 +795,7 @@ export async function renderLiveHtml(
     subeq: null,
     bibitem: 0,
     includeStack: [],
+    branches: documentBranches(ast),
   };
   indexDocument(findBody(ast), ctx);
   await loadBibliography(ctx);
@@ -1416,7 +1452,11 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
       ctx.subeq = null;
     }
   }
-  if (kind.startsWith("Flex ") || kind.startsWith("Branch ")) {
+  if (kind.startsWith("Branch ")) {
+    if (!branchProducesOutput(block, ctx)) return "";
+    return renderInsetLayouts(block, parentState, ctx);
+  }
+  if (kind.startsWith("Flex ")) {
     return renderInsetLayouts(block, parentState, ctx);
   }
   warnOnce(ctx, `Unknown inset '${kind}' rendered as an escaped fallback.`);

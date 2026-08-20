@@ -443,6 +443,14 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
     !phantomChunk.includes("\u200b"),
     "Phantom must omit like native XHTML, not emit a zero-width space",
   );
+  // Branches: Question selected; Answer not — only inverted Answer inset prints.
+  assertStringIncludes(html, "Who was the first physics Nobel prize winner?");
+  assertStringIncludes(html, "No answer:");
+  assertStringIncludes(html, "branch is deactivated");
+  assert(
+    !html.includes("Wilhelm Conrad"),
+    "inactive non-inverted Answer branch must omit like native XHTML",
+  );
   assertStringIncludes(html, 'class="Doublebox"');
   assertStringIncludes(html, "with rotated");
   assertStringIncludes(html, "This is a line");
@@ -567,6 +575,14 @@ Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels",
   assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
   assertStringIncludes(html, "<dt><code>Format</code></dt>");
   assert(!html.includes("status collapsedFormat"), "Flex Code status must not leak into Description labels");
+  assert(
+    !html.includes("International Keyboard Support"),
+    "deselected OutDated branch must omit like native XHTML",
+  );
+  assert(
+    !html.includes("Information from previous versions of this document"),
+    "deselected OutDated branch intro must omit",
+  );
 });
 
 Deno.test("Live renderer - escape helper is applied to source-derived text", () => {
