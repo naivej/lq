@@ -585,6 +585,21 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
     !html.slice(Math.max(0, contAt - 80), contAt).includes("Table "),
     "Caption Unnumbered must not get a Table N: prefix",
   );
+  // Boxes: native InsetBox::xhtml is div class="{type}" (+ optional width)
+  for (const variant of ["Boxed", "Doublebox", "Framed", "Frameless", "Shaded", "Shadowbox", "ovalbox", "Ovalbox"]) {
+    assertStringIncludes(html, `class="${variant}"`);
+  }
+  assertStringIncludes(html, "Shadow box");
+  assertStringIncludes(html, "Shaded background box");
+  assertStringIncludes(html, "Oval box, thin");
+  assertStringIncludes(html, "Double rectangular box");
+  // Flex Minipage (Var. Width): wrap like native MultiPar Flex → div
+  assertStringIncludes(html, 'class="minipage"');
+  const mpAt = html.indexOf("with line break");
+  assert(mpAt !== -1, "Minipage body text missing");
+  const mpOpen = html.lastIndexOf('class="minipage"', mpAt);
+  assert(mpOpen !== -1 && mpOpen > mpAt - 200, "Minipage content must sit inside div.minipage");
+  assertStringIncludes(html.slice(mpOpen, mpAt + 20), "rotated cell");
 });
 
 Deno.test("Live renderer - Help Development.lyx multirow cells emit rowspan", async () => {

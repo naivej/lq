@@ -1457,6 +1457,13 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind.startsWith("Flex Reflectbox")) {
     return `<span class="reflectbox" style="display:inline-block;transform:scaleX(-1)">${renderFlexInline(block, ctx)}</span>`;
   }
+  if (kind.startsWith("Flex Minipage")) {
+    // varwidth.module MultiPar Flex — native default HTMLTag is div; Argument 2 is max width.
+    const maxW = argumentText(block, "2").trim();
+    const css = maxW && !maxW.startsWith("\\") ? widthToCss(maxW) : "";
+    const style = css ? ` style="max-width: ${escapeLiveHtml(css)}"` : "";
+    return `<div class="minipage"${style}>${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  }
   if (kind === "Flex URL" || kind.startsWith("Flex URL")) {
     const url = flattenFlow(block.children, 0).map((item) => collectVisibleText(item.node)).join("").trim();
     return `<a class="url" href="${escapeLiveHtml(url)}">${escapeLiveHtml(url)}</a>`;
