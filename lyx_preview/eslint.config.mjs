@@ -1,4 +1,4 @@
-// ESLint flat config for the LyX Preview VS Code extension (lq/vsd_preview).
+// ESLint flat config for the LyX Preview VS Code extension (lq/lyx_preview).
 // Correctness-focused: typescript-eslint recommended (type-checked) plus the
 // promise rules that catch silent async failures, and no-unsanitized for the
 // webview HTML boundary (we will inject lq-rendered HTML into a webview).

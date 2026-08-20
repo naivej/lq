@@ -1,5 +1,5 @@
 {
-  "exclude": ["vsd_preview"],
+  "exclude": ["lyx_preview"],
   "tasks": {
     "audit:messages": "deno run -A tools/audit_messages.ts",
     "dev": "deno run --watch main.ts",
