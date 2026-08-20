@@ -94,6 +94,7 @@ Deno.test("latexToMathML - common symbols, accents, and left-array", () => {
   assertStringIncludes(latexToMathML("a\\pmod b"), "mod");
   assertStringIncludes(latexToMathML("\\Bra{\\psi}"), "⟨");
   assertStringIncludes(latexToMathML("\\cancel{x}"), "updiagonalstrike");
+  assertStringIncludes(latexToMathML("\\underbar{a}"), "<munder>");
   const aligned = latexToMathML("\\begin{aligned}A&=B\\\\C&=D\\end{aligned}");
   assertStringIncludes(aligned, "<mtable>");
   assertStringIncludes(aligned, "<mi>C</mi>");

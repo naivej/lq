@@ -148,6 +148,18 @@ div.ovalbox { border: groove medium currentColor; padding: 0.5ex; border-radius:
 div.Ovalbox { border: ridge thick currentColor; padding: 0.5ex; border-radius: 1em; }
 div.Shaded { background: color-mix(in srgb, currentColor 12%, transparent); padding: 0.5ex; }
 div.Frameless { margin: 1em 0; }
+div.float-listings { margin: 0.8em 0; }
+div.listings-caption { margin: 0 0 0.35em; }
+code.listings, pre.include {
+  display: block;
+  white-space: pre-wrap;
+  font-family: ui-monospace, Consolas, "Courier New", monospace;
+  font-size: 0.92em;
+  margin: 0;
+  padding: 0.6em 0.75em;
+  background: color-mix(in srgb, currentColor 6%, transparent);
+  overflow-x: auto;
+}
 div.right_address { text-align: right; }
 div.hanging { text-indent: -2em; padding-left: 2em; }
 div.initial { margin: 0.8em 0; }
@@ -170,6 +182,8 @@ div.definition, div.example, div.problem, div.exercise, div.question, div.note, 
 }
 .layout-label { font-style: normal; font-weight: bold; }
 span.noun { font-variant: small-caps; }
+u.dline { text-decoration-style: double; }
+u.wline { text-decoration-style: wavy; }
 span.note_greyedout, aside.note-greyedout {
   display: inline;
   color: #A0A0A0;

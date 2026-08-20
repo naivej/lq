@@ -471,6 +471,12 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, 'style="text-align: right"');
   assertStringIncludes(html, 'mathvariant="double-struck"');
   assertStringIncludes(html, "<mo>↻</mo>");
+  assertStringIncludes(html, 'class="wline"');
+  assertStringIncludes(html, "This is text with Wavy underlining on.");
+  assertStringIncludes(html, 'class="dline"');
+  assertStringIncludes(html, "This is text with Double underlining on.");
+  assertStringIncludes(html, 'font-size: x-small');
+  assertStringIncludes(html, "This is the");
   assertStringIncludes(html, "This paragraph is right aligned");
   assertStringIncludes(html, 'style="text-align: center"');
   assertStringIncludes(html, "this one is centered");
@@ -510,7 +516,14 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, '<code class="listings C++">');
   assertStringIncludes(html, "int a=5;");
   assertStringIncludes(html, '<div class="float-listings">');
+  assertStringIncludes(html, "<div class=\"listings-caption\">Listing 8.1: ");
   assertStringIncludes(html, "Example Listing float");
+  assertStringIncludes(html, 'href="#lst_Example_Listing">8.1</a>');
+  assertStringIncludes(html, 'href="#lst_file_listing">8.2</a>');
+  assertStringIncludes(html, "Listing 8.2: ");
+  assertStringIncludes(html, "Lines 10 - 15 of this LyX file");
+  assertStringIncludes(html, "\\usepackage[figure]{hypcap}");
+  assertStringIncludes(html, "Listing 8.3: ");
   assertStringIncludes(html, "def func(param):");
   assertStringIncludes(html, 'data-filename="Abstract.pdf"');
   assertStringIncludes(html, "<figcaption>Algorithm 3.1: ");
@@ -522,6 +535,18 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
     !html.includes("\\end_header"),
     "lstinputlisting of this file must honor firstline/lastline, not dump the whole .lyx source",
   );
+});
+
+Deno.test("Live renderer - Help Development.lyx multirow cells emit rowspan", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/Development.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, '<article class="lyx-live">');
+  assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
+  assertStringIncludes(html, 'rowspan="3"');
+  const noAt = html.indexOf(">No</td>");
+  assert(noAt !== -1, "Development.lyx multirow 'No' cell missing");
+  const tdOpen = html.lastIndexOf("<td", noAt);
+  assert(html.slice(tdOpen, noAt).includes('rowspan="3"'), "the 'No' cell is the start of a 3-row span");
 });
 
 Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels", async () => {

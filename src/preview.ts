@@ -200,6 +200,7 @@ interface RenderCtx {
   figure: number;
   table: number;
   algorithm: number;
+  listing: number;
   equation: number;
   chapterLabel: string;
   inTitle: boolean;
@@ -391,6 +392,21 @@ function cssLyxColor(name: string): string {
   return LYX_COLOR[name.toLowerCase()] ?? name;
 }
 
+/** Native `fontToHtmlAttribute` size map (LyX 2.5 `output_xhtml.cpp`). */
+const FONT_SIZE_CSS: Record<string, string> = {
+  tiny: "x-small",
+  scriptsize: "x-small",
+  footnotesize: "x-small",
+  small: "small",
+  large: "large",
+  larger: "x-large",
+  largest: "x-large",
+  huge: "xx-large",
+  huger: "xx-large",
+  increase: "larger",
+  decrease: "smaller",
+};
+
 const SKIP_LAYOUT_PROPS = new Set([
   "align",
   "noindent",
@@ -562,6 +578,18 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         walk(n.children, taken ?? floatNo, false);
         continue;
       }
+      if (kind === "listings" || kind.startsWith("listings ")) {
+        const taken = listingTakesNumber(n) ? takeFloatNumber(ctx, "listing") : undefined;
+        walk(n.children, taken ?? floatNo, false);
+        continue;
+      }
+      if (kind.startsWith("CommandInset include") && includeIsListings(n)) {
+        const taken = takeFloatNumber(ctx, "listing");
+        const label = listingParam(findProperty(n, "lstparams") ?? "", "label");
+        if (label && taken) ctx.labels.set(label, taken);
+        walk(n.children, taken ?? floatNo, false);
+        continue;
+      }
       if (kind.startsWith("CommandInset label")) {
         const name = findProperty(n, "name");
         if (name) ctx.labels.set(name, floatNo ?? currentHeading);
@@ -608,6 +636,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
   ctx.figure = 0;
   ctx.table = 0;
   ctx.algorithm = 0;
+  ctx.listing = 0;
   ctx.equation = 0;
   ctx.chapterLabel = "";
   ctx.nomenclSeq = 0;
@@ -707,6 +736,7 @@ export async function renderLiveHtml(
     figure: 0,
     table: 0,
     algorithm: 0,
+    listing: 0,
     equation: 0,
     chapterLabel: "",
     inTitle: false,
@@ -899,9 +929,46 @@ function isListLayout(name: string, ctx: RenderCtx): boolean {
 
 const ENUM_CLASS = ["enumi", "enumii", "enumiii", "enumiv"] as const;
 
+function snapshotCounters(ctx: RenderCtx) {
+  return {
+    footnote: ctx.footnote,
+    titleFoot: ctx.titleFoot,
+    figure: ctx.figure,
+    table: ctx.table,
+    algorithm: ctx.algorithm,
+    listing: ctx.listing,
+    equation: ctx.equation,
+    nomenclSeq: ctx.nomenclSeq,
+    indexSeq: ctx.indexSeq,
+    bibitem: ctx.bibitem,
+    layoutCounters: new Map(ctx.layoutCounters),
+    subeq: ctx.subeq ? { ...ctx.subeq } : null,
+  };
+}
+
+function restoreCounters(ctx: RenderCtx, snap: ReturnType<typeof snapshotCounters>): void {
+  ctx.footnote = snap.footnote;
+  ctx.titleFoot = snap.titleFoot;
+  ctx.figure = snap.figure;
+  ctx.table = snap.table;
+  ctx.algorithm = snap.algorithm;
+  ctx.listing = snap.listing;
+  ctx.equation = snap.equation;
+  ctx.nomenclSeq = snap.nomenclSeq;
+  ctx.indexSeq = snap.indexSeq;
+  ctx.bibitem = snap.bibitem;
+  ctx.layoutCounters = snap.layoutCounters;
+  ctx.subeq = snap.subeq;
+}
+
 function isSkippableFlow(item: FlowItem, ctx: RenderCtx): boolean {
   if (role(item.layout, ctx).kind !== "flow") return false;
-  return renderLayoutInline(item.node, ctx).trim().length === 0;
+  const snap = snapshotCounters(ctx);
+  try {
+    return renderLayoutInline(item.node, ctx).trim().length === 0;
+  } finally {
+    restoreCounters(ctx, snap);
+  }
 }
 
 function listOpenTag(spec: { tag: string }, layout: string, enumDepth: number): string {
@@ -1098,7 +1165,7 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
   const closeAll = () => {
     while (open.length) {
       const k = open.pop()!;
-      html += (INLINE[k] ?? { close: `</${k}>` }).close;
+      html += (INLINE[k] ?? { close: "</span>" }).close;
     }
   };
 
@@ -1106,6 +1173,8 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     em: { open: "<em>", close: "</em>" },
     strong: { open: "<strong>", close: "</strong>" },
     u: { open: "<u>", close: "</u>" },
+    dline: { open: '<u class="dline">', close: "</u>" },
+    wline: { open: '<u class="wline">', close: "</u>" },
     s: { open: "<s>", close: "</s>" },
     typewriter: { open: '<span class="typewriter">', close: "</span>" },
     sans: { open: '<span class="sans">', close: "</span>" },
@@ -1131,7 +1200,9 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     const p = state.properties;
     setInline("em", p.emph === "on" || p.shape === "italic" || p.shape === "slanted");
     setInline("strong", p.series === "bold");
-    setInline("u", p.bar === "under" || p.uuline === "on");
+    setInline("u", p.bar === "under");
+    setInline("dline", p.uuline === "on");
+    setInline("wline", p.uwave === "on");
     setInline("s", p.strikeout === "on" || p.xout === "on");
     setInline("typewriter", p.family === "typewriter");
     setInline("sans", p.family === "sans");
@@ -1149,6 +1220,20 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     if (wantColor && !open.includes(colorKey)) {
       html += `<span style="color: ${escapeLiveHtml(cssLyxColor(raw))}">`;
       open.push(colorKey);
+    }
+    const size = (p.size ?? "").toLowerCase();
+    const sizeCss = FONT_SIZE_CSS[size];
+    const sizeKey = sizeCss ? `size:${size}` : "";
+    const sizeIdx = open.findIndex((k) => k.startsWith("size:"));
+    if (sizeIdx !== -1 && open[sizeIdx] !== sizeKey) {
+      while (open.length > sizeIdx) {
+        const k = open.pop()!;
+        html += (INLINE[k] ?? { close: "</span>" }).close;
+      }
+    }
+    if (sizeCss && !open.includes(sizeKey)) {
+      html += `<span style="font-size: ${sizeCss}">`;
+      open.push(sizeKey);
     }
   };
 
@@ -1169,8 +1254,8 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
       if (
         child.key === "emph" || child.key === "series" || child.key === "shape" ||
         child.key === "bar" || child.key === "strikeout" || child.key === "xout" ||
-        child.key === "uuline" || child.key === "noun" || child.key === "family" ||
-        child.key === "color"
+        child.key === "uuline" || child.key === "uwave" || child.key === "noun" ||
+        child.key === "family" || child.key === "color" || child.key === "size"
       ) {
         syncFont();
       }
@@ -1536,10 +1621,25 @@ function renderTabular(block: BlockNode, parentState: TraversalState, ctx: Rende
   for (let i = 0; i < cellAttrs.length; i++) {
     const attr = cellAttrs[i];
     if (attr.multicolumn === "2") continue;
+    if (attr.multirow === "4") {
+      c += 1;
+      if (c >= usedCols) {
+        html += "</tr>";
+        c = 0;
+      }
+      continue;
+    }
     if (c === 0) html += "<tr>";
     let span = 1;
     if (attr.multicolumn === "1") {
       for (let j = i + 1; j < cellAttrs.length && cellAttrs[j].multicolumn === "2"; j++) span++;
+    }
+    let rowspan = 1;
+    if (attr.multirow === "3") {
+      for (let j = i + usedCols; j < cellAttrs.length; j += usedCols) {
+        if (cellAttrs[j]?.multirow === "4") rowspan++;
+        else break;
+      }
     }
     const styles: string[] = [];
     const align = attr.alignment || colAttrs[c]?.alignment;
@@ -1554,8 +1654,9 @@ function renderTabular(block: BlockNode, parentState: TraversalState, ctx: Rende
     if (attr.rightline === "true") styles.push("border-right: 1px solid");
     const style = styles.length ? ` style="${styles.join("; ")}"` : "";
     const spanAttr = span > 1 ? ` colspan="${span}"` : "";
+    const rowAttr = rowspan > 1 ? ` rowspan="${rowspan}"` : "";
     const cell = cells[i];
-    html += `<td${spanAttr}${style}>${cell ? renderCell(cell, parentState, ctx) : ""}</td>`;
+    html += `<td${spanAttr}${rowAttr}${style}>${cell ? renderCell(cell, parentState, ctx) : ""}</td>`;
     c += span;
     if (c >= usedCols) {
       html += "</tr>";
@@ -1614,6 +1715,7 @@ function noteChapterHeading(ctx: RenderCtx, heading: LayoutRole, number: string)
   ctx.figure = 0;
   ctx.table = 0;
   ctx.algorithm = 0;
+  ctx.listing = 0;
 }
 
 function takeFloatNumber(ctx: RenderCtx, variant: string): string | undefined {
@@ -1627,6 +1729,9 @@ function takeFloatNumber(ctx: RenderCtx, variant: string): string | undefined {
   } else if (variant === "algorithm") {
     ctx.algorithm += 1;
     n = ctx.algorithm;
+  } else if (variant === "listing") {
+    ctx.listing += 1;
+    n = ctx.listing;
   } else {
     return undefined;
   }
@@ -1635,8 +1740,24 @@ function takeFloatNumber(ctx: RenderCtx, variant: string): string | undefined {
 
 function floatCaptionPrefix(variant: string, num: string | undefined): string {
   if (!num) return "";
-  const name = variant === "table" ? "Table" : variant === "algorithm" ? "Algorithm" : "Figure";
+  const name = variant === "table"
+    ? "Table"
+    : variant === "algorithm"
+    ? "Algorithm"
+    : variant === "listing"
+    ? "Listing"
+    : "Figure";
   return `${name} ${num}: `;
+}
+
+function listingTakesNumber(block: BlockNode): boolean {
+  if ((findProperty(block, "inline") ?? "").toLowerCase() === "true") return false;
+  return collectBlocks(block, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption")).length > 0;
+}
+
+function includeIsListings(block: BlockNode): boolean {
+  const command = (findProperty(block, "LatexCommand") ?? "").toLowerCase();
+  return command.includes("lstinput") || command.includes("inputminted");
 }
 
 function renderCaptionedFloat(block: BlockNode, variant: string, ctx: RenderCtx): string {
@@ -1671,10 +1792,15 @@ function renderWrap(block: BlockNode, _parentState: TraversalState, ctx: RenderC
   return `<div class="wrap wrap-${side}" style="width: ${escapeLiveHtml(width)}">${inner}</div>`;
 }
 
+function listingParam(params: string, key: string): string {
+  const m = new RegExp(`${key}\\s*=\\s*(?:\\{([^{}]*)\\}|([^,]+))`, "i").exec(params);
+  return (m?.[1] ?? m?.[2] ?? "").trim();
+}
+
 function listingLanguage(params: string): string {
-  return /language\s*=\s*\{([^}]+)\}/.exec(params)?.[1]
-    ?? /language\s*=\s*([^,\s"]+)/.exec(params)?.[1]
-    ?? "";
+  const raw = listingParam(params, "language");
+  const dialect = /^\[([^\]]*)\](.*)$/.exec(raw);
+  return (dialect ? dialect[2] || dialect[1] : raw).trim();
 }
 
 function listingCode(block: BlockNode): string {
@@ -1715,7 +1841,10 @@ function renderListings(block: BlockNode, _parentState: TraversalState, ctx: Ren
   const code = `<code class="${cls}">${escapeLiveHtml(listingCode(block))}</code>`;
   if (inline) return code;
   let html = `<div class="float-listings">`;
-  if (captionHtml) html += `<div class="listings-caption">${captionHtml}</div>`;
+  if (captionHtml) {
+    const prefix = listingTakesNumber(block) ? floatCaptionPrefix("listing", takeFloatNumber(ctx, "listing")) : "";
+    html += `<div class="listings-caption">${prefix}${captionHtml}</div>`;
+  }
   html += `${code}</div>`;
   return html;
 }
@@ -1735,12 +1864,28 @@ function renderInclude(block: BlockNode, ctx: RenderCtx): string {
     try {
       const raw = Deno.readTextFileSync(resolved);
       const params = findProperty(block, "lstparams") ?? "";
-      const first = Number(/firstline\s*=\s*(\d+)/i.exec(params)?.[1] ?? 1);
-      const last = Number(/lastline\s*=\s*(\d+)/i.exec(params)?.[1] ?? 0);
+      const first = Number(listingParam(params, "firstline") || "1");
+      const last = Number(listingParam(params, "lastline") || "0");
       const lines = raw.split(/\r?\n/);
       const from = Math.max(1, first) - 1;
       const to = last > 0 ? Math.min(last, lines.length) : lines.length;
-      return `<pre class="include">${escapeLiveHtml(lines.slice(from, to).join("\n"))}</pre>`;
+      const body = escapeLiveHtml(lines.slice(from, to).join("\n"));
+      if (!includeIsListings(block)) {
+        return `<pre class="include">${body}</pre>`;
+      }
+      const num = takeFloatNumber(ctx, "listing");
+      const caption = listingParam(params, "caption");
+      const label = listingParam(params, "label");
+      const lang = listingLanguage(params);
+      const cls = lang ? `listings ${escapeLiveHtml(lang)}` : "listings";
+      const id = label ? ` id="${escapeLiveHtml(xmlId(label))}"` : "";
+      const prefix = floatCaptionPrefix("listing", num);
+      let html = `<div class="float-listings"${id}>`;
+      if (prefix || caption) {
+        html += `<div class="listings-caption">${prefix}${escapeLiveHtml(caption)}</div>`;
+      }
+      html += `<pre class="include"><code class="${cls}">${body}</code></pre></div>`;
+      return html;
     } catch {
       return "";
     }

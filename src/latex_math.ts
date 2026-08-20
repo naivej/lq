@@ -156,7 +156,7 @@ const ACCENT_OVER: Record<string, string> = {
 };
 
 const ACCENT_UNDER: Record<string, string> = {
-  underline: "_", underrightarrow: "→", underleftarrow: "←", underleftrightarrow: "↔",
+  underline: "_", underbar: "_", underrightarrow: "→", underleftarrow: "←", underleftrightarrow: "↔",
   utilde: "˜",
 };
 
