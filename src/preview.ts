@@ -340,8 +340,18 @@ function fallbackRole(name: string): LayoutRole {
   return { kind: "flow" };
 }
 
+function layoutHtmlSpec(
+  name: string,
+  html: Map<string, LayoutHtml> | null,
+): LayoutHtml | undefined {
+  if (!html) return undefined;
+  return html.get(name) ??
+    html.get(name.replaceAll(" ", "_")) ??
+    html.get(name.replaceAll("_", " "));
+}
+
 function layoutRole(name: string, html: Map<string, LayoutHtml> | null): LayoutRole {
-  return roleFromHtml(name, html?.get(name)) ?? fallbackRole(name);
+  return roleFromHtml(name, layoutHtmlSpec(name, html)) ?? fallbackRole(name);
 }
 
 function role(name: string, ctx: RenderCtx): LayoutRole {
@@ -363,7 +373,7 @@ function alignAttr(node: BlockNode): string {
 }
 
 function staticLayoutLabel(name: string, ctx: RenderCtx): string {
-  const spec = ctx.layoutHtml?.get(name);
+  const spec = layoutHtmlSpec(name, ctx.layoutHtml);
   if (!spec || spec.labelType?.toLowerCase() !== "static") return "";
   let fmt = spec.labelString ?? "";
   if (fmt === name) return "";
@@ -1105,6 +1115,7 @@ function renderEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string, n
   const first = items[start];
   const spec = role(first.layout, ctx);
   if (spec.kind !== "env") return ["", start];
+  const cls = ` class="${layoutSlug(first.layout)}"`;
   let i = start;
   if (spec.item === "NONE") {
     let body = "";
@@ -1113,9 +1124,9 @@ function renderEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string, n
       body += renderLayoutInline(items[i].node, ctx);
       i++;
     }
-    return [`<${spec.tag}>${body}</${spec.tag}>`, i];
+    return [`<${spec.tag}${cls}>${body}</${spec.tag}>`, i];
   }
-  let html = `<${spec.tag}>`;
+  let html = `<${spec.tag}${cls}>`;
   while (i < items.length && items[i].layout === first.layout && items[i].depth === first.depth) {
     html += `<${spec.item}>${renderLayoutInline(items[i].node, ctx)}</${spec.item}>`;
     i++;

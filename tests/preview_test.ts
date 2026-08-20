@@ -150,7 +150,7 @@ Deno.test("Live renderer - lists and quotes", async () => {
   assertStringIncludes(html, "<li>first</li>");
   assertStringIncludes(html, "<dt>Term</dt>");
   assertStringIncludes(html, "<dd>the explanation</dd>");
-  assertStringIncludes(html, "<blockquote>");
+  assertStringIncludes(html, '<blockquote class="quote">');
   assertStringIncludes(html, "A quoted line.");
 });
 
@@ -459,6 +459,24 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assert(!html.includes('class="center_footer"'), "Center Footer page chrome must omit");
   assert(!html.includes('class="left_header"'), "Left Header page chrome must omit");
   assert(!html.includes('class="right_footer"'), "Right Footer page chrome must omit");
+  // Already-handled smoke promotions
+  assertStringIncludes(html, 'class="href"');
+  assertStringIncludes(html, 'href="lyx-docs@lists.lyx.org"');
+  assertStringIncludes(html, '<nav class="toc">');
+  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, "<kbd");
+  assertStringIncludes(html, "<br>");
+  assertStringIncludes(html, "\u00a0"); // protected space
+  assertStringIncludes(html, "“"); // Quotes eld
+  assertStringIncludes(html, "”"); // Quotes erd
+  assertStringIncludes(html, '<pre class="verbatim">');
+  assertStringIncludes(html, "This is Verbatim.");
+  assertStringIncludes(html, '<blockquote class="verse">');
+  assertStringIncludes(html, '<blockquote class="quote">');
+  assertStringIncludes(html, '<blockquote class="quotation">');
+  assertStringIncludes(html, '<pre class="lyx_code">');
+  assertStringIncludes(html, "#include");
+  assertStringIncludes(html, 'class="right_address"');
   assertStringIncludes(html, 'class="Doublebox"');
   assertStringIncludes(html, "with rotated");
   assertStringIncludes(html, "This is a line");
@@ -600,6 +618,43 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   const mpOpen = html.lastIndexOf('class="minipage"', mpAt);
   assert(mpOpen !== -1 && mpOpen > mpAt - 200, "Minipage content must sit inside div.minipage");
   assertStringIncludes(html.slice(mpOpen, mpAt + 20), "rotated cell");
+  assertStringIncludes(html, 'class="href"');
+  assertStringIncludes(html, '<nav class="toc">');
+  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, "<kbd");
+  assertStringIncludes(html, "“");
+  assertStringIncludes(html, "<br>");
+});
+
+Deno.test("Live renderer - Help Intro.lyx TOC, href, quotes, table", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/Intro.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, '<article class="lyx-live">');
+  assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
+  assertStringIncludes(html, '<h1 class="title">Introduction to LyX</h1>');
+  assertStringIncludes(html, '<nav class="toc">');
+  assertStringIncludes(html, 'class="href"');
+  assertStringIncludes(html, "lyx-docs@lists.lyx.org");
+  assertStringIncludes(html, "“");
+  assertStringIncludes(html, "”");
+  assertStringIncludes(html, "<table");
+  assertStringIncludes(html, 'class="foot"');
+  assertStringIncludes(html, "<br>");
+});
+
+Deno.test("Live renderer - Help Tutorial.lyx TOC, Info, LyX-Code, quotes", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/Tutorial.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, '<article class="lyx-live">');
+  assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
+  assertStringIncludes(html, '<nav class="toc">');
+  assertStringIncludes(html, 'class="href"');
+  assertStringIncludes(html, "<kbd");
+  assertStringIncludes(html, '<pre class="lyx_code">');
+  assertStringIncludes(html, "This is an introduction");
+  assertStringIncludes(html, "“");
+  assertStringIncludes(html, 'class="foot"');
+  assertStringIncludes(html, "<br>");
 });
 
 Deno.test("Live renderer - Help Development.lyx multirow cells emit rowspan", async () => {

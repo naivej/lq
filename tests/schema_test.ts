@@ -79,6 +79,11 @@ Deno.test("Layout HTML lookup is renderer-private and resolves CopyStyle", async
     "CopyStyle from quoted Left Header must inherit Category",
   );
   assertEquals(withHeaders.get('"Left Header"'), undefined, "quoted key must not remain");
+  assertEquals(
+    koma.get("Right_Address")?.category,
+    "FrontMatter",
+    "layout file uses Right_Address with underscore",
+  );
   const theorems = await getLayoutHtmlForClass("scrbook", layoutsDir, ["theorems-ams"]);
   assertEquals(theorems.get("Theorem")?.labelType?.toLowerCase(), "static");
   assertEquals(theorems.get("Theorem")?.labelString, "Theorem \\thetheorem.");
