@@ -369,6 +369,8 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, "<br>");
   assertStringIncludes(html, "<hr>");
   assertStringIncludes(html, 'class="index"');
+  assertStringIncludes(html, '<pre class="lyx_code">');
+  assertStringIncludes(html, '<blockquote class="quote">');
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
@@ -430,6 +432,17 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, 'class="href"');
   assertStringIncludes(html, 'class="Shadowbox"');
   assertStringIncludes(html, '<pre class="lyx_code">');
+  // Shaped paragraphs + extended theorem-like layouts
+  assertStringIncludes(html, 'class="heart"');
+  assertStringIncludes(html, 'class="nut"');
+  assertStringIncludes(html, 'class="proof"');
+  assertStringIncludes(html, '<span class="layout-label">Proof.</span>');
+  assertStringIncludes(html, '<span class="layout-label">Proposition');
+  assertStringIncludes(html, '<span class="layout-label">Remark');
+  assertStringIncludes(html, '<span class="layout-label">Algorithm.');
+  assertStringIncludes(html, '<span class="layout-label">Definition.');
+  assertStringIncludes(html, '<span class="layout-label">Example.');
+  assertStringIncludes(html, 'class="index"');
 });
 
 Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph", async () => {
@@ -659,6 +672,15 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, "<kbd");
   assertStringIncludes(html, "“");
   assertStringIncludes(html, "<br>");
+  assertStringIncludes(html, 'class="dropcap"');
+  assertStringIncludes(html, 'class="reflectbox"');
+  assertStringIncludes(html, 'class="rotatebox"');
+  assertStringIncludes(html, 'class="scalebox"');
+  assertStringIncludes(html, 'class="resizebox"');
+  assertStringIncludes(html, 'class="bibitemlabel"');
+  assertStringIncludes(html, 'class="citation"');
+  assertStringIncludes(html, "<hr>");
+  assertStringIncludes(html, 'class="index"');
 });
 
 Deno.test("Live renderer - Help Formula-numbering.lyx refs and eqno", async () => {
@@ -702,6 +724,9 @@ Deno.test("Live renderer - Help Tutorial.lyx TOC, Info, LyX-Code, quotes", async
   assertStringIncludes(html, "“");
   assertStringIncludes(html, 'class="foot"');
   assertStringIncludes(html, "<br>");
+  assertStringIncludes(html, 'class="ref"');
+  assertStringIncludes(html, "<table");
+  assertStringIncludes(html, "<math");
 });
 
 Deno.test("Live renderer - Help Development.lyx multirow cells emit rowspan", async () => {
