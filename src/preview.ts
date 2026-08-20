@@ -814,7 +814,8 @@ function isOmittedInsetKind(kind: string): boolean {
     kind === "Nomenclature" || kind.startsWith("Nomenclature ") ||
     kind === "Argument" || kind.startsWith("Argument ") ||
     kind.startsWith("CommandInset label") ||
-    kind === "FormulaMacro" || kind.startsWith("FormulaMacro")
+    kind === "FormulaMacro" || kind.startsWith("FormulaMacro") ||
+    kind === "Phantom" || kind.startsWith("Phantom ")
   );
 }
 
@@ -1316,7 +1317,8 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     kind === "Newpage" || kind.startsWith("Newpage ") ||
     kind === "VSpace" || kind.startsWith("VSpace ") ||
     kind === "Separator" || kind.startsWith("Separator ") ||
-    kind === "Argument" || kind.startsWith("Argument ")
+    kind === "Argument" || kind.startsWith("Argument ") ||
+    kind === "Phantom" || kind.startsWith("Phantom ")
   ) {
     return "";
   }
@@ -1358,7 +1360,6 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const tag = kind.includes("superscript") ? "sup" : kind.includes("subscript") ? "sub" : "";
     if (tag) return `<${tag}>${renderFlexInline(block, ctx)}</${tag}>`;
   }
-  if (kind.startsWith("Phantom ") || kind === "Phantom") return "\u200b";
   if (kind === "Text") return renderInsetLayouts(block, parentState, ctx);
   if (kind === "Flex Noun" || kind.startsWith("Flex Noun")) {
     return `<span class="noun">${renderFlexInline(block, ctx)}</span>`;

@@ -291,6 +291,8 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, '<article class="lyx-live">');
   const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
   assertEquals(unknown.map((d) => d.message), []);
+  // Native LyXHTML drops Phantom/HPhantom/VPhantom entirely (InsetPhantom::xhtml).
+  assert(!html.includes("unknown-inset"), "Phantom must omit, not fall back");
   assertStringIncludes(html, "<kbd");
   assert(!html.includes('<span class="info">math-mode</span>'), "Info shortcuts must not dump the raw LFUN name as body text");
   assertStringIncludes(html, "class=\"typewriter\"");
@@ -432,6 +434,15 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, ">A The User Interface");
   assertStringIncludes(html, ">A.1 The File Menu");
   assert(!html.includes(">7 The User Interface"), "appendix chapters must not continue arabic numbering");
+  const phantomAt = html.indexOf("What is correct English");
+  assert(phantomAt !== -1, "UserGuide phantom example missing");
+  const phantomChunk = html.slice(phantomAt, phantomAt + 350);
+  assertStringIncludes(phantomChunk, "has to be jumped");
+  assertStringIncludes(phantomChunk, "jumps");
+  assert(
+    !phantomChunk.includes("\u200b"),
+    "Phantom must omit like native XHTML, not emit a zero-width space",
+  );
   assertStringIncludes(html, 'class="Doublebox"');
   assertStringIncludes(html, "with rotated");
   assertStringIncludes(html, "This is a line");
