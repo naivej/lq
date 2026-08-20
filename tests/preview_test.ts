@@ -339,7 +339,17 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, 'class="eqno">(1)</span>');
   assertStringIncludes(html, 'class="eqno">(something)</span>');
   assertStringIncludes(html, 'class="eqno">something</span>');
-  assertEquals((html.match(/class="eqno"/g) ?? []).length, 31, "numbered envs plus \\tag/\\tag*, not every display formula");
+  const gatherProse = html.indexOf("Every line can be numbered");
+  assert(gatherProse !== -1, "Math.lyx gather section missing");
+  const gatherBlock = html.slice(gatherProse, gatherProse + 2500);
+  assert(
+    (gatherBlock.match(/class="formula-row"/g) ?? []).length >= 2,
+    "gather A=1 and X=-1 must be separate rows",
+  );
+  assert(gatherBlock.includes('class="eqno">'), "gather lines are numbered");
+  const gatherNos = [...gatherBlock.matchAll(/class="eqno">\(([^)]*)\)/g)].map((m) => m[1]);
+  assert(gatherNos.length >= 2, `gather should number both lines, got ${gatherNos.join(",")}`);
+  assertEquals((html.match(/class="eqno"/g) ?? []).length, 36, "per-line gather/align/eqnarray numbers plus \\tag/\\tag*");
   assertStringIncludes(html, 'class="subequations"');
   const subref = html.match(/href="#eq_b">\(([^)]+)\)/);
   assert(subref !== null && /a$/.test(subref[1]), `subequation ref should be like (Na), got ${subref?.[1]}`);

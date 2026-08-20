@@ -1,4 +1,4 @@
-import { assertEquals, assertStringIncludes } from "@std/assert";
+import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 
 function assertFalse(cond: boolean, msg: string): void {
   if (cond) throw new Error(msg);
@@ -6,20 +6,27 @@ function assertFalse(cond: boolean, msg: string): void {
 import { latexToMathML, renderFormulaHtml, unwrapLatexSource } from "../src/latex_math.ts";
 
 Deno.test("unwrapLatexSource - dollar, equation, label", () => {
-  assertEquals(unwrapLatexSource("$x$"), { display: false, numbered: false, body: "x" });
+  assertEquals(unwrapLatexSource("$x$"), { display: false, numbered: false, env: "$", body: "x" });
   assertEquals(unwrapLatexSource("\\begin{equation}\nE=mc^{2}\n\\end{equation}"), {
     display: true,
     numbered: true,
+    env: "equation",
     body: "E=mc^{2}",
   });
   assertEquals(
     unwrapLatexSource("\\begin{equation}\\ell_{t}(x)\\label{eq:eq_label}\\end{equation}"),
-    { display: true, numbered: true, body: "\\ell_{t}(x)" },
+    { display: true, numbered: true, env: "equation", body: "\\ell_{t}(x)" },
   );
-  assertEquals(unwrapLatexSource("\\[E=mc^{2}\\]"), { display: true, numbered: false, body: "E=mc^{2}" });
+  assertEquals(unwrapLatexSource("\\[E=mc^{2}\\]"), {
+    display: true,
+    numbered: false,
+    env: "[",
+    body: "E=mc^{2}",
+  });
   assertEquals(unwrapLatexSource("\\begin{equation*}x\\end{equation*}"), {
     display: true,
     numbered: false,
+    env: "equation*",
     body: "x",
   });
 });
@@ -98,6 +105,26 @@ Deno.test("latexToMathML - common symbols, accents, and left-array", () => {
   assertFalse(unnumbered.includes("(5)"), "\\[ \\] display math is not numbered");
   const numbered = renderFormulaHtml("\\begin{equation}E=mc^{2}\\end{equation}", 3);
   assertStringIncludes(numbered, "(3)");
+  const gather = renderFormulaHtml("\\begin{gather}A=1\\\\ X=\\textrm{-}1\\end{gather}", ["8", "9"]);
+  assertEquals([...gather.matchAll(/class="formula-row"/g)].length, 2);
+  assertEquals([...gather.matchAll(/display="block"/g)].length, 2);
+  assertStringIncludes(gather, "(8)");
+  assertStringIncludes(gather, "(9)");
+  assert(gather.indexOf("(8)") < gather.indexOf("(9)"), "gather lines keep source order");
+  assertStringIncludes(gather, "<mi>A</mi>");
+  assertStringIncludes(gather, "<mn>1</mn>");
+  const eqnarray = renderFormulaHtml(
+    "\\begin{eqnarray}A&=&B\\\\ C&=&D\\nonumber \\\\ E&=&F\\end{eqnarray}",
+    ["1", undefined, "2"],
+  );
+  assertEquals([...eqnarray.matchAll(/class="formula-row"/g)].length, 3);
+  assertStringIncludes(eqnarray, "(1)");
+  assertStringIncludes(eqnarray, "(2)");
+  assertEquals([...eqnarray.matchAll(/class="eqno"/g)].length, 2, "\\nonumber row is not numbered");
+  const multline = renderFormulaHtml("\\begin{multline}A\\\\ B\\\\ C\\end{multline}", [undefined, undefined, "4"]);
+  assertEquals([...multline.matchAll(/class="formula-row"/g)].length, 3);
+  assertStringIncludes(multline, "(4)");
+  assertEquals([...multline.matchAll(/class="eqno"/g)].length, 1, "multline numbers only the last line");
   const xl = latexToMathML("F(a)\\xleftarrow[x>0]{x=a}F(x)");
   assertStringIncludes(xl, "<munderover>");
   assertStringIncludes(xl, "<mi>x</mi>");

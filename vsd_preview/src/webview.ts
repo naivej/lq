@@ -77,18 +77,27 @@ td, th { border: 1px solid var(--vscode-panel-border); padding: 0.25em 0.5em; }
 .foot_intitle:hover .foot_intitle_inner, .foot_intitle:focus-within .foot_intitle_inner { display: inline; }
 span.formula { }
 math { font-family: "Cambria Math", "Latin Modern Math", "STIX Two Math", serif; font-size: 1.05em; }
-span.formula:has(math[display="block"]) {
+span.formula:has(> math[display="block"]),
+span.formula-row {
   display: grid;
   grid-template-columns: 4em 1fr 4em;
   align-items: center;
   width: 100%;
   margin: 1.2em 0;
 }
-span.formula:has(math[display="block"]) > math {
+span.formula:has(> .formula-row) {
+  display: block;
+  width: 100%;
+  margin: 1.2em 0;
+}
+span.formula-row { margin: 0.35em 0; }
+span.formula:has(> math[display="block"]) > math,
+span.formula-row > math {
   grid-column: 2;
   justify-self: center;
 }
-span.formula:has(math[display="block"]) > .eqno {
+span.formula:has(> math[display="block"]) > .eqno,
+span.formula-row > .eqno {
   grid-column: 3;
   justify-self: end;
 }

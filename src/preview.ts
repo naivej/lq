@@ -17,7 +17,7 @@ import {
 } from "./text_utils.ts";
 import * as path from "@std/path";
 import { formatBibliographyEntry, parseBibtex, type Citation } from "./bib.ts";
-import { renderFormulaHtml, unwrapLatexSource } from "./latex_math.ts";
+import { planFormulaLines, renderFormulaHtml } from "./latex_math.ts";
 import { getDefaultLayoutsDir, getLayoutHtmlForClass, type LayoutHtml } from "./schema.ts";
 
 export const LIVE_CONTRACT = "lyx-preview/live-1";
@@ -583,13 +583,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         continue;
       }
       if (kind === "Formula" || kind.startsWith("Formula")) {
-        const src = formulaSource(n);
-        const { numbered } = unwrapLatexSource(src);
-        if (numbered) {
-          const num = takeEquationNumber(ctx);
-          const lab = /\\label\{([^}]+)\}/.exec(src);
-          if (lab) ctx.labels.set(lab[1], num);
-        }
+        takeFormulaNumbers(formulaSource(n), ctx);
         continue;
       }
       if (kind.startsWith("CommandInset citation")) {
@@ -1234,9 +1228,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Formula" || kind.startsWith("Formula ") || kind.startsWith("Formula")) {
     const source = formulaSource(block);
-    const { numbered } = unwrapLatexSource(source);
-    const number = numbered ? takeEquationNumber(ctx) : undefined;
-    return renderFormulaHtml(source, number);
+    return renderFormulaHtml(source, takeFormulaNumbers(source, ctx));
   }
   if (
     kind === "Newpage" || kind.startsWith("Newpage ") ||
@@ -1381,6 +1373,25 @@ function takeEquationNumber(ctx: RenderCtx): string {
   return String(ctx.equation);
 }
 
+function takeFormulaNumbers(
+  src: string,
+  ctx: RenderCtx,
+): string | Array<string | undefined> | undefined {
+  const plan = planFormulaLines(src);
+  const nos: Array<string | undefined> = [];
+  for (const line of plan.lines) {
+    if (line.consumesNumber) {
+      const num = takeEquationNumber(ctx);
+      nos.push(num);
+      for (const lab of line.labels) ctx.labels.set(lab, num);
+    } else {
+      nos.push(undefined);
+    }
+  }
+  if (plan.lines.length > 1) return nos;
+  return nos[0];
+}
+
 function walkSubequationLabels(nodes: Node[], ctx: RenderCtx): void {
   const parent = String(ctx.subeq?.parent ?? ctx.equation);
   for (const n of nodes) {
@@ -1393,13 +1404,7 @@ function walkSubequationLabels(nodes: Node[], ctx: RenderCtx): void {
         continue;
       }
       if (kind === "Formula" || kind.startsWith("Formula")) {
-        const src = formulaSource(n);
-        const { numbered } = unwrapLatexSource(src);
-        if (numbered) {
-          const num = takeEquationNumber(ctx);
-          const lab = /\\label\{([^}]+)\}/.exec(src);
-          if (lab) ctx.labels.set(lab[1], num);
-        }
+        takeFormulaNumbers(formulaSource(n), ctx);
         continue;
       }
     }

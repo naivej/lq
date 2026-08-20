@@ -171,27 +171,66 @@ const SKIP_GROUP = new Set([
 
 const ENV = /\\begin\{(equation\*?|align\*?|alignat\*?|flalign\*?|displaymath|multline\*?|gather\*?|eqnarray\*?)\}(?:\{[^}]*\})?([\s\S]*)\\end\{\1\}/;
 const NUMBERED_ENV = /^(equation|align|alignat|flalign|multline|gather|eqnarray)$/;
+const MULTI_LINE_ENV = /^(align|alignat|flalign|gather|multline|eqnarray)\*?$/;
 
-export function unwrapLatexSource(source: string): { display: boolean; numbered: boolean; body: string } {
+export type FormulaLine = {
+  tex: string;
+  consumesNumber: boolean;
+  labels: string[];
+  tag?: { star: boolean; text: string };
+};
+
+export type FormulaLinePlan = {
+  display: boolean;
+  numbered: boolean;
+  env: string;
+  lines: FormulaLine[];
+};
+
+function peelLatexSource(source: string): {
+  display: boolean;
+  numbered: boolean;
+  env: string;
+  rawBody: string;
+} {
   let s = source.trim();
   let display = false;
   let numbered = false;
+  let envName = "";
   const env = ENV.exec(s);
   if (env && env.index === 0 && env[0].length === s.length) {
     display = true;
+    envName = env[1];
     numbered = NUMBERED_ENV.test(env[1]);
     s = env[2].trim();
   } else if (s.startsWith("$$") && s.endsWith("$$")) {
     display = true;
+    envName = "$$";
     s = s.slice(2, -2).trim();
   } else if (s.startsWith("\\[") && s.endsWith("\\]")) {
     display = true;
+    envName = "[";
     s = s.slice(2, -2).trim();
   } else if (s.startsWith("$") && s.endsWith("$") && s.length >= 2) {
+    envName = "$";
     s = s.slice(1, -1).trim();
   }
-  s = s.replace(/\\label\{[^}]*\}/g, "").trim();
-  return { display, numbered, body: s };
+  return { display, numbered, env: envName, rawBody: s };
+}
+
+export function unwrapLatexSource(source: string): {
+  display: boolean;
+  numbered: boolean;
+  env: string;
+  body: string;
+} {
+  const peeled = peelLatexSource(source);
+  return {
+    display: peeled.display,
+    numbered: peeled.numbered,
+    env: peeled.env,
+    body: peeled.rawBody.replace(/\\label\{[^}]*\}/g, "").trim(),
+  };
 }
 
 function extractTag(body: string): { star: boolean; text: string } | undefined {
@@ -200,22 +239,109 @@ function extractTag(body: string): { star: boolean; text: string } | undefined {
   return { star: m[1] === "*", text: m[2] };
 }
 
-export function renderFormulaHtml(source: string, equationNo?: number | string): string {
-  const { display, numbered, body } = unwrapLatexSource(source);
-  const inner = latexToMathML(body);
-  const displayAttr = display ? ' display="block"' : "";
-  const math =
-    `<math xmlns="http://www.w3.org/1998/Math/MathML"${displayAttr}><semantics>${inner}<annotation encoding="application/x-tex">${escapeLiveHtml(body)}</annotation></semantics></math>`;
-  const tagged = extractTag(body);
-  let eqno = "";
-  if (tagged) {
-    eqno = tagged.star
-      ? `<span class="eqno">${escapeLiveHtml(tagged.text)}</span>`
-      : `<span class="eqno">(${escapeLiveHtml(tagged.text)})</span>`;
-  } else if (numbered && equationNo !== undefined) {
-    eqno = `<span class="eqno">(${equationNo})</span>`;
+function splitTopLevel(s: string, sep: "\\\\" | "&"): string[] {
+  const parts: string[] = [];
+  let start = 0;
+  let brace = 0;
+  let envDepth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "{") brace++;
+    else if (ch === "}" && brace > 0) brace--;
+    else if (ch === "\\" && brace === 0) {
+      if (s.startsWith("\\begin{", i)) envDepth++;
+      else if (s.startsWith("\\end{", i)) envDepth = Math.max(0, envDepth - 1);
+      else if (sep === "\\\\" && envDepth === 0 && s[i + 1] === "\\") {
+        parts.push(s.slice(start, i));
+        i++;
+        if (s[i + 1] === "*") i++;
+        if (s[i + 1] === "[") {
+          const close = s.indexOf("]", i + 2);
+          if (close >= 0) i = close;
+        }
+        start = i + 1;
+      }
+    } else if (sep === "&" && ch === "&" && brace === 0 && envDepth === 0) {
+      parts.push(s.slice(start, i));
+      start = i + 1;
+    }
   }
-  return `<span class="formula">${math}${eqno}</span>`;
+  parts.push(s.slice(start));
+  if (sep === "&") return parts.map((p) => p.trim());
+  return parts.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+export function planFormulaLines(source: string): FormulaLinePlan {
+  const peeled = peelLatexSource(source);
+  const chunks = MULTI_LINE_ENV.test(peeled.env)
+    ? splitTopLevel(peeled.rawBody, "\\\\")
+    : [peeled.rawBody];
+  const lines = (chunks.length > 0 ? chunks : [""]).map((tex, i, arr) => {
+    const labels = [...tex.matchAll(/\\label\{([^}]+)\}/g)].map((m) => m[1]);
+    const tag = extractTag(tex);
+    const skip = /\\nonumber\b|\\notag\b/.test(tex);
+    let consumesNumber = false;
+    if (peeled.numbered && !skip) {
+      consumesNumber = peeled.env === "multline" ? i === arr.length - 1 : true;
+    }
+    return { tex, consumesNumber, labels, tag };
+  });
+  return { display: peeled.display, numbered: peeled.numbered, env: peeled.env, lines };
+}
+
+function stripLineCommands(tex: string): string {
+  return tex
+    .replace(/\\label\{[^}]*\}/g, "")
+    .replace(/\\tag\*?\{[^{}]*\}/g, "")
+    .replace(/\\nonumber\b/g, "")
+    .replace(/\\notag\b/g, "")
+    .trim();
+}
+
+function lineToMathML(tex: string): string {
+  const clean = stripLineCommands(tex);
+  if (clean.includes("&")) {
+    const cells = splitTopLevel(clean, "&").map((c) =>
+      `<mtd>${latexToMathML(c) || "<mrow/>"}</mtd>`
+    );
+    return `<mtable><mtr>${cells.join("")}</mtr></mtable>`;
+  }
+  return latexToMathML(clean);
+}
+
+function mathHtml(inner: string, body: string, display: boolean): string {
+  const displayAttr = display ? ' display="block"' : "";
+  return `<math xmlns="http://www.w3.org/1998/Math/MathML"${displayAttr}><semantics>${inner}<annotation encoding="application/x-tex">${escapeLiveHtml(body)}</annotation></semantics></math>`;
+}
+
+function lineEqnoHtml(line: FormulaLine, no?: number | string): string {
+  if (line.tag) {
+    return line.tag.star
+      ? `<span class="eqno">${escapeLiveHtml(line.tag.text)}</span>`
+      : `<span class="eqno">(${escapeLiveHtml(line.tag.text)})</span>`;
+  }
+  if (line.consumesNumber && no !== undefined) return `<span class="eqno">(${no})</span>`;
+  return "";
+}
+
+export function renderFormulaHtml(
+  source: string,
+  equationNo?: number | string | Array<number | string | undefined>,
+): string {
+  const plan = planFormulaLines(source);
+  const nos = Array.isArray(equationNo) ? equationNo : [equationNo];
+  if (plan.lines.length > 1) {
+    const rows = plan.lines.map((line, i) => {
+      const body = stripLineCommands(line.tex);
+      const math = mathHtml(lineToMathML(line.tex), body, true);
+      return `<span class="formula-row">${math}${lineEqnoHtml(line, nos[i])}</span>`;
+    });
+    return `<span class="formula">${rows.join("")}</span>`;
+  }
+  const line = plan.lines[0] ?? { tex: "", consumesNumber: false, labels: [] as string[] };
+  const body = stripLineCommands(line.tex);
+  const inner = latexToMathML(body);
+  return `<span class="formula">${mathHtml(inner, body, plan.display)}${lineEqnoHtml(line, nos[0])}</span>`;
 }
 
 export function latexToMathML(source: string): string {
