@@ -359,6 +359,36 @@ function staticLayoutLabel(name: string, ctx: RenderCtx): string {
   return `<span class="layout-label">${escapeLiveHtml(fmt)}</span> `;
 }
 
+const LYX_COLOR: Record<string, string> = {
+  red: "red",
+  green: "green",
+  blue: "blue",
+  cyan: "cyan",
+  magenta: "magenta",
+  yellow: "yellow",
+  black: "black",
+  white: "white",
+  brown: "brown",
+  gray: "gray",
+  grey: "gray",
+  darkgray: "#404040",
+  lightgray: "#c0c0c0",
+  lime: "lime",
+  olive: "olive",
+  orange: "orange",
+  pink: "pink",
+  purple: "purple",
+  teal: "teal",
+  violet: "violet",
+  darkred: "#8b0000",
+  darkgreen: "#008000",
+  darkblue: "#00008b",
+};
+
+function cssLyxColor(name: string): string {
+  return LYX_COLOR[name.toLowerCase()] ?? name;
+}
+
 const SKIP_LAYOUT_PROPS = new Set([
   "align",
   "noindent",
@@ -1104,6 +1134,20 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     setInline("s", p.strikeout === "on" || p.xout === "on");
     setInline("typewriter", p.family === "typewriter");
     setInline("sans", p.family === "sans");
+    const raw = (p.color ?? "").toLowerCase();
+    const wantColor = raw !== "" && raw !== "none" && raw !== "inherit" && raw !== "default" && raw !== "ignore";
+    const colorKey = wantColor ? `color:${raw}` : "";
+    const colorIdx = open.findIndex((k) => k.startsWith("color:"));
+    if (colorIdx !== -1 && open[colorIdx] !== colorKey) {
+      while (open.length > colorIdx) {
+        const k = open.pop()!;
+        html += (INLINE[k] ?? { close: "</span>" }).close;
+      }
+    }
+    if (wantColor && !open.includes(colorKey)) {
+      html += `<span style="color: ${escapeLiveHtml(cssLyxColor(raw))}">`;
+      open.push(colorKey);
+    }
   };
 
   for (const child of children) {
@@ -1123,7 +1167,8 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
       if (
         child.key === "emph" || child.key === "series" || child.key === "shape" ||
         child.key === "bar" || child.key === "strikeout" || child.key === "xout" ||
-        child.key === "uuline" || child.key === "noun" || child.key === "family"
+        child.key === "uuline" || child.key === "noun" || child.key === "family" ||
+        child.key === "color"
       ) {
         syncFont();
       }
@@ -1308,8 +1353,14 @@ function formulaSource(block: BlockNode): string {
     ? args.slice("Formula".length).trim()
     : "";
   const fromChildren = block.children
-    .filter((c): c is { type: "text"; text: string } => c.type === "text")
-    .map((c) => c.text)
+    .map((c) => {
+      if (c.type === "text") return c.text;
+      if (c.type === "property") {
+        return c.value === undefined ? `\\${c.key}` : `\\${c.key} ${c.value}`;
+      }
+      return "";
+    })
+    .filter((s) => s.length > 0)
     .join("\n")
     .trim();
   if (fromArgs && fromChildren) return `${fromArgs}\n${fromChildren}`;

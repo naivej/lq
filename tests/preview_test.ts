@@ -311,6 +311,12 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, "color:#A0A0A0");
   assertStringIncludes(html, 'mathbackground="yellow"');
   assertStringIncludes(html, 'voffset="2mm"');
+  assertStringIncludes(html, 'mathcolor="red"');
+  assertStringIncludes(html, "\\int A\\,\\mathrm{d}x");
+  assert(
+    !html.includes("<mtext></mtext><annotation encoding=\"application/x-tex\"></annotation>"),
+    "display formulas whose body starts with \\int must not collapse to empty MathML",
+  );
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {

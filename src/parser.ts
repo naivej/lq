@@ -47,7 +47,8 @@ export function parse(text: string, isSnippet = false): DocumentNode {
       stack.push(block);
       stackLine.push(i);
 
-      if (tag === "preamble" || (tag === "inset" && (args === "Formula" || args === "ERT"))) {
+      const opaqueArgs = (args ?? "").trim();
+      if (tag === "preamble" || (tag === "inset" && (opaqueArgs === "Formula" || opaqueArgs === "ERT"))) {
         inOpaqueBlock = true;
         opaqueTag = tag;
       }

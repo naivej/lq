@@ -3,6 +3,36 @@
  * Covers the LyX subset: greek, scripts, sums, delimiters, fractions, primes.
  * Unknown commands fall back to mtext so source never becomes executable HTML.
  */
+const MATH_COLOR: Record<string, string> = {
+  red: "red",
+  green: "green",
+  blue: "blue",
+  cyan: "cyan",
+  magenta: "magenta",
+  yellow: "yellow",
+  black: "black",
+  white: "white",
+  brown: "brown",
+  gray: "gray",
+  grey: "gray",
+  darkgray: "#404040",
+  lightgray: "#c0c0c0",
+  lime: "lime",
+  olive: "olive",
+  orange: "orange",
+  pink: "pink",
+  purple: "purple",
+  teal: "teal",
+  violet: "violet",
+  darkred: "#8b0000",
+  darkgreen: "#008000",
+  darkblue: "#00008b",
+};
+
+function mathColor(name: string): string {
+  return MATH_COLOR[name.toLowerCase()] ?? name;
+}
+
 function escapeLiveHtml(value: string): string {
   return value
     .replaceAll("&", "&amp;")
@@ -327,16 +357,30 @@ class Parser {
       const inner = this.parseGroupOrAtom();
       return `<mpadded voffset="${escapeLiveHtml(height)}">${inner}</mpadded>`;
     }
+    if (name === "textcolor") {
+      const color = this.readGroupText().trim();
+      const inner = this.parseGroupOrAtom();
+      return `<mstyle mathcolor="${escapeLiveHtml(mathColor(color))}">${inner}</mstyle>`;
+    }
+    if (name === "color") {
+      const color = this.s[this.i] === "{" ? this.readGroupText().trim() : this.readColorWord();
+      const rest = this.parseExpr();
+      return `<mstyle mathcolor="${escapeLiveHtml(mathColor(color))}">${rest}</mstyle>`;
+    }
+    if (name === "boxed") {
+      const inner = this.parseGroupOrAtom();
+      return `<menclose notation="box">${inner}</menclose>`;
+    }
     if (name === "colorbox") {
       const color = this.readGroupText().trim();
       const inner = this.parseGroupOrAtom();
-      return `<mstyle mathbackground="${escapeLiveHtml(color)}">${inner}</mstyle>`;
+      return `<mstyle mathbackground="${escapeLiveHtml(mathColor(color))}">${inner}</mstyle>`;
     }
     if (name === "fcolorbox") {
       this.readGroupText();
       const fill = this.readGroupText().trim();
       const inner = this.parseGroupOrAtom();
-      return `<menclose notation="box"><mstyle mathbackground="${escapeLiveHtml(fill)}">${inner}</mstyle></menclose>`;
+      return `<menclose notation="box"><mstyle mathbackground="${escapeLiveHtml(mathColor(fill))}">${inner}</mstyle></menclose>`;
     }
     if (name === "fbox" || name === "framebox") {
       if (this.s[this.i] === "[") {
@@ -583,6 +627,13 @@ class Parser {
     if (!this.s.startsWith(name, this.i + 1)) return false;
     const after = this.s[this.i + 1 + name.length];
     return !after || !/[A-Za-z]/.test(after);
+  }
+
+  private readColorWord(): string {
+    this.skipSpace();
+    let name = "";
+    while (this.i < this.s.length && /[A-Za-z]/.test(this.s[this.i])) name += this.s[this.i++];
+    return name;
   }
 
   private skipSpace(): void {

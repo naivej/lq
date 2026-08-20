@@ -71,6 +71,9 @@ Deno.test("latexToMathML - common symbols, accents, and left-array", () => {
   const boxed = latexToMathML("\\colorbox{yellow}{A=B}");
   assertStringIncludes(boxed, 'mathbackground="yellow"');
   assertStringIncludes(boxed, "<mi>A</mi>");
+  const tinted = latexToMathML("\\textcolor{red}{\\int A=B}");
+  assertStringIncludes(tinted, 'mathcolor="red"');
+  assertStringIncludes(tinted, "∫");
 });
 
 Deno.test("latexToMathML - unknown commands stay escaped mtext-like mi", () => {
