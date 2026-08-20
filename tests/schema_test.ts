@@ -67,6 +67,18 @@ Deno.test("Layout HTML lookup is renderer-private and resolves CopyStyle", async
     "ol",
     "header module Enumerate-Resume CopyStyle Enumerate must resolve HTMLTag",
   );
+  const withHeaders = await getLayoutHtmlForClass("scrbook", layoutsDir, ["customHeadersFooters"]);
+  assertEquals(
+    withHeaders.get("Left Header")?.category,
+    "Header/Footer",
+    'Style "Left Header" quotes must strip so Category Header/Footer resolves',
+  );
+  assertEquals(
+    withHeaders.get("Center Footer")?.category,
+    "Header/Footer",
+    "CopyStyle from quoted Left Header must inherit Category",
+  );
+  assertEquals(withHeaders.get('"Left Header"'), undefined, "quoted key must not remain");
   const theorems = await getLayoutHtmlForClass("scrbook", layoutsDir, ["theorems-ams"]);
   assertEquals(theorems.get("Theorem")?.labelType?.toLowerCase(), "static");
   assertEquals(theorems.get("Theorem")?.labelString, "Theorem \\thetheorem.");

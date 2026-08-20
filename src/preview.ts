@@ -249,7 +249,18 @@ type LayoutRole =
   | { kind: "title" }
   | { kind: "front" }
   | { kind: "abstract" }
+  | { kind: "omit" }
   | { kind: "flow" };
+
+/** customHeadersFooters module — page chrome, not reader body (Live omits). */
+const PAGE_CHROME = new Set([
+  "Left Header",
+  "Center Header",
+  "Right Header",
+  "Left Footer",
+  "Center Footer",
+  "Right Footer",
+]);
 
 interface OutlineEntry {
   level: number;
@@ -300,6 +311,7 @@ function headingLevelFromTag(tag: string, name: string): number {
 function roleFromHtml(name: string, spec: LayoutHtml | undefined): LayoutRole | undefined {
   if (name === "Abstract") return { kind: "abstract" };
   if (name === "Title" || spec?.htmlTitle) return { kind: "title" };
+  if (PAGE_CHROME.has(name) || spec?.category === "Header/Footer") return { kind: "omit" };
   if (spec?.category === "FrontMatter") return { kind: "front" };
   const tag = spec?.htmlTag?.toLowerCase();
   if (tag && /^h[1-6]$/.test(tag)) {
@@ -317,6 +329,7 @@ function roleFromHtml(name: string, spec: LayoutHtml | undefined): LayoutRole | 
 function fallbackRole(name: string): LayoutRole {
   if (name === "Title") return { kind: "title" };
   if (name === "Abstract") return { kind: "abstract" };
+  if (PAGE_CHROME.has(name)) return { kind: "omit" };
   if (name === "Author" || name === "Date" || name === "Subtitle") return { kind: "front" };
   const heading = HEADING[name];
   if (heading) return { kind: "heading", tag: heading.tag, level: heading.level };
@@ -550,6 +563,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       if (n.tag === "layout") {
         const layout = (n.args ?? "").trim();
         const heading = role(layout, ctx);
+        if (heading.kind === "omit") continue;
         if (heading.kind === "heading") {
           currentHeading = headings.next(layout, heading.level, hasStartOfAppendix(n)).trim();
           noteChapterHeading(ctx, heading, currentHeading);
@@ -890,6 +904,10 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
   while (i < items.length) {
     const item = items[i];
     const layout = role(item.layout, ctx);
+    if (layout.kind === "omit") {
+      i++;
+      continue;
+    }
     if (layout.kind === "title") {
       html += `<h1 class="title">${renderLayoutInline(item.node, ctx, true)}</h1>`;
       i++;

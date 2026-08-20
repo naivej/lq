@@ -454,6 +454,11 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
     !html.includes("Wilhelm Conrad"),
     "inactive non-inverted Answer branch must omit like native XHTML",
   );
+  // customHeadersFooters page chrome is not reader body (Live omits Header/Footer).
+  // Prose may still mention “Magic code:” inside Description; the layout class must not appear.
+  assert(!html.includes('class="center_footer"'), "Center Footer page chrome must omit");
+  assert(!html.includes('class="left_header"'), "Left Header page chrome must omit");
+  assert(!html.includes('class="right_footer"'), "Right Footer page chrome must omit");
   assertStringIncludes(html, 'class="Doublebox"');
   assertStringIncludes(html, "with rotated");
   assertStringIncludes(html, "This is a line");

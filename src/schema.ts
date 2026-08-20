@@ -101,7 +101,7 @@ async function parseLayoutFile(
 
     const matchStyle = line.match(/^Style\s+(.+)$/);
     if (matchStyle) {
-      const styleName = matchStyle[1].trim();
+      const styleName = unquoteLayoutName(matchStyle[1].trim());
       allowed.add(styleName);
       const raw = parseStyleBody(lines, i);
       i = raw.endIndex;
@@ -115,7 +115,7 @@ async function parseLayoutFile(
 
     const matchNoStyle = line.match(/^NoStyle\s+(.+)$/);
     if (matchNoStyle) {
-      disallowed.add(matchNoStyle[1].trim());
+      disallowed.add(unquoteLayoutName(matchNoStyle[1].trim()));
       continue;
     }
 
@@ -170,6 +170,15 @@ async function parseLayoutFile(
   }
 
   return { allowed, disallowed, headingLevels, customInsets, disallowedInsets, styles };
+}
+
+/** `Style "Left Header"` / `CopyStyle "Left Header"` → `Left Header`. */
+function unquoteLayoutName(name: string): string {
+  const t = name.trim();
+  if (t.length >= 2 && ((t.startsWith('"') && t.endsWith('"')) || (t.startsWith("'") && t.endsWith("'")))) {
+    return t.slice(1, -1).trim();
+  }
+  return t;
 }
 
 function mergeStyle(prev: RawStyle | undefined, next: RawStyle): RawStyle {
@@ -238,7 +247,10 @@ function parseStyleBody(lines: string[], start: number): { style: RawStyle; endI
       continue;
     }
     const copy = bodyLine.match(/^CopyStyle\s+(.+)$/i);
-    if (copy) style.copyStyle = copy[1].trim();
+    if (copy) {
+      style.copyStyle = unquoteLayoutName(copy[1].trim());
+      continue;
+    }
     const labelType = bodyLine.match(/^LabelType\s+(\S+)/i);
     if (labelType) {
       style.labelType = labelType[1];
