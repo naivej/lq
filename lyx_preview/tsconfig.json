@@ -1,9 +1,15 @@
 {
+  // TypeScript build for the LyX Preview VS Code extension.
+  // `npm run compile` / `npm run watch` invoke tsc with this config;
+  // output lands in out/ (see also .vscode/tasks.json "npm: compile").
   "compilerOptions": {
+    // VS Code extensions load as CommonJS from package.json "main".
     "module": "commonjs",
     "target": "ES2022",
     "lib": ["ES2022"],
+    // Node typings for child_process / path used by the lq client.
     "types": ["node"],
+    // Compiled JS + .map files; launch.json outFiles point here for debugging.
     "outDir": "out",
     "rootDir": "src",
     "sourceMap": true,
@@ -12,5 +18,6 @@
     "noUnusedLocals": true,
     "noUnusedParameters": true
   },
+  // Only extension sources; tests live under src/ and compile into out/ too.
   "include": ["src"]
 }
