@@ -249,6 +249,7 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assertStringIncludes(html, "In: <i>J. Am. Chem. Soc.</i>");
   assertStringIncludes(html, "doi: 10.1021/ja0276321");
   assertStringIncludes(html, "References");
+  assertStringIncludes(html, '<span class="bibtexlabel">1</span>');
   assertStringIncludes(html, "colspan=");
   assertStringIncludes(html, "border-top:");
   assert(!html.includes('<div class="date">'), "preamble \\date is LaTeX-only; native XHTML omits it");
@@ -306,6 +307,10 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
     !html.includes('encoding="application/x-tex">\\newcommand{\\qG}'),
     "FormulaMacro must not be rendered as a formula",
   );
+  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, "color:#A0A0A0");
+  assertStringIncludes(html, 'mathbackground="yellow"');
+  assertStringIncludes(html, 'voffset="2mm"');
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {
@@ -378,7 +383,7 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, "<em>Emph</em>");
   assertStringIncludes(html, "<strong>Strong</strong>");
   assertStringIncludes(html, '<div class="nomencl">');
-  assertStringIncludes(html, "<dt>Tab</dt>");
+  assertStringIncludes(html, ">Tab</a></dt>");
   assertStringIncludes(html, "<dd>Tabulator key</dd>");
   assert(!html.includes("UNKNOWN_INSET"), "UserGuide must not dump unknown-inset fallbacks");
   assertStringIncludes(html, ">A The User Interface");
@@ -414,20 +419,24 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, "The LaTeX Companion Second Edition");
   assertStringIncludes(html, 'class="bibtex"');
   assertStringIncludes(html, 'id="LyXCite-Mittelbach"');
-  assertStringIncludes(html, '<span class="bibtexlabel">');
+  assertStringIncludes(html, '<span class="bibtexlabel">1</span>');
   assertStringIncludes(html, "The LaTeX Companion");
+  assertStringIncludes(html, '<dt><a class="nomencl" href="#nomencl-');
+  assertStringIncludes(html, 'id="nomencl-');
+  assertStringIncludes(html, '<a href="#idx-');
+  assertStringIncludes(html, 'id="idx-');
   assertStringIncludes(html, 'style="text-align: right"');
   assertStringIncludes(html, "This paragraph is right aligned");
   assertStringIncludes(html, 'style="text-align: center"');
   assertStringIncludes(html, "this one is centered");
   assertStringIncludes(html, 'style="text-align: left"');
   assertStringIncludes(html, "this one is left aligned");
-  assertStringIncludes(html, "<dt>Vector\u00a0fonts</dt>");
+  assertStringIncludes(html, "<dt>Vector\u00a0fonts");
   assert(!html.includes("fontsrange"), "Index params must not leak into Description labels");
   assert(!html.includes("status collapsedFonts"), "Index status must not leak into Description");
   assertStringIncludes(html, '<div class="index">');
   assertStringIncludes(html, '<h2 class="index">Index</h2>');
-  assertStringIncludes(html, "<li>Font, Types</li>");
+  assertStringIncludes(html, "<li>Font, Types");
   assertStringIncludes(html, ">3.3.4.4 Short Titles</");
   assert(!html.includes("HeadingsShort Titles"), "short-title Argument must not concatenate onto the long heading in the TOC");
 });

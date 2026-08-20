@@ -216,6 +216,8 @@ interface RenderCtx {
   layoutHtml: Map<string, LayoutHtml> | null;
   nomencl: NomenclEntry[];
   index: IndexEntry[];
+  nomenclSeq: number;
+  indexSeq: number;
   layoutCounters: Map<string, number>;
   bibitem: number;
   includeStack: string[];
@@ -225,12 +227,14 @@ interface NomenclEntry {
   symbol: string;
   desc: string;
   sort: string;
+  id: string;
 }
 
 interface IndexEntry {
   terms: string[];
   see: string;
   sort: string;
+  id: string;
 }
 
 type LayoutRole =
@@ -516,6 +520,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         continue;
       }
       const kind = insetKind(n);
+      if (isInvisibleInset(n) || kind === "ERT") continue;
       if (kind.startsWith("Float ")) {
         const variant = kind.slice("Float ".length).trim();
         let num = floatNo;
@@ -562,12 +567,12 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         ctx.biboptions = findProperty(n, "options") ?? ctx.biboptions;
       }
       if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) {
-        const entry = collectNomenclEntry(n);
+        const entry = collectNomenclEntry(n, ctx);
         if (entry.symbol || entry.desc) ctx.nomencl.push(entry);
         continue;
       }
       if (kind === "Index" || kind.startsWith("Index ")) {
-        const entry = collectIndexEntry(n);
+        const entry = collectIndexEntry(n, ctx);
         if (entry.terms.length || entry.see) ctx.index.push(entry);
         continue;
       }
@@ -579,6 +584,8 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
   ctx.table = 0;
   ctx.algorithm = 0;
   ctx.equation = 0;
+  ctx.nomenclSeq = 0;
+  ctx.indexSeq = 0;
 }
 
 async function loadBibliography(ctx: RenderCtx): Promise<void> {
@@ -689,6 +696,8 @@ export async function renderLiveHtml(
     layoutHtml: await loadLayoutHtml(ast, layoutsDir),
     nomencl: [],
     index: [],
+    nomenclSeq: 0,
+    indexSeq: 0,
     layoutCounters: new Map(),
     bibitem: 0,
     includeStack: [],
@@ -1005,7 +1014,15 @@ function splitDescription(layout: BlockNode, ctx: RenderCtx): { label: string; r
           label += "\u00a0";
           continue;
         }
-        if (n.tag === "inset" && (isOmittedInsetKind(kind) || isInvisibleInset(n))) continue;
+        if (n.tag === "inset" && (isOmittedInsetKind(kind) || isInvisibleInset(n))) {
+          if (
+            kind === "Index" || kind.startsWith("Index ") ||
+            kind === "Nomenclature" || kind.startsWith("Nomenclature ")
+          ) {
+            label += renderInset(n, state, ctx);
+          }
+          continue;
+        }
         if (n.tag === "inset") {
           label += renderInset(n, state, ctx);
           continue;
@@ -1144,7 +1161,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (isInvisibleInset(block)) return "";
   if (kind === "Note Greyedout" || kind.startsWith("Note Greyedout")) {
-    return `<aside class="note-greyedout">${renderInsetLayouts(block, parentState, ctx)}</aside>`;
+    return `<span class="note_greyedout" style="color:#A0A0A0">${renderInsetLayouts(block, parentState, ctx)}</span>`;
   }
   if (kind === "Foot" || kind.startsWith("Foot ")) {
     if (ctx.inTitle) {
@@ -1201,9 +1218,9 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return escapeLiveHtml(quoteChar(kind));
   }
   if (kind.startsWith("space ") || kind === "space") return spaceChar(kind);
-  if (kind.startsWith("Index ") || kind === "Index") return "";
+  if (kind.startsWith("Index ") || kind === "Index") return renderIndexAnchor(ctx);
   if (kind.startsWith("IndexMacro ") || kind === "IndexMacro") return "";
-  if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) return "";
+  if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) return renderNomenclAnchor(ctx);
   if (kind === "Preview" || kind.startsWith("Preview ")) {
     return renderInsetLayouts(block, parentState, ctx);
   }
@@ -1730,41 +1747,18 @@ function renderBibEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string
   return [html, i];
 }
 
-function isAuthoryearStyle(options: string): boolean {
-  return /authoryear|natbib|econ-|apa|chicago|harvard|kluwer/i.test(options);
-}
-
-function isAlphaStyle(options: string): boolean {
-  return /\balpha\b/i.test(options);
-}
-
-function alphaCiteLabel(c: Citation): string {
-  const people = (c.author ?? "").split(/\s+and\s+/i).map((p) => lastName(p).replace(/[^A-Za-z]/g, ""));
-  const year2 = (c.year ?? "").slice(-2);
-  const letters = people.filter(Boolean);
-  if (letters.length === 0) return (c.key.replace(/[^A-Za-z]/g, "").slice(0, 3) + year2) || c.key;
-  if (letters.length === 1) return letters[0].slice(0, 3) + year2;
-  if (letters.length <= 4) return letters.map((n) => n[0] ?? "").join("") + year2;
-  return `${letters.slice(0, 3).map((n) => n[0] ?? "").join("")}+${year2}`;
-}
-
 function renderBibliography(ctx: RenderCtx): string {
   const citedOnly = ctx.btprint === "btPrintCited";
   const raw = citedOnly ? ctx.citedKeys : [...ctx.bib.keys()];
   const items = raw.filter((k, i, a) => a.indexOf(k) === i && ctx.bib.has(k));
   if (items.length === 0) return "";
   const title = ctx.layoutHtml?.get("Bibliography")?.labelString || "References";
-  const authoryear = isAuthoryearStyle(ctx.biboptions);
-  const alpha = isAlphaStyle(ctx.biboptions);
   let html = `<div class="bibtex"><h2 class="bibtex">${escapeLiveHtml(title)}</h2>`;
   items.forEach((key, i) => {
     const c = ctx.bib.get(key)!;
     const body = formatBibliographyEntry(c);
-    let label = "";
-    if (!authoryear) {
-      label = alpha ? alphaCiteLabel(c) : String(i + 1);
-    }
-    const labelHtml = label ? `<span class="bibtexlabel">${escapeLiveHtml(label)}</span>` : "";
+    const label = String(i + 1);
+    const labelHtml = `<span class="bibtexlabel">${escapeLiveHtml(label)}</span>`;
     html += `<div class="bibtexentry" id="LyXCite-${escapeLiveHtml(xmlId(key))}">${labelHtml}<span class="bibtexinfo">${body}</span></div>`;
   });
   html += "</div>";
@@ -1792,7 +1786,25 @@ function nomenclText(block: BlockNode): string {
   return out.replace(/\s+/g, " ").trim();
 }
 
-function collectNomenclEntry(block: BlockNode): NomenclEntry {
+function nextNomenclId(ctx: RenderCtx): string {
+  ctx.nomenclSeq += 1;
+  return `nomencl-${ctx.nomenclSeq}`;
+}
+
+function nextIndexId(ctx: RenderCtx): string {
+  ctx.indexSeq += 1;
+  return `idx-${ctx.indexSeq}`;
+}
+
+function renderNomenclAnchor(ctx: RenderCtx): string {
+  return `<a id="${escapeLiveHtml(nextNomenclId(ctx))}"></a>`;
+}
+
+function renderIndexAnchor(ctx: RenderCtx): string {
+  return `<a id="${escapeLiveHtml(nextIndexId(ctx))}"></a>`;
+}
+
+function collectNomenclEntry(block: BlockNode, ctx: RenderCtx): NomenclEntry {
   let symbol = "";
   let desc = "";
   let prefix = "";
@@ -1825,7 +1837,7 @@ function collectNomenclEntry(block: BlockNode): NomenclEntry {
   };
   walk(block.children);
   symbol = symbol.replace(/\s+/g, " ").trim();
-  return { symbol, desc, sort: prefix || symbol };
+  return { symbol, desc, sort: prefix || symbol, id: nextNomenclId(ctx) };
 }
 
 function renderNomenclature(ctx: RenderCtx): string {
@@ -1833,13 +1845,13 @@ function renderNomenclature(ctx: RenderCtx): string {
   const items = [...ctx.nomencl].sort((a, b) => a.sort.localeCompare(b.sort));
   let html = `<div class="nomencl"><h2 class="nomencl">Nomenclature</h2><dl>`;
   for (const e of items) {
-    html += `<dt>${escapeLiveHtml(e.symbol)}</dt><dd>${escapeLiveHtml(e.desc)}</dd>`;
+    html += `<dt><a class="nomencl" href="#${escapeLiveHtml(e.id)}">${escapeLiveHtml(e.symbol)}</a></dt><dd>${escapeLiveHtml(e.desc)}</dd>`;
   }
   html += "</dl></div>";
   return html;
 }
 
-function collectIndexEntry(block: BlockNode): IndexEntry {
+function collectIndexEntry(block: BlockNode, ctx: RenderCtx): IndexEntry {
   let term = "";
   const terms: string[] = [];
   let see = "";
@@ -1856,7 +1868,7 @@ function collectIndexEntry(block: BlockNode): IndexEntry {
         continue;
       }
       if (n.type === "text") {
-        if (!isStatusLine(n.text)) term += n.text;
+        if (!isStatusLine(n.text)) term += expandSpecialInText(n.text);
         continue;
       }
       if (n.type !== "block") continue;
@@ -1882,21 +1894,31 @@ function collectIndexEntry(block: BlockNode): IndexEntry {
   };
   walk(block.children);
   flush();
-  return { terms, see, sort: sort || terms.join(", ") };
+  return { terms, see, sort: sort || terms.join(", "), id: nextIndexId(ctx) };
 }
 
 function renderIndex(ctx: RenderCtx, title: string): string {
   if (ctx.index.length === 0) return "";
   const items = [...ctx.index].sort((a, b) => a.sort.localeCompare(b.sort, undefined, { sensitivity: "base" }));
-  const seen = new Set<string>();
-  let html = `<div class="index"><h2 class="index">${escapeLiveHtml(title || "Index")}</h2><ul class="index">`;
+  const groups = new Map<string, IndexEntry[]>();
   for (const e of items) {
     const label = e.terms.join(", ");
-    const see = e.see ? `, see ${e.see}` : "";
-    const key = `${label}${see}`;
-    if (!key || seen.has(key)) continue;
-    seen.add(key);
-    html += `<li>${escapeLiveHtml(label)}${e.see ? `, see ${escapeLiveHtml(e.see)}` : ""}</li>`;
+    const key = e.see ? `${label}::see::${e.see}` : label;
+    if (!key) continue;
+    const g = groups.get(key) ?? [];
+    g.push(e);
+    groups.set(key, g);
+  }
+  let html = `<div class="index"><h2 class="index">${escapeLiveHtml(title || "Index")}</h2><ul class="index">`;
+  for (const group of groups.values()) {
+    const first = group[0];
+    const label = first.terms.join(", ");
+    if (first.see) {
+      html += `<li>${escapeLiveHtml(label)}, see ${escapeLiveHtml(first.see)}</li>`;
+      continue;
+    }
+    const links = group.map((e, i) => `<a href="#${escapeLiveHtml(e.id)}">${i + 1}</a>`).join(", ");
+    html += `<li>${escapeLiveHtml(label)} \u2014 ${links}</li>`;
   }
   html += "</ul></div>";
   return html;

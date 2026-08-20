@@ -121,7 +121,7 @@ const SKIP_NEXT = new Set([
 ]);
 
 const SKIP_GROUP = new Set([
-  "tag", "label", "hspace", "vspace", "rule", "raisebox",
+  "tag", "label", "hspace", "vspace", "rule",
   "leftroot", "uproot", "smashoperator", "adjustlimits",
 ]);
 
@@ -317,9 +317,35 @@ class Parser {
       return `<msqrt>${this.parseGroupOrAtom()}</msqrt>`;
     }
     if (name === "text" || name === "mathrm" || name === "textrm" || name === "operatorname" ||
-      name === "mbox" || name === "textbf" || name === "textsf" || name === "texttt") {
+      name === "textbf" || name === "textsf" || name === "texttt") {
       const inner = this.readGroupText();
       return `<mtext>${escapeLiveHtml(inner)}</mtext>`;
+    }
+    if (name === "mbox") return this.parseGroupOrAtom();
+    if (name === "raisebox") {
+      const height = this.readGroupText().trim();
+      const inner = this.parseGroupOrAtom();
+      return `<mpadded voffset="${escapeLiveHtml(height)}">${inner}</mpadded>`;
+    }
+    if (name === "colorbox") {
+      const color = this.readGroupText().trim();
+      const inner = this.parseGroupOrAtom();
+      return `<mstyle mathbackground="${escapeLiveHtml(color)}">${inner}</mstyle>`;
+    }
+    if (name === "fcolorbox") {
+      this.readGroupText();
+      const fill = this.readGroupText().trim();
+      const inner = this.parseGroupOrAtom();
+      return `<menclose notation="box"><mstyle mathbackground="${escapeLiveHtml(fill)}">${inner}</mstyle></menclose>`;
+    }
+    if (name === "fbox" || name === "framebox") {
+      if (this.s[this.i] === "[") {
+        this.i++;
+        this.parseExprUntil("]");
+        if (this.s[this.i] === "]") this.i++;
+      }
+      const inner = this.parseGroupOrAtom();
+      return `<menclose notation="box">${inner}</menclose>`;
     }
     if (name === "mathbf" || name === "boldsymbol" || name === "mathsf" || name === "mathtt" ||
       name === "mathit" || name === "mathcal" || name === "mathfrak" || name === "mathbb" ||
