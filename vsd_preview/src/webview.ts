@@ -160,6 +160,7 @@ div.definition, div.example, div.problem, div.exercise, div.question, div.note, 
   margin: 0.8em 0;
 }
 .layout-label { font-style: normal; font-weight: bold; }
+span.noun { font-variant: small-caps; }
 span.note_greyedout, aside.note-greyedout {
   display: inline;
   color: #A0A0A0;

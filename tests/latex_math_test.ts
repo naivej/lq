@@ -95,6 +95,12 @@ Deno.test("latexToMathML - common symbols, accents, and left-array", () => {
   assertStringIncludes(cd, "<mi>F</mi>");
   assertStringIncludes(cd, "→");
   assertStringIncludes(cd, "↑");
+  const script = latexToMathML("{\\scriptstyle E=mc^{2}}");
+  assertStringIncludes(script, 'mathsize="75%"');
+  assertStringIncludes(script, "<mi>E</mi>");
+  const gf = latexToMathML("\\genfrac{(}{)}{0pt}{1}{A}{B}");
+  assertStringIncludes(gf, 'linethickness="0"');
+  assertStringIncludes(gf, "<mo>(</mo>");
 });
 
 Deno.test("latexToMathML - unknown commands stay escaped mtext-like mi", () => {

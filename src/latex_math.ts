@@ -161,7 +161,6 @@ const ACCENT_UNDER: Record<string, string> = {
 };
 
 const SKIP_NEXT = new Set([
-  "displaystyle", "textstyle", "scriptstyle", "scriptscriptstyle",
   "limits", "nolimits", "nonumber", "notag", "mathop",
 ]);
 
@@ -198,7 +197,7 @@ function extractTag(body: string): { star: boolean; text: string } | undefined {
   return { star: m[1] === "*", text: m[2] };
 }
 
-export function renderFormulaHtml(source: string, equationNo?: number): string {
+export function renderFormulaHtml(source: string, equationNo?: number | string): string {
   const { display, body } = unwrapLatexSource(source);
   const inner = latexToMathML(body);
   const displayAttr = display ? ' display="block"' : "";
@@ -462,6 +461,45 @@ class Parser {
       return `<mtext>${escapeLiveHtml(inner)}</mtext>`;
     }
     if (name === "mbox") return this.parseGroupOrAtom();
+    if (name === "makebox") {
+      while (this.s[this.i] === "[") {
+        this.i++;
+        this.parseExprUntil("]");
+        if (this.s[this.i] === "]") this.i++;
+      }
+      return this.parseGroupOrAtom();
+    }
+    if (name === "parbox") {
+      if (this.s[this.i] === "[") {
+        this.i++;
+        this.parseExprUntil("]");
+        if (this.s[this.i] === "]") this.i++;
+      }
+      if (this.s[this.i] === "{") this.readGroupText();
+      return this.parseGroupOrAtom();
+    }
+    if (name === "genfrac") {
+      const left = this.readGroupText();
+      const right = this.readGroupText();
+      const bar = this.readGroupText();
+      this.readGroupText();
+      const a = this.parseGroupOrAtom();
+      const b = this.parseGroupOrAtom();
+      const frac = bar === "0pt" || bar === "0" || bar === "0mm"
+        ? `<mfrac linethickness="0">${a}${b}</mfrac>`
+        : `<mfrac>${a}${b}</mfrac>`;
+      if (!left && !right) return frac;
+      return `<mrow>${left ? `<mo>${escapeLiveHtml(left)}</mo>` : ""}${frac}${right ? `<mo>${escapeLiveHtml(right)}</mo>` : ""}</mrow>`;
+    }
+    if (
+      name === "scriptstyle" || name === "scriptscriptstyle" ||
+      name === "textstyle" || name === "displaystyle"
+    ) {
+      const rest = this.parseExpr();
+      if (name === "scriptstyle") return `<mstyle mathsize="75%">${rest}</mstyle>`;
+      if (name === "scriptscriptstyle") return `<mstyle mathsize="60%">${rest}</mstyle>`;
+      return rest;
+    }
     if (name === "raisebox") {
       const height = this.readGroupText().trim();
       const inner = this.parseGroupOrAtom();

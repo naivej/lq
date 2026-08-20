@@ -323,6 +323,10 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, "mod ");
   assertStringIncludes(html, "<munderover>");
   assertStringIncludes(html, "<mtd><mi>A</mi></mtd><mtd><mo>→</mo></mtd><mtd><mi>B</mi></mtd>");
+  assertStringIncludes(html, 'class="subequations"');
+  const subref = html.match(/href="#eq_b">\(([^)]+)\)/);
+  assert(subref !== null && /a$/.test(subref[1]), `subequation ref should be like (Na), got ${subref?.[1]}`);
+  assertStringIncludes(html, 'mathsize="75%"');
 });
 
 Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar", async () => {

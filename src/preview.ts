@@ -221,6 +221,7 @@ interface RenderCtx {
   layoutCounters: Map<string, number>;
   bibitem: number;
   includeStack: string[];
+  subeq: { parent: number; child: number } | null;
 }
 
 interface NomenclEntry {
@@ -575,13 +576,19 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       if (kind === "FormulaMacro" || kind.startsWith("FormulaMacro")) {
         continue;
       }
+      if (kind.startsWith("Flex Subequations")) {
+        enterSubequations(ctx);
+        walkSubequationLabels(n.children, ctx);
+        ctx.subeq = null;
+        continue;
+      }
       if (kind === "Formula" || kind.startsWith("Formula")) {
         const src = formulaSource(n);
         const { display } = unwrapLatexSource(src);
         if (display) {
-          ctx.equation += 1;
+          const num = takeEquationNumber(ctx);
           const lab = /\\label\{([^}]+)\}/.exec(src);
-          if (lab) ctx.labels.set(lab[1], String(ctx.equation));
+          if (lab) ctx.labels.set(lab[1], num);
         }
         continue;
       }
@@ -616,6 +623,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
   ctx.equation = 0;
   ctx.nomenclSeq = 0;
   ctx.indexSeq = 0;
+  ctx.subeq = null;
 }
 
 async function loadBibliography(ctx: RenderCtx): Promise<void> {
@@ -729,6 +737,7 @@ export async function renderLiveHtml(
     nomenclSeq: 0,
     indexSeq: 0,
     layoutCounters: new Map(),
+    subeq: null,
     bibitem: 0,
     includeStack: [],
   };
@@ -1109,6 +1118,7 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     s: { open: "<s>", close: "</s>" },
     typewriter: { open: '<span class="typewriter">', close: "</span>" },
     sans: { open: '<span class="sans">', close: "</span>" },
+    noun: { open: '<span class="noun">', close: "</span>" },
   };
 
   const setInline = (key: string, want: boolean) => {
@@ -1134,6 +1144,7 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     setInline("s", p.strikeout === "on" || p.xout === "on");
     setInline("typewriter", p.family === "typewriter");
     setInline("sans", p.family === "sans");
+    setInline("noun", p.noun === "on");
     const raw = (p.color ?? "").toLowerCase();
     const wantColor = raw !== "" && raw !== "none" && raw !== "inherit" && raw !== "default" && raw !== "ignore";
     const colorKey = wantColor ? `color:${raw}` : "";
@@ -1224,7 +1235,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind === "Formula" || kind.startsWith("Formula ") || kind.startsWith("Formula")) {
     const source = formulaSource(block);
     const { display } = unwrapLatexSource(source);
-    const number = display ? ++ctx.equation : undefined;
+    const number = display ? takeEquationNumber(ctx) : undefined;
     return renderFormulaHtml(source, number);
   }
   if (
@@ -1322,6 +1333,14 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind.startsWith("Box ")) {
     return renderBox(block, kind, parentState, ctx);
   }
+  if (kind.startsWith("Flex Subequations")) {
+    enterSubequations(ctx);
+    try {
+      return `<div class="subequations">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    } finally {
+      ctx.subeq = null;
+    }
+  }
   if (kind.startsWith("Flex ") || kind.startsWith("Branch ")) {
     return renderInsetLayouts(block, parentState, ctx);
   }
@@ -1345,6 +1364,47 @@ function renderInsetLayouts(block: BlockNode, parentState: TraversalState, ctx: 
     return renderFlowItems(nested, ctx);
   }
   return renderChildren(block.children, enterTraversalState(parentState), ctx);
+}
+
+function enterSubequations(ctx: RenderCtx): number {
+  ctx.equation += 1;
+  ctx.subeq = { parent: ctx.equation, child: 0 };
+  return ctx.equation;
+}
+
+function takeEquationNumber(ctx: RenderCtx): string {
+  if (ctx.subeq) {
+    ctx.subeq.child += 1;
+    return `${ctx.subeq.parent}${String.fromCharCode(96 + ctx.subeq.child)}`;
+  }
+  ctx.equation += 1;
+  return String(ctx.equation);
+}
+
+function walkSubequationLabels(nodes: Node[], ctx: RenderCtx): void {
+  const parent = String(ctx.subeq?.parent ?? ctx.equation);
+  for (const n of nodes) {
+    if (n.type !== "block") continue;
+    if (n.tag === "inset") {
+      const kind = insetKind(n);
+      if (kind.startsWith("CommandInset label")) {
+        const name = findProperty(n, "name");
+        if (name) ctx.labels.set(name, parent);
+        continue;
+      }
+      if (kind === "Formula" || kind.startsWith("Formula")) {
+        const src = formulaSource(n);
+        const { display } = unwrapLatexSource(src);
+        if (display) {
+          const num = takeEquationNumber(ctx);
+          const lab = /\\label\{([^}]+)\}/.exec(src);
+          if (lab) ctx.labels.set(lab[1], num);
+        }
+        continue;
+      }
+    }
+    walkSubequationLabels(n.children, ctx);
+  }
 }
 
 function formulaSource(block: BlockNode): string {
