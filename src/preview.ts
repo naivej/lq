@@ -201,6 +201,7 @@ interface RenderCtx {
   table: number;
   algorithm: number;
   equation: number;
+  chapterLabel: string;
   inTitle: boolean;
   inWrap: boolean;
   filePath?: string;
@@ -533,6 +534,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         const heading = role(layout, ctx);
         if (heading.kind === "heading") {
           currentHeading = headings.next(layout, heading.level, hasStartOfAppendix(n)).trim();
+          noteChapterHeading(ctx, heading, currentHeading);
           if (atBody) {
             const text = headingPlainText(n);
             ctx.outline.push({
@@ -552,20 +554,12 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       }
       const kind = insetKind(n);
       if (isInvisibleInset(n) || kind === "ERT") continue;
-      if (kind.startsWith("Float ")) {
-        const variant = kind.slice("Float ".length).trim();
-        let num = floatNo;
-        if (variant === "figure") {
-          ctx.figure += 1;
-          num = String(ctx.figure);
-        } else if (variant === "table") {
-          ctx.table += 1;
-          num = String(ctx.table);
-        } else if (variant === "algorithm") {
-          ctx.algorithm += 1;
-          num = String(ctx.algorithm);
-        }
-        walk(n.children, num, false);
+      if (kind.startsWith("Float ") || kind.startsWith("Wrap ")) {
+        const variant = kind.startsWith("Float ")
+          ? kind.slice("Float ".length).trim()
+          : kind.slice("Wrap ".length).trim();
+        const taken = takeFloatNumber(ctx, variant);
+        walk(n.children, taken ?? floatNo, false);
         continue;
       }
       if (kind.startsWith("CommandInset label")) {
@@ -615,6 +609,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
   ctx.table = 0;
   ctx.algorithm = 0;
   ctx.equation = 0;
+  ctx.chapterLabel = "";
   ctx.nomenclSeq = 0;
   ctx.indexSeq = 0;
   ctx.subeq = null;
@@ -713,6 +708,7 @@ export async function renderLiveHtml(
     table: 0,
     algorithm: 0,
     equation: 0,
+    chapterLabel: "",
     inTitle: false,
     inWrap: false,
     filePath: options.filePath,
@@ -846,6 +842,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
     if (layout.kind === "heading") {
       closeSections(layout.level);
       const number = headings.next(item.layout, layout.level, hasStartOfAppendix(item.node));
+      noteChapterHeading(ctx, layout, number);
       const text = headingPlainText(item.node);
       const id = sectionId(number, text);
       html += `<section id="${escapeLiveHtml(id)}"><${layout.tag}>${number}${renderLayoutInline(item.node, ctx)}</${layout.tag}>`;
@@ -1609,15 +1606,65 @@ function renderCaptionInline(block: BlockNode, ctx: RenderCtx): string {
   return renderChildren(block.children, createTraversalState(), ctx);
 }
 
-function renderWrap(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
+function noteChapterHeading(ctx: RenderCtx, heading: LayoutRole, number: string): void {
+  if (heading.kind !== "heading" || heading.level !== 0) return;
+  const label = number.trim();
+  if (!label) return;
+  ctx.chapterLabel = label;
+  ctx.figure = 0;
+  ctx.table = 0;
+  ctx.algorithm = 0;
+}
+
+function takeFloatNumber(ctx: RenderCtx, variant: string): string | undefined {
+  let n = 0;
+  if (variant === "figure") {
+    ctx.figure += 1;
+    n = ctx.figure;
+  } else if (variant === "table") {
+    ctx.table += 1;
+    n = ctx.table;
+  } else if (variant === "algorithm") {
+    ctx.algorithm += 1;
+    n = ctx.algorithm;
+  } else {
+    return undefined;
+  }
+  return ctx.chapterLabel ? `${ctx.chapterLabel}.${n}` : String(n);
+}
+
+function floatCaptionPrefix(variant: string, num: string | undefined): string {
+  if (!num) return "";
+  const name = variant === "table" ? "Table" : variant === "algorithm" ? "Algorithm" : "Figure";
+  return `${name} ${num}: `;
+}
+
+function renderCaptionedFloat(block: BlockNode, variant: string, ctx: RenderCtx): string {
+  const prefix = floatCaptionPrefix(variant, takeFloatNumber(ctx, variant));
+  let html = `<figure class="float-${layoutSlug(variant)}">`;
+  for (const item of flattenFlow(block.children, 0)) {
+    const captions = collectBlocks(item.node, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
+    if (captions.length > 0) {
+      const cap = captions.map((c) => renderCaptionInline(c, ctx)).join("");
+      html += `<figcaption>${prefix}${cap}</figcaption>`;
+      continue;
+    }
+    html += `<div class="float-body">${renderLayoutInline(item.node, ctx)}</div>`;
+  }
+  html += "</figure>";
+  return html;
+}
+
+function renderWrap(block: BlockNode, _parentState: TraversalState, ctx: RenderCtx): string {
   const width = widthToCss(findProperty(block, "width")) || "50%";
   const placement = (findProperty(block, "placement") ?? "").toLowerCase();
   const side = placement === "l" || placement === "i" ? "left" : "right";
+  const variant = insetKind(block).slice("Wrap ".length).trim() || "figure";
   const prev = ctx.inWrap;
   ctx.inWrap = true;
   let inner = "";
   try {
-    inner = renderInsetLayouts(block, parentState, ctx);
+    inner = renderCaptionedFloat(block, variant, ctx);
   } finally {
     ctx.inWrap = prev;
   }
@@ -1673,31 +1720,9 @@ function renderListings(block: BlockNode, _parentState: TraversalState, ctx: Ren
   return html;
 }
 
-function renderFloat(block: BlockNode, kind: string, parentState: TraversalState, ctx: RenderCtx): string {
+function renderFloat(block: BlockNode, kind: string, _parentState: TraversalState, ctx: RenderCtx): string {
   const variant = kind.slice("Float ".length).trim() || "figure";
-  let prefix = "";
-  if (variant === "figure") {
-    ctx.figure += 1;
-    prefix = `Figure ${ctx.figure}: `;
-  } else if (variant === "table") {
-    ctx.table += 1;
-    prefix = `Table ${ctx.table}: `;
-  } else if (variant === "algorithm") {
-    ctx.algorithm += 1;
-    prefix = `Algorithm ${ctx.algorithm}: `;
-  }
-  let html = `<figure class="float-${layoutSlug(variant)}">`;
-  for (const item of flattenFlow(block.children, 0)) {
-    const captions = collectBlocks(item.node, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
-    if (captions.length > 0) {
-      const cap = captions.map((c) => renderCaptionInline(c, ctx)).join("");
-      html += `<figcaption>${prefix}${cap}</figcaption>`;
-      continue;
-    }
-    html += `<div class="float-body">${renderLayoutInline(item.node, ctx)}</div>`;
-  }
-  html += "</figure>";
-  return html;
+  return renderCaptionedFloat(block, variant, ctx);
 }
 
 function renderInclude(block: BlockNode, ctx: RenderCtx): string {

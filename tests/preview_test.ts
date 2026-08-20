@@ -496,7 +496,9 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, "This is a margin note.");
   assertStringIncludes(html, 'class="wrap wrap-left"');
   assertStringIncludes(html, "width: 40%");
+  assertStringIncludes(html, "<figcaption>Figure 6.1: ");
   assertStringIncludes(html, "This is a wrapped figure float.");
+  assertStringIncludes(html, 'href="#fig_This_is_a">6.1</a>');
   assertStringIncludes(html, 'data-filename="2D-intensity-plot.pdf"');
   assertStringIncludes(html, "width: 100%");
   assertStringIncludes(html, 'data-filename="Star-structure.pdf"');
@@ -511,7 +513,7 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, "Example Listing float");
   assertStringIncludes(html, "def func(param):");
   assertStringIncludes(html, 'data-filename="Abstract.pdf"');
-  assertStringIncludes(html, "<figcaption>Algorithm 1: ");
+  assertStringIncludes(html, "<figcaption>Algorithm 3.1: ");
   assertStringIncludes(html, "Example Algorithm float");
   assertStringIncludes(html, "This is a small dummy child document");
   assertStringIncludes(html, "External Subsection 1");
