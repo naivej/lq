@@ -5,6 +5,7 @@
   "version": "0.1.0",
   "publisher": "naivej",
   "license": "MIT",
+  "icon": "media/lyx-l.png",
   "engines": {
     "vscode": "^1.96.0"
   },
@@ -32,7 +33,12 @@
     "commands": [
       {
         "command": "lyx-preview.open",
-        "title": "LyX Preview: Open Live Preview",
+        "title": "Open LyX Preview",
+        "shortTitle": "Preview LyX",
+        "icon": {
+          "light": "media/lyx-l.svg",
+          "dark": "media/lyx-l.svg"
+        },
         "category": "LyX Preview"
       }
     ],

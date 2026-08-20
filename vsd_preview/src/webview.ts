@@ -26,7 +26,7 @@ export function renderWebviewHtml(options: {
   const status = options.error
     ? `<div class="banner error">${escapeHostText(options.error)}</div>`
     : options.pending
-      ? `<div class="banner pending">Rendering saved document…</div>`
+      ? `<div class="banner pending">Rendering…</div>`
       : options.stale
         ? `<div class="banner stale">Unsaved edits — save to refresh the Live preview.</div>`
         : "";
@@ -36,7 +36,8 @@ export function renderWebviewHtml(options: {
   const diagBlock = diagnostics
     ? `<aside class="diagnostics"><ul>${diagnostics}</ul></aside>`
     : "";
-  const body = options.render?.html ?? "<p class=\"empty\">No Live render yet.</p>";
+  const body = options.render?.html
+    ?? (options.pending ? "" : "<p class=\"empty\">No Live render yet.</p>");
   return `<!doctype html>
 <html>
 <head>
