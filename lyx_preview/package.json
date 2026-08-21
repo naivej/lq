@@ -14,7 +14,9 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    
+    "onLanguage:lyx",
+    "onCommand:lyx-preview.open",
+    "workspaceContains:**/*.lyx"
   ],
   "contributes": {
     "languages": [
@@ -40,8 +42,23 @@
           "dark": "media/lyx-l.svg"
         },
         "category": "LyX Preview"
+      },
+      {
+        "command": "lyx-preview.revealOutline",
+        "title": "Reveal Outline Heading",
+        "category": "LyX Preview"
       }
     ],
+    "views": {
+      "explorer": [
+        {
+          "id": "lyxPreview.outline",
+          "name": "LyX Navigate",
+          "when": "lyxPreview.hasOutline || resourceExtname == .lyx",
+          "contextualTitle": "LyX Navigate"
+        }
+      ]
+    },
     "menus": {
       "editor/title": [
         {
@@ -54,6 +71,10 @@
         {
           "command": "lyx-preview.open",
           "when": "resourceExtname == .lyx"
+        },
+        {
+          "command": "lyx-preview.revealOutline",
+          "when": "false"
         }
       ]
     },
@@ -77,7 +98,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint .",
-    "test": "npm run compile && node --test out/previewSession.test.js",
+    "test": "npm run compile && node --test out/previewSession.test.js out/outlineProvider.test.js",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

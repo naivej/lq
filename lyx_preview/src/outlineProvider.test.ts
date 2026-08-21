@@ -1,0 +1,149 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+import {
+  attachApproxLines,
+  attachNavigateLines,
+  dedupeNavigateLabels,
+  nestOutlineEntries,
+  outlineIdForLine,
+  scanLyxHeadingLines,
+} from "./outlineNest";
+
+
+describe("nestOutlineEntries", () => {
+  it("nests by level", () => {
+    const roots = nestOutlineEntries([
+      { level: 1, number: "1", text: "One", id: "sec-1" },
+      { level: 2, number: "1.1", text: "Nested", id: "sec-1-1" },
+      { level: 1, number: "2", text: "Two", id: "sec-2" },
+    ]);
+    assert.equal(roots.length, 2);
+    assert.equal(roots[0]!.name, "1 One");
+    assert.equal(roots[0]!.children.length, 1);
+    assert.equal(roots[0]!.children[0]!.name, "1.1 Nested");
+    assert.equal(roots[1]!.name, "2 Two");
+  });
+});
+
+describe("scanLyxHeadingLines", () => {
+  it("finds Section layouts and line numbers", () => {
+    const lines = [
+      "\\begin_body",
+      "\\begin_layout Section",
+      "First heading",
+      "\\end_layout",
+      "\\begin_layout Standard",
+      "body",
+      "\\end_layout",
+      "\\begin_layout Subsection",
+      "Child",
+      "\\end_layout",
+    ];
+    const entries = scanLyxHeadingLines(lines);
+    assert.equal(entries.length, 2);
+    assert.equal(entries[0]!.text, "First heading");
+    assert.equal(entries[0]!.level, 1);
+    assert.equal(entries[0]!.line, 1);
+    assert.equal(entries[1]!.text, "Child");
+    assert.equal(entries[1]!.level, 2);
+    assert.equal(entries[1]!.line, 7);
+  });
+
+  it("skips Argument short-title inset text", () => {
+    const lines = [
+      "\\begin_layout Section",
+      "\\begin_inset Argument 1",
+      "status collapsed",
+      "\\begin_layout Plain Layout",
+      "Short",
+      "\\end_layout",
+      "\\end_inset",
+      "Long title here",
+      "\\end_layout",
+    ];
+    const entries = scanLyxHeadingLines(lines);
+    assert.equal(entries.length, 1);
+    assert.equal(entries[0]!.text, "Long title here");
+  });
+});
+
+describe("attachApproxLines", () => {
+  it("searches forward for entry text", () => {
+    const lines = ["aa", "Body footnotes and notes", "bb", "Marginal and box"];
+    const out = attachApproxLines(
+      [
+        { level: 1, number: "1", text: "Body footnotes and notes", id: "sec-1" },
+        { level: 1, number: "2", text: "Marginal and box", id: "sec-2" },
+      ],
+      lines,
+    );
+    assert.equal(out[0]!.line, 1);
+    assert.equal(out[1]!.line, 3);
+  });
+});
+
+describe("outlineIdForLine", () => {
+  it("picks the heading at or above the cursor line", () => {
+    const entries = [
+      { level: 1, number: "1", text: "One", id: "sec-1" },
+      { level: 1, number: "2", text: "Two", id: "sec-2" },
+    ];
+    const lines = ["x", "One", "body", "Two", "more"];
+    assert.equal(outlineIdForLine(entries, lines, 1), "sec-1");
+    assert.equal(outlineIdForLine(entries, lines, 2), "sec-1");
+    assert.equal(outlineIdForLine(entries, lines, 3), "sec-2");
+  });
+});
+
+describe("dedupeNavigateLabels", () => {
+  it("drops labels already covered by floats/equations, keeps outline-title leftovers", () => {
+    const nav = dedupeNavigateLabels(
+      {
+        figures: [{ kind: "figure", number: "1", text: "A figure", id: "float-figure-1" }],
+        tables: [],
+        equations: [{ kind: "equation", number: "1", text: "x", id: "eq_a", name: "eq:a" }],
+        labels: [
+          // Same title as Outline must NOT drop a real leftover body label.
+          { kind: "label", number: "", text: "", id: "note_hook", name: "note:custom-hook" },
+          { kind: "label", number: "1", text: "A figure", id: "fig_a", name: "fig:a" },
+          { kind: "label", number: "1", text: "", id: "eq_a", name: "eq:a" },
+          { kind: "label", number: "", text: "", id: "orphan", name: "orphan" },
+        ],
+        listings: [],
+        algorithms: [],
+      },
+      [{ level: 1, number: "1", text: "Intro", id: "sec-1" }],
+    );
+    assert.deepEqual(nav.labels.map((l) => l.name).sort(), ["note:custom-hook", "orphan"]);
+  });
+});
+
+describe("attachNavigateLines", () => {
+  it("locates floats by caption and labels by name", () => {
+    const lines = [
+      "\\begin_inset Float figure",
+      "Inline figure caption.",
+      "\\begin_inset Float table",
+      "Block table caption",
+      "\\begin_inset CommandInset label",
+      'name "orphan-label"',
+      "\\begin_inset Formula",
+      "\\label{eq:demo}",
+    ];
+    const nav = attachNavigateLines(
+      {
+        figures: [{ kind: "figure", number: "1", text: "Inline figure caption.", id: "float-figure-1" }],
+        tables: [{ kind: "table", number: "1", text: "Block table caption", id: "float-table-1" }],
+        equations: [{ kind: "equation", number: "1", text: "x", id: "eq_demo", name: "eq:demo" }],
+        labels: [{ kind: "label", number: "", text: "", id: "orphan-label", name: "orphan-label" }],
+        listings: [],
+        algorithms: [],
+      },
+      lines,
+    );
+    assert.equal(nav.figures[0]!.line, 1);
+    assert.equal(nav.tables[0]!.line, 3);
+    assert.equal(nav.equations[0]!.line, 7);
+    assert.equal(nav.labels[0]!.line, 4);
+  });
+});

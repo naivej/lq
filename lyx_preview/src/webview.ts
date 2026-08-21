@@ -1,7 +1,7 @@
 import type { LiveRender } from "./previewSession";
 
-export function liveWebviewCsp(imgSrc = "'none'"): string {
-  return `default-src 'none'; img-src ${imgSrc}; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
+export function liveWebviewCsp(imgSrc = "'none'", scriptSrc = "'none'"): string {
+  return `default-src 'none'; img-src ${imgSrc}; style-src 'unsafe-inline'; script-src ${scriptSrc}; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
 }
 
 export const WEBVIEW_CSP = liveWebviewCsp("'none'");
@@ -22,6 +22,9 @@ export function renderWebviewHtml(options: {
   error?: string;
   render?: LiveRender;
   imgCsp?: string;
+  /** CSP script-src token(s); default none. Pass nonce-'…' for Explorer-outline scroll helper. */
+  scriptCsp?: string;
+  scriptNonce?: string;
 }): string {
   const status = options.error
     ? `<div class="banner error">${escapeHostText(options.error)}</div>`
@@ -38,11 +41,44 @@ export function renderWebviewHtml(options: {
     : "";
   const body = options.render?.html
     ?? (options.pending ? "" : "<p class=\"empty\">No Live render yet.</p>");
+  const scriptSrc = options.scriptCsp ?? "'none'";
+  const nonce = options.scriptNonce;
+  // Host posts { type: "scrollToId", id } from Explorer "LyX Navigate".
+  // Figures/tables live inside collapsed <details>; open ancestors before scrolling.
+  const scrollScript = nonce
+    ? `<script nonce="${escapeHostText(nonce)}">
+(function () {
+  function openAncestorDetails(el) {
+    var n = el;
+    while (n) {
+      if (n.tagName === "DETAILS") n.open = true;
+      n = n.parentElement;
+    }
+  }
+  function scrollToId(id) {
+    var el = document.getElementById(id);
+    if (!el) return;
+    openAncestorDetails(el);
+    // Reveal the disclosure chrome when the target is buried in .disclose-body.
+    var chip = el.closest && el.closest("details.disclose");
+    var target = chip || el;
+    requestAnimationFrame(function () {
+      target.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+  }
+  window.addEventListener("message", function (e) {
+    var msg = e.data;
+    if (!msg || msg.type !== "scrollToId" || !msg.id) return;
+    scrollToId(msg.id);
+  });
+})();
+</script>`
+    : "";
   return `<!doctype html>
 <html>
 <head>
 <meta charset="UTF-8">
-<meta http-equiv="Content-Security-Policy" content="${liveWebviewCsp(options.imgCsp ?? "'none'")}">
+<meta http-equiv="Content-Security-Policy" content="${liveWebviewCsp(options.imgCsp ?? "'none'", scriptSrc)}">
 <title>${escapeHostText(options.title)}</title>
 <style>
 body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); background: var(--vscode-editor-background); margin: 0; padding: 1rem 1.25rem 2rem; }
@@ -122,21 +158,19 @@ details.disclose[open] > .disclose-body {
   border-radius: 3px;
   background: var(--vscode-editor-background, #fff);
 }
-/* Wide media (figures/tables) may need the full column when open. */
-section > details.disclose.float[open],
-section > details.disclose.wrap[open],
-article > details.disclose.float[open],
-article > details.disclose.wrap[open] {
+/* Wide media (figures/tables) need the full column when open — including
+ * wraps nested inside a Standard <p>, not only section/article children. */
+details.disclose.float[open],
+details.disclose.wrap[open] {
   display: block;
-  width: auto;
+  width: 100%;
   max-width: 100%;
 }
-section > details.disclose.float[open] > .disclose-body,
-section > details.disclose.wrap[open] > .disclose-body,
-article > details.disclose.float[open] > .disclose-body,
-article > details.disclose.wrap[open] > .disclose-body {
-  width: auto;
+details.disclose.float[open] > .disclose-body,
+details.disclose.wrap[open] > .disclose-body {
+  width: 100%;
   max-width: 100%;
+  box-sizing: border-box;
 }
 /* Footnotes: red number chip; open body uses a note-like content box (not parentheses). */
 details.disclose.foot,
@@ -185,6 +219,11 @@ details.disclose.note-comment > summary {
   border-color: #5555aa;
   color: #303070;
 }
+details.disclose.note-greyedout > summary {
+  background: #e8e8e8;
+  border-color: #888;
+  color: #555;
+}
 details.disclose.note[open] {
   width: fit-content;
   max-width: min(28em, 100%);
@@ -199,6 +238,30 @@ details.disclose.note-comment[open] > .disclose-body {
 details.disclose.note-comment[open] > .disclose-body {
   border-color: #5555aa;
   background: #f7f7ff;
+}
+/* Greyedout: hug content — avoid 28em-wide empty box from block .plain_layout. */
+details.disclose.note-greyedout[open] {
+  width: max-content;
+  max-width: min(28em, 100%);
+}
+details.disclose.note-greyedout[open] > .disclose-body {
+  width: max-content;
+  max-width: min(28em, 100%);
+  border-color: #888;
+  background: #f4f4f4;
+  color: #A0A0A0;
+  padding: 0.25em 0.4em;
+}
+details.disclose.note-greyedout[open] .plain_layout,
+details.disclose.note-greyedout[open] .note_greyedout {
+  display: inline;
+  margin: 0;
+  padding: 0;
+}
+details.disclose.argument.short-title > summary {
+  background: #efe6d6;
+  border-color: #8a7040;
+  color: #5a4010;
 }
 details.disclose.float-figure > summary,
 details.disclose.wrap.wrap-figure > summary {
@@ -220,6 +283,23 @@ details.disclose.float-table[open] > .disclose-body,
 details.disclose.wrap.wrap-table[open] > .disclose-body {
   border-color: #2a5aaa;
 }
+/* Contain floated wrap content inside the open disclosure box.
+ * Closed chip stays inline; when open, kill the page-level float so the
+ * figure/table stays inside the bordered .disclose-body (not beside it). */
+details.disclose.wrap[open] > .disclose-body {
+  overflow: auto;
+  display: flow-root;
+}
+details.disclose.wrap[open] .wrap {
+  float: none !important;
+  margin: 0 !important;
+  width: 100% !important;
+  max-width: 100%;
+}
+details.disclose.wrap[open] .wrap figure {
+  width: 100%;
+  max-width: 100%;
+}
 details.disclose.box > summary {
   background: #ececec;
   border-color: #666;
@@ -236,6 +316,34 @@ details.disclose.branch > summary {
 details.disclose.flex-container > summary {
   background: #e8f4f8;
   border-color: #3a7a8a;
+}
+/* Denylist plain-text markers (Live-only; native XHTML omits these). */
+details.disclose.ert > summary,
+details.disclose.phantom > summary,
+details.disclose.index-marker > summary,
+details.disclose.nomencl-marker > summary {
+  background: #f0f0f0;
+  border-color: #777;
+  color: #333;
+  font-family: ui-monospace, Consolas, monospace;
+  font-weight: 600;
+}
+details.disclose.ert[open] > .disclose-body,
+details.disclose.phantom[open] > .disclose-body,
+details.disclose.index-marker[open] > .disclose-body,
+details.disclose.nomencl-marker[open] > .disclose-body {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.9em;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-width: min(40em, 100%);
+}
+code.marker-body,
+code.ert-body {
+  font-family: inherit;
+  font-size: inherit;
+  background: transparent;
+  padding: 0;
 }
 /* Block-level floats/wraps (sole content of a layout, promoted out of Standard). */
 section > details.disclose.float,
@@ -366,10 +474,17 @@ div.ovalbox { border: groove medium currentColor; padding: 0.5ex; border-radius:
 div.Ovalbox { border: ridge thick currentColor; padding: 0.5ex; border-radius: 1em; }
 div.Shaded { background: color-mix(in srgb, currentColor 12%, transparent); padding: 0.5ex; }
 div.Frameless { margin: 1em 0; }
-div.float-listings { margin: 0.8em 0; }
+div.float-listings {
+  margin: 0.8em 0;
+  width: fit-content;
+  max-width: 100%;
+}
 div.listings-caption { margin: 0 0 0.35em; }
 code.listings, pre.include {
   display: block;
+  width: fit-content;
+  max-width: 100%;
+  box-sizing: border-box;
   white-space: pre-wrap;
   font-family: ui-monospace, Consolas, "Courier New", monospace;
   font-size: 0.92em;
@@ -407,6 +522,71 @@ span.note_greyedout, aside.note-greyedout {
   color: #A0A0A0;
   padding: 0 1ex;
 }
+/* Preview: non-click chrome box (not <details>); inline in the sentence. */
+div.preview {
+  display: inline-block;
+  vertical-align: baseline;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0 0.15em;
+  padding: 0.15em 0.4em;
+  border: 1px dashed #6a7a8a;
+  border-radius: 3px;
+  background: #f7fafc;
+  box-sizing: border-box;
+}
+div.preview > .standard,
+div.preview > .plain_layout {
+  display: inline;
+  margin: 0;
+}
+/* Info toolbar icons: don't inherit figure img max-width sizing. */
+img.info-icon {
+  width: 1.15em;
+  height: 1.15em;
+  max-width: none;
+  vertical-align: text-bottom;
+  display: inline;
+}
+/* Quiet break / spacing chrome (Live vs GUI). */
+div.lyx-pagebreak {
+  display: block;
+  margin: 1.1em 0;
+  border: none;
+  border-top: 2px dashed #999;
+  text-align: center;
+  line-height: 0;
+}
+div.lyx-pagebreak > .lyx-break-label {
+  display: inline-block;
+  line-height: 1.2;
+  padding: 0 0.5em;
+  background: var(--vscode-editor-background, #fff);
+  color: #777;
+  font-size: 0.7em;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+div.lyx-separator {
+  display: block;
+  margin: 0.7em 0;
+  border-top: 1px solid #bbb;
+  height: 0;
+}
+div.lyx-vspace {
+  display: block;
+  margin: 0.55em 0;
+  min-height: 0.6em;
+  border-left: 3px solid #ccc;
+  padding-left: 0.45em;
+  color: #888;
+  font-size: 0.7em;
+  font-weight: 600;
+}
+div.lyx-vspace > .lyx-break-label {
+  opacity: 0.85;
+}
 .diagnostics { font-size: 0.85em; opacity: 0.85; }
 </style>
 </head>
@@ -414,6 +594,7 @@ span.note_greyedout, aside.note-greyedout {
 ${status}
 ${diagBlock}
 ${body}
+${scrollScript}
 </body>
 </html>`;
 }

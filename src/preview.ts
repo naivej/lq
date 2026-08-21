@@ -45,24 +45,57 @@ export const LIVE_PROJECTION = "live";
 export const LIVE_HASH_ALGORITHM = "sha256";
 export const LIVE_HASH_INPUT = "raw-file-bytes";
 
-export const LIVE_UNAVAILABLE_CAPABILITIES = {
+/** Live capability flags. `outline: true` since DL131 Phase B (M2.7). */
+export const LIVE_CAPABILITIES = {
   review: false,
   mapping: false,
-  outline: false,
+  outline: true,
   editing: false,
   sourceReveal: false,
 } as const;
 
-/** Fields later milestones may add. M1 must not emit them. */
+/** @deprecated Alias — prefer LIVE_CAPABILITIES. */
+export const LIVE_UNAVAILABLE_CAPABILITIES = LIVE_CAPABILITIES;
+
+/** Fields later milestones may add. Must not appear on the wire yet. */
 export const LIVE_DEFERRED_FIELDS = [
   "tokens",
   "changes",
   "mapping",
-  "outline",
   "editTargets",
   "reviewRegions",
   "mode",
 ] as const;
+
+/** Heading outline entry (same data as TOC / FloatList anchors). */
+export interface LiveOutlineEntry {
+  level: number;
+  number: string;
+  text: string;
+  id: string;
+}
+
+/** Cross-document navigation entry (figures, tables, equations, labels, …). */
+export interface LiveNavEntry {
+  kind: string;
+  number: string;
+  text: string;
+  id: string;
+  /** LyX label name when this entry is a label or labeled equation/float. */
+  name?: string;
+  /** Optional 0-based source line (filled by the extension when known). */
+  line?: number;
+}
+
+/** Explorer “LyX Navigate” payload (outline + list-of-* + labels). */
+export interface LiveNavigate {
+  figures: LiveNavEntry[];
+  tables: LiveNavEntry[];
+  equations: LiveNavEntry[];
+  labels: LiveNavEntry[];
+  listings: LiveNavEntry[];
+  algorithms: LiveNavEntry[];
+}
 
 export type LineEnding = "lf" | "crlf" | "mixed";
 
@@ -81,7 +114,7 @@ export interface LiveDiagnostic {
   message: string;
 }
 
-export type LiveCapabilities = typeof LIVE_UNAVAILABLE_CAPABILITIES;
+export type LiveCapabilities = typeof LIVE_CAPABILITIES;
 
 export interface LivePreviewResponse {
   contract: typeof LIVE_CONTRACT;
@@ -90,6 +123,10 @@ export interface LivePreviewResponse {
   source: LiveSourceIdentity;
   capabilities: LiveCapabilities;
   diagnostics: LiveDiagnostic[];
+  /** Document heading outline (TOC source); always present when capabilities.outline. */
+  outline: LiveOutlineEntry[];
+  /** List-of-figures/tables/equations + label browser (LyX Navigate). */
+  navigate: LiveNavigate;
 }
 
 export interface LiveRenderResult {
@@ -142,7 +179,7 @@ export function validateLiveResponse(value: unknown): LivePreviewResponse {
   }
   for (const field of LIVE_DEFERRED_FIELDS) {
     if (field in obj) {
-      throw new LiveContractError(`M1 Live response must omit '${field}'.`);
+      throw new LiveContractError(`Live response must omit deferred field '${field}'.`);
     }
   }
   const source = obj.source;
@@ -176,9 +213,35 @@ export function validateLiveResponse(value: unknown): LivePreviewResponse {
     throw new LiveContractError("capabilities must be an object.");
   }
   const c = caps as Record<string, unknown>;
-  for (const key of Object.keys(LIVE_UNAVAILABLE_CAPABILITIES) as (keyof LiveCapabilities)[]) {
-    if (c[key] !== false) {
-      throw new LiveContractError(`capabilities.${key} must be false in this slice.`);
+  for (const key of Object.keys(LIVE_CAPABILITIES) as (keyof LiveCapabilities)[]) {
+    if (c[key] !== LIVE_CAPABILITIES[key]) {
+      throw new LiveContractError(
+        `capabilities.${key} must be ${LIVE_CAPABILITIES[key]} in this slice.`,
+      );
+    }
+  }
+  if (!Array.isArray(obj.outline)) {
+    throw new LiveContractError("outline must be an array.");
+  }
+  for (const entry of obj.outline) {
+    if (entry === null || typeof entry !== "object") {
+      throw new LiveContractError("each outline entry must be an object.");
+    }
+    const e = entry as Record<string, unknown>;
+    if (typeof e.level !== "number" || !Number.isInteger(e.level)) {
+      throw new LiveContractError("outline entry.level must be an integer.");
+    }
+    if (typeof e.number !== "string" || typeof e.text !== "string" || typeof e.id !== "string") {
+      throw new LiveContractError("outline entry needs string number, text, and id.");
+    }
+  }
+  if (obj.navigate === null || typeof obj.navigate !== "object") {
+    throw new LiveContractError("navigate must be an object.");
+  }
+  const nav = obj.navigate as Record<string, unknown>;
+  for (const key of ["figures", "tables", "equations", "labels", "listings", "algorithms"] as const) {
+    if (!Array.isArray(nav[key])) {
+      throw new LiveContractError(`navigate.${key} must be an array.`);
     }
   }
   if (!Array.isArray(obj.diagnostics)) {
@@ -231,6 +294,8 @@ interface RenderCtx {
   systemImagesDir?: string;
   magickPath?: string;
   labels: Map<string, string>;
+  /** Where a label was defined — used to keep Navigate → Labels free of TOC/float/eq dupes. */
+  labelKinds: Map<string, "heading" | "float" | "equation" | "other">;
   /** Plain title/caption text for `nameref` (heading or float caption). */
   labelTitles: Map<string, string>;
   bib: Map<string, Citation>;
@@ -253,6 +318,8 @@ interface RenderCtx {
   floatTypeCounts: Map<string, number>;
   /** Captioned floats collected during index for List of Figures/Tables. */
   floatListEntries: FloatListEntry[];
+  /** Numbered equations collected during render (for LyX Navigate). */
+  navEquations: LiveNavEntry[];
   bibitem: number;
   includeStack: string[];
   subeq: { parent: number; child: number } | null;
@@ -301,12 +368,7 @@ const PAGE_CHROME = new Set([
   "Right Footer",
 ]);
 
-interface OutlineEntry {
-  level: number;
-  number: string;
-  text: string;
-  id: string;
-}
+type OutlineEntry = LiveOutlineEntry;
 
 const HEADING: Record<string, { tag: string; level: number }> = {
   Part: { tag: "h1", level: -1 },
@@ -661,11 +723,16 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
   let currentHeadingTitle = "";
   let currentFloatCaption = "";
 
-  const walk = (list: Node[], floatNo: string | undefined, atBody: boolean) => {
+  const walk = (
+    list: Node[],
+    floatNo: string | undefined,
+    atBody: boolean,
+    inHeadingLayout: boolean,
+  ) => {
     for (const n of list) {
       if (n.type !== "block") continue;
       if (n.tag === "deeper") {
-        walk(n.children, floatNo, atBody);
+        walk(n.children, floatNo, atBody, inHeadingLayout);
         continue;
       }
       if (n.tag === "layout") {
@@ -685,12 +752,16 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
               id: sectionId(currentHeading, text),
             });
           }
+          // Only labels nested in the heading layout are TOC labels — not every
+          // later body label while currentHeading is set.
+          walk(n.children, floatNo, false, true);
+          continue;
         }
-        walk(n.children, floatNo, false);
+        walk(n.children, floatNo, false, false);
         continue;
       }
       if (n.tag !== "inset") {
-        walk(n.children, floatNo, atBody);
+        walk(n.children, floatNo, atBody, inHeadingLayout);
         continue;
       }
       const kind = insetKind(n);
@@ -708,26 +779,35 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         currentFloatCaption = taken
           ? `${floatNamerefPrefix(variant)} ${taken}`
           : caps.map((c) => collectVisibleText(c)).join(" ").replace(/\s+/g, " ").trim();
-        walk(n.children, taken ?? floatNo, false);
+        walk(n.children, taken ?? floatNo, false, false);
         currentFloatCaption = prevCap;
         continue;
       }
       if (kind === "listings" || kind.startsWith("listings ")) {
         const taken = listingTakesNumber(n) ? takeFloatNumber(ctx, "listing") : undefined;
-        walk(n.children, taken ?? floatNo, false);
+        walk(n.children, taken ?? floatNo, false, false);
         continue;
       }
       if (kind.startsWith("CommandInset include") && includeIsListings(n)) {
         const taken = takeFloatNumber(ctx, "listing");
         const label = listingParam(findProperty(n, "lstparams") ?? "", "label");
-        if (label && taken) ctx.labels.set(label, taken);
-        walk(n.children, taken ?? floatNo, false);
+        if (label && taken) {
+          ctx.labels.set(label, taken);
+          ctx.labelKinds.set(label, "float");
+        }
+        walk(n.children, taken ?? floatNo, false, false);
         continue;
       }
       if (kind.startsWith("CommandInset label")) {
         const name = findProperty(n, "name");
         if (name) {
           ctx.labels.set(name, floatNo ?? currentHeading);
+          const kindHint: "heading" | "float" | "other" = floatNo
+            ? "float"
+            : inHeadingLayout
+            ? "heading"
+            : "other";
+          ctx.labelKinds.set(name, kindHint);
           const title = (currentFloatCaption || currentHeadingTitle).trim();
           if (title) ctx.labelTitles.set(name, title);
         }
@@ -767,10 +847,10 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         if (entry.terms.length || entry.see) ctx.index.push(entry);
         continue;
       }
-      walk(n.children, floatNo, false);
+      walk(n.children, floatNo, false, inHeadingLayout);
     }
   };
-  walk(nodes, undefined, true);
+  walk(nodes, undefined, true, false);
   ctx.figure = 0;
   ctx.table = 0;
   ctx.algorithm = 0;
@@ -888,7 +968,13 @@ export async function renderLiveHtml(
     overlayLayoutsDir?: string;
     systemLayoutsDir?: string;
   } = {},
-): Promise<{ html: string; warnings: string[]; diagnostics: LiveDiagnostic[] }> {
+): Promise<{
+  html: string;
+  warnings: string[];
+  diagnostics: LiveDiagnostic[];
+  outline: LiveOutlineEntry[];
+  navigate: LiveNavigate;
+}> {
   let searchPaths: string[];
   let systemLayoutsDir: string | undefined;
   if (options.layoutsDir && !options.overlayLayoutsDir && !options.systemLayoutsDir) {
@@ -926,6 +1012,7 @@ export async function renderLiveHtml(
     systemImagesDir: imagesDirFromLayouts(systemLayoutsDir),
     magickPath: findMagick(systemLayoutsDir),
     labels: new Map(),
+    labelKinds: new Map(),
     labelTitles: new Map(),
     bib: new Map(),
     citedKeys: [],
@@ -946,6 +1033,7 @@ export async function renderLiveHtml(
     layoutCounters: new Map(),
     floatTypeCounts: new Map(),
     floatListEntries: [],
+    navEquations: [],
     subeq: null,
     bibitem: 0,
     includeStack: [],
@@ -958,6 +1046,8 @@ export async function renderLiveHtml(
     html: `<article class="lyx-live">${inner}</article>`,
     warnings: ctx.warnings,
     diagnostics: ctx.diagnostics,
+    outline: ctx.outline.map((e) => ({ ...e })),
+    navigate: buildNavigate(ctx),
   };
 }
 
@@ -986,10 +1076,56 @@ export async function buildLiveResponse(
       lineCount: countLines(text),
       fresh: true,
     },
-    capabilities: { ...LIVE_UNAVAILABLE_CAPABILITIES },
+    capabilities: { ...LIVE_CAPABILITIES },
     diagnostics: rendered.diagnostics,
+    outline: rendered.outline,
+    navigate: rendered.navigate,
   };
   return { response, warnings: rendered.warnings };
+}
+
+function floatNavKind(type: string): string {
+  if (type === "figure") return "figure";
+  if (type === "table") return "table";
+  if (type === "listing") return "listing";
+  if (type === "algorithm") return "algorithm";
+  return type || "float";
+}
+
+function buildNavigate(ctx: RenderCtx): LiveNavigate {
+  const mapFloat = (type: string): LiveNavEntry[] =>
+    ctx.floatListEntries
+      .filter((e) => e.type === type)
+      .map((e) => ({
+        kind: floatNavKind(type),
+        number: e.number,
+        text: e.text,
+        id: e.id,
+      }));
+  // Labels group = leftovers only (not already listed under Outline / floats / equations).
+  // Do not reuse section number / heading title here — that made every body label look like
+  // its enclosing heading and let extension title-dedupe hide them from Labels.
+  const labels: LiveNavEntry[] = [];
+  for (const [name] of ctx.labels) {
+    const role = ctx.labelKinds.get(name) ?? "other";
+    if (role !== "other") continue;
+    labels.push({
+      kind: "label",
+      number: "",
+      text: "",
+      id: xmlId(name),
+      name,
+    });
+  }
+  labels.sort((a, b) => (a.name ?? "").localeCompare(b.name ?? "", undefined, { sensitivity: "base" }));
+  return {
+    figures: mapFloat("figure"),
+    tables: mapFloat("table"),
+    equations: ctx.navEquations.map((e) => ({ ...e })),
+    labels,
+    listings: mapFloat("listing"),
+    algorithms: mapFloat("algorithm"),
+  };
 }
 
 
@@ -1169,11 +1305,26 @@ function restoreCounters(ctx: RenderCtx, snap: ReturnType<typeof snapshotCounter
   ctx.subeq = snap.subeq;
 }
 
+/** True when HTML is only Newpage/Separator/VSpace chrome (no reader prose). */
+function isBreakChromeOnly(html: string): boolean {
+  const trimmed = html.trim();
+  if (!trimmed) return false;
+  if (!/class="lyx-(pagebreak|separator|vspace)\b/.test(trimmed)) return false;
+  const stripped = trimmed
+    .replace(/<div class="lyx-pagebreak\b[^>]*>[\s\S]*?<\/div>/g, "")
+    .replace(/<div class="lyx-separator\b[^>]*>[\s\S]*?<\/div>/g, "")
+    .replace(/<div class="lyx-vspace\b[^>]*>[\s\S]*?<\/div>/g, "")
+    .trim();
+  return stripped.length === 0;
+}
+
 function isSkippableFlow(item: FlowItem, ctx: RenderCtx): boolean {
   if (role(item.layout, ctx).kind !== "flow") return false;
   const snap = snapshotCounters(ctx);
   try {
-    return renderLayoutInline(item.node, ctx).trim().length === 0;
+    const html = renderLayoutInline(item.node, ctx).trim();
+    // Empty — or only break chrome — must not split list nesting (pre-marker behavior).
+    return html.length === 0 || isBreakChromeOnly(html);
   } finally {
     restoreCounters(ctx, snap);
   }
@@ -1529,9 +1680,9 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   const kind = insetKind(block);
   if (kind === "ERT") {
-    warnOnce(ctx, "ERT is omitted from the Live projection (native XHTML drops it).");
-    diagnostic(ctx, "ERT_OMITTED", "An ERT inset was omitted from the Live projection.");
-    return "";
+    // DL131 Live-only: native LyXHTML omits ERT; Live shows escaped TeX in a chip.
+    // ERT body is opaque text lines (not nested layout CST) — see ertPlainText.
+    return wrapPlainTextMarker("ert", "ERT", ertPlainText(block));
   }
   // Live shows Note/Comment as click-disclosable private notes (DL131); query still uses isInvisibleInset.
   if (kind === "Note Note" || kind === "Note Comment") {
@@ -1542,7 +1693,14 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (isInvisibleInset(block)) return "";
   if (kind === "Note Greyedout" || kind.startsWith("Note Greyedout")) {
-    return `<span class="note_greyedout" style="color:#A0A0A0">${renderInsetLayouts(block, parentState, ctx)}</span>`;
+    // DL131: Greyedout is a collapsed chip (user); open body stays grey.
+    // Inline color so CLI Live (no webview CSS) still reads grey.
+    const inner = renderInsetLayouts(block, parentState, ctx);
+    return wrapDisclosure(
+      "note note-greyedout",
+      "Greyedout",
+      `<span class="note_greyedout" style="color:#A0A0A0">${inner}</span>`,
+    );
   }
   if (kind === "Foot" || kind.startsWith("Foot ")) {
     if (ctx.inTitle) {
@@ -1568,17 +1726,34 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return "";
   }
   if (kind === "Formula" || kind.startsWith("Formula ") || kind.startsWith("Formula")) {
-    const source = formulaSource(block);
-    return renderFormulaHtml(source, takeFormulaNumbers(source, ctx), ctx.mathMacros ?? undefined);
+    return renderFormulaNavigate(block, ctx);
   }
-  if (
-    kind === "Newpage" || kind.startsWith("Newpage ") ||
-    kind === "VSpace" || kind.startsWith("VSpace ") ||
-    kind === "Separator" || kind.startsWith("Separator ") ||
-    kind === "Argument" || kind.startsWith("Argument ") ||
-    kind === "Phantom" || kind.startsWith("Phantom ")
-  ) {
+  if (kind === "Newpage" || kind.startsWith("Newpage ")) {
+    return `<div class="lyx-pagebreak" role="separator" aria-label="New page"><span class="lyx-break-label">New page</span></div>`;
+  }
+  if (kind === "Separator" || kind.startsWith("Separator ")) {
+    const detail = kind.slice("Separator".length).trim() || "separator";
+    return `<div class="lyx-separator" role="separator" aria-label="${escapeLiveHtml(detail)}"></div>`;
+  }
+  if (kind === "VSpace" || kind.startsWith("VSpace ")) {
+    const amount = kind.slice("VSpace".length).trim() || "vspace";
+    return `<div class="lyx-vspace" data-vspace="${escapeLiveHtml(amount)}" aria-label="VSpace ${escapeLiveHtml(amount)}"><span class="lyx-break-label">VSpace ${escapeLiveHtml(amount)}</span></div>`;
+  }
+  if (kind === "Argument 1") {
+    // Short-title slot (and other Arg-1 uses): Live chip; parents still read via argumentText.
+    return wrapPlainTextMarker(
+      "argument short-title",
+      "Short title",
+      nomenclText(block) || collectVisibleText(block),
+    );
+  }
+  if (kind === "Argument" || kind.startsWith("Argument ")) {
+    // Other Arguments (post:, 2, 3, …) stay omitted — parent-consumed slots.
     return "";
+  }
+  if (kind === "Phantom" || kind.startsWith("Phantom ")) {
+    // DL131 Live-only: native XHTML drops Phantom; Live shows body as plain text.
+    return wrapPlainTextMarker("phantom", phantomSummaryLabel(kind), collectVisibleText(block));
   }
   if (kind === "Info" || kind.startsWith("Info ")) {
     return renderInfo(block, ctx);
@@ -1614,10 +1789,22 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return escapeLiveHtml(quoteChar(kind));
   }
   if (kind.startsWith("space ") || kind === "space") return spaceChar(kind);
-  if (kind.startsWith("Index ") || kind === "Index") return renderIndexAnchor(ctx);
+  if (kind.startsWith("Index ") || kind === "Index") {
+    // Keep print-index anchor; show entry text in a Live-only chip (IndexMacro stays nested).
+    const entry = collectIndexEntry(block, ctx);
+    const text = entry.see && entry.terms.length
+      ? `${entry.terms.join(", ")} (see ${entry.see})`
+      : entry.terms.join(", ") || entry.see;
+    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapPlainTextMarker("index-marker", "Index", text)}`;
+  }
   if (kind.startsWith("IndexMacro ") || kind === "IndexMacro") return "";
-  if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) return renderNomenclAnchor(ctx);
+  if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) {
+    const entry = collectNomenclEntry(block, ctx);
+    const text = [entry.symbol, entry.desc].filter(Boolean).join(" — ");
+    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapPlainTextMarker("nomencl-marker", "Nomencl", text)}`;
+  }
   if (kind === "Preview" || kind.startsWith("Preview ")) {
+    // Non-click chrome box (not <details>); no extra "Preview" label — body alone.
     return `<div class="preview">${renderInsetLayouts(block, parentState, ctx)}</div>`;
   }
   if (kind.startsWith("script ")) {
@@ -1844,13 +2031,54 @@ function takeFormulaNumbers(
     if (line.consumesNumber) {
       const num = takeEquationNumber(ctx);
       nos.push(num);
-      for (const lab of line.labels) ctx.labels.set(lab, num);
+      for (const lab of line.labels) {
+        ctx.labels.set(lab, num);
+        ctx.labelKinds.set(lab, "equation");
+      }
     } else {
       nos.push(undefined);
     }
   }
   if (plan.lines.length > 1) return nos;
   return nos[0];
+}
+
+/** Render formula HTML and register numbered equations for LyX Navigate. */
+function renderFormulaNavigate(block: BlockNode, ctx: RenderCtx): string {
+  const source = formulaSource(block);
+  const plan = planFormulaLines(source);
+  const nos = takeFormulaNumbers(source, ctx);
+  const noList = Array.isArray(nos) ? nos : [nos];
+  let html = renderFormulaHtml(source, nos, ctx.mathMacros ?? undefined);
+  const ids: string[] = [];
+  for (let i = 0; i < plan.lines.length; i++) {
+    const line = plan.lines[i]!;
+    const no = noList[i];
+    if (no === undefined || no === "") continue;
+    const lab = line.labels[0];
+    const id = lab ? xmlId(lab) : `eq-${String(no).replaceAll(".", "-")}`;
+    ids.push(id);
+    const snippet = line.tex.replace(/\\label\{[^}]*\}/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
+    ctx.navEquations.push({
+      kind: "equation",
+      number: String(no),
+      text: snippet,
+      id,
+      name: lab,
+    });
+  }
+  if (ids.length === 1) {
+    html = html.replace('<span class="formula"', `<span class="formula" id="${escapeLiveHtml(ids[0]!)}"`);
+  } else if (ids.length > 1) {
+    let n = 0;
+    html = html.replace(/<span class="formula-row"/g, () => {
+      const id = ids[n++];
+      return id
+        ? `<span class="formula-row" id="${escapeLiveHtml(id)}"`
+        : `<span class="formula-row"`;
+    });
+  }
+  return html;
 }
 
 function walkSubequationLabels(nodes: Node[], ctx: RenderCtx): void {
@@ -1861,7 +2089,10 @@ function walkSubequationLabels(nodes: Node[], ctx: RenderCtx): void {
       const kind = insetKind(n);
       if (kind.startsWith("CommandInset label")) {
         const name = findProperty(n, "name");
-        if (name) ctx.labels.set(name, parent);
+        if (name) {
+          ctx.labels.set(name, parent);
+          ctx.labelKinds.set(name, "equation");
+        }
         continue;
       }
       if (kind === "Formula" || kind.startsWith("Formula")) {
@@ -2096,6 +2327,38 @@ function wrapDisclosure(
   return `<details class="disclose ${escapeLiveHtml(className)}"><summary class="${escapeLiveHtml(sumCls)}">${escapeLiveHtml(summaryLabel)}</summary><span class="${escapeLiveHtml(bodyCls)}">${bodyHtml}</span></details>`;
 }
 
+/** Escaped plain-text chip for denylist markers (ERT / Phantom / Index / Nomencl). */
+function wrapPlainTextMarker(className: string, summaryLabel: string, rawText: string): string {
+  const text = rawText.replace(/\s+/g, " ").trim();
+  const body =
+    `<code class="marker-body">${escapeLiveHtml(text || `(empty ${summaryLabel})`)}</code>`;
+  return wrapDisclosure(className, summaryLabel, body);
+}
+
+function phantomSummaryLabel(kind: string): string {
+  const rest = kind.slice("Phantom".length).trim();
+  if (/^HPhantom/i.test(rest)) return "HPhantom";
+  if (/^VPhantom/i.test(rest)) return "VPhantom";
+  return "Phantom";
+}
+
+/** ERT stores TeX as opaque text children (layout begin/end lines + \\backslash). */
+function ertPlainText(block: BlockNode): string {
+  let out = "";
+  for (const n of block.children) {
+    if (n.type !== "text") continue;
+    const t = n.text;
+    if (!t || isStatusLine(t)) continue;
+    if (/^\\begin_layout\b/.test(t) || /^\\end_layout\b/.test(t)) continue;
+    if (t === "\\backslash") {
+      out += "\\";
+      continue;
+    }
+    out += t;
+  }
+  return out.replace(/\s+/g, " ").trim();
+}
+
 function renderInfo(block: BlockNode, ctx?: RenderCtx): string {
   const type = (findProperty(block, "type") ?? "").toLowerCase();
   const arg = findProperty(block, "arg") ?? collectVisibleText(block);
@@ -2118,12 +2381,67 @@ function renderInfo(block: BlockNode, ctx?: RenderCtx): string {
   return arg ? `<span class="info">${escapeLiveHtml(arg)}</span>` : "";
 }
 
+/** Cache of `images/icon.aliases` substring rewrites (LyX GuiApplication::getAlias). */
+const iconAliasCache = new Map<string, Array<[string, string]>>();
+
+function loadIconAliases(imagesDir: string): Array<[string, string]> {
+  const cached = iconAliasCache.get(imagesDir);
+  if (cached) return cached;
+  const pairs: Array<[string, string]> = [];
+  const file = path.join(imagesDir, "icon.aliases");
+  try {
+    const text = Deno.readTextFileSync(file);
+    for (const raw of text.split(/\r?\n/)) {
+      const line = raw.trim();
+      if (!line || line.startsWith("#")) continue;
+      const parts = line.split(/\s+/);
+      if (parts.length >= 2 && parts[0] && parts[1]) pairs.push([parts[0], parts[1]]);
+    }
+  } catch {
+    /* missing aliases file is fine */
+  }
+  iconAliasCache.set(imagesDir, pairs);
+  return pairs;
+}
+
+/** Apply LyX icon.aliases substring replacements (e.g. dialog-toggle → dialog-show). */
+function applyIconAliases(name: string, imagesDir: string): string {
+  let out = name;
+  for (const [from, to] of loadIconAliases(imagesDir)) {
+    if (out.includes(from)) out = out.split(from).join(to);
+  }
+  return out;
+}
+
+/**
+ * Munge an Info/LFUN icon arg the way LyX `iconInfo` does before file search:
+ * spaces/`;` → `_`, then `icon.aliases` rewrites.
+ */
+function iconFileBases(name: string, imagesDir: string): string[] {
+  const trimmed = name.trim();
+  if (!trimmed) return [];
+  // Full action+args, then bare action — matches GuiApplication::iconInfo name list.
+  const raw = [
+    trimmed.replace(/\\/g, "backslash").replace(/[ ;]/g, "_"),
+    trimmed.split(/\s+/)[0] ?? "",
+  ];
+  const bases: string[] = [];
+  for (const b of raw) {
+    if (!b) continue;
+    bases.push(b);
+    const aliased = applyIconAliases(b, imagesDir);
+    if (aliased !== b) bases.push(aliased);
+  }
+  return [...new Set(bases)];
+}
+
 /**
  * Resolve Info icon LFUN/name to a PNG `data:` URI from `{Resources}/images`.
- * Prefer classic/*.png (no magick); else SVGZ via ImageMagick when present.
+ * Prefer themed SVGZ via ImageMagick when present (matches modern LyX GUI toolbar
+ * glyphs); fall back to classic/*.png when magick is unavailable.
  *
- * Info args often include LFUN arguments (`math-macro newmacroname_newcommand`);
- * LyX icon files use underscores for those spaces.
+ * Follows LyX `iconInfo` + `images/icon.aliases` (e.g. `dialog-toggle findreplace`
+ * → `dialog-show_findreplace`).
  */
 function resolveInfoIconDataUri(
   name: string,
@@ -2131,12 +2449,22 @@ function resolveInfoIconDataUri(
   magickPath: string | undefined,
 ): string | undefined {
   if (!imagesDir || !name) return undefined;
-  const trimmed = name.trim();
-  const bases = [
-    trimmed.replace(/\s+/g, "_"), // full LFUN+args (native imageLibFileSearch)
-    trimmed.split(/\s+/)[0]!, // bare LFUN
-  ];
-  const unique = [...new Set(bases.filter(Boolean))];
+  const unique = iconFileBases(name, imagesDir);
+  // Themed SVGZ first when magick works — classic PNGs can be the wrong glyph.
+  if (magickPath) {
+    for (const base of unique) {
+      const svgzCandidates = [
+        path.join(imagesDir, `${base}.svgz`),
+        path.join(imagesDir, "oxygen", `${base}.svgz`),
+        path.join(imagesDir, "adwaita", `${base}.svgz`),
+        path.join(imagesDir, "classic", `${base}.svgz`),
+      ];
+      for (const file of svgzCandidates) {
+        const uri = rasterizeToPngDataUri(file, magickPath);
+        if (uri) return uri;
+      }
+    }
+  }
   for (const base of unique) {
     const pngCandidates = [
       path.join(imagesDir, "classic", `${base}.png`),
@@ -2152,18 +2480,6 @@ function resolveInfoIconDataUri(
       } catch {
         /* try next */
       }
-    }
-  }
-  for (const base of unique) {
-    const svgzCandidates = [
-      path.join(imagesDir, `${base}.svgz`),
-      path.join(imagesDir, "adwaita", `${base}.svgz`),
-      path.join(imagesDir, "oxygen", `${base}.svgz`),
-      path.join(imagesDir, "classic", `${base}.svgz`),
-    ];
-    for (const file of svgzCandidates) {
-      const uri = rasterizeToPngDataUri(file, magickPath);
-      if (uri) return uri;
     }
   }
   return undefined;
@@ -2496,6 +2812,13 @@ function renderCaptionedFloat(block: BlockNode, variant: string, ctx: RenderCtx)
   return html;
 }
 
+function floatDisclosureLabel(variant: string): string {
+  const v = variant.trim() || "figure";
+  const pretty = v ? v.charAt(0).toUpperCase() + v.slice(1) : "Float";
+  // Distinguish Float/Wrap chrome from non-float Graphics/Tabular (no chip).
+  return `Float: ${pretty}`;
+}
+
 function renderWrap(block: BlockNode, _parentState: TraversalState, ctx: RenderCtx): string {
   const width = widthToCss(findProperty(block, "width")) || "50%";
   const placement = (findProperty(block, "placement") ?? "").toLowerCase();
@@ -2512,7 +2835,7 @@ function renderWrap(block: BlockNode, _parentState: TraversalState, ctx: RenderC
   const wrap = `<div class="wrap wrap-${side}" style="width: ${escapeLiveHtml(width)}">${inner}</div>`;
   return wrapDisclosure(
     `wrap wrap-${side} wrap-${layoutSlug(variant)}`,
-    `Wrap ${variant}`,
+    floatDisclosureLabel(variant),
     wrap,
   );
 }
@@ -2577,8 +2900,11 @@ function renderListings(block: BlockNode, _parentState: TraversalState, ctx: Ren
 function renderFloat(block: BlockNode, kind: string, _parentState: TraversalState, ctx: RenderCtx): string {
   const variant = kind.slice("Float ".length).trim() || "figure";
   const figure = renderCaptionedFloat(block, variant, ctx);
-  const label = variant ? variant.charAt(0).toUpperCase() + variant.slice(1) : "Float";
-  return wrapDisclosure(`float float-${layoutSlug(variant)}`, label, figure);
+  return wrapDisclosure(
+    `float float-${layoutSlug(variant)}`,
+    floatDisclosureLabel(variant),
+    figure,
+  );
 }
 
 function renderInclude(block: BlockNode, ctx: RenderCtx): string {
@@ -2807,14 +3133,6 @@ function nextNomenclId(ctx: RenderCtx): string {
 function nextIndexId(ctx: RenderCtx): string {
   ctx.indexSeq += 1;
   return `idx-${ctx.indexSeq}`;
-}
-
-function renderNomenclAnchor(ctx: RenderCtx): string {
-  return `<a id="${escapeLiveHtml(nextNomenclId(ctx))}"></a>`;
-}
-
-function renderIndexAnchor(ctx: RenderCtx): string {
-  return `<a id="${escapeLiveHtml(nextIndexId(ctx))}"></a>`;
 }
 
 function collectNomenclEntry(block: BlockNode, ctx: RenderCtx): NomenclEntry {

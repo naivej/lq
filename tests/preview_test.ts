@@ -9,9 +9,10 @@ import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/a
 import { fromFileUrl, join } from "@std/path";
 import { parse } from "../src/parser.ts";
 import {
+  LIVE_CAPABILITIES,
   LIVE_CONTRACT,
   LIVE_DEFERRED_FIELDS,
-  LIVE_UNAVAILABLE_CAPABILITIES,
+  type LiveNavigate,
   buildLiveResponse,
   detectLineEnding,
   escapeLiveHtml,
@@ -54,12 +55,26 @@ Deno.test("Live contract - valid response is accepted", async () => {
   const validated = validateLiveResponse({ ...response, warnings });
   assertEquals(validated.contract, LIVE_CONTRACT);
   assertEquals(validated.projection, "live");
-  assertEquals(validated.capabilities, { ...LIVE_UNAVAILABLE_CAPABILITIES });
+  assertEquals(validated.capabilities, { ...LIVE_CAPABILITIES });
+  assertEquals(validated.capabilities.outline, true);
+  assert(Array.isArray(validated.outline));
+  assert(validated.outline.length >= 2, "headings_paragraphs should yield outline entries");
   assertEquals(validated.source.fresh, true);
   assertEquals(validated.source.hashAlgorithm, "sha256");
   assertEquals(validated.source.hashInput, "raw-file-bytes");
   assertEquals(validated.source.diskHash.length, 64);
 });
+
+function emptyNavigate(): LiveNavigate {
+  return {
+    figures: [],
+    tables: [],
+    equations: [],
+    labels: [],
+    listings: [],
+    algorithms: [],
+  };
+}
 
 Deno.test("Live contract - rejects malformed required fields", () => {
   const base = {
@@ -75,14 +90,16 @@ Deno.test("Live contract - rejects malformed required fields", () => {
       lineCount: 2,
       fresh: true,
     },
-    capabilities: { ...LIVE_UNAVAILABLE_CAPABILITIES },
+    capabilities: { ...LIVE_CAPABILITIES },
     diagnostics: [],
+    outline: [],
+    navigate: emptyNavigate(),
   };
   assertThrows(() => validateLiveResponse({ ...base, contract: "nope" }), Error, "contract");
   assertThrows(() => validateLiveResponse({ ...base, projection: "review" }), Error, "projection");
   assertThrows(() => validateLiveResponse({ ...base, html: 1 }), Error, "html");
   assertThrows(
-    () => validateLiveResponse({ ...base, capabilities: { ...LIVE_UNAVAILABLE_CAPABILITIES, review: true } }),
+    () => validateLiveResponse({ ...base, capabilities: { ...LIVE_CAPABILITIES, review: true } }),
     Error,
     "review",
   );
@@ -91,6 +108,7 @@ Deno.test("Live contract - rejects malformed required fields", () => {
     Error,
     "fresh",
   );
+  assertThrows(() => validateLiveResponse({ ...base, outline: "nope" }), Error, "outline");
 });
 
 Deno.test("Live contract - deferred fields are rejected", () => {
@@ -107,12 +125,16 @@ Deno.test("Live contract - deferred fields are rejected", () => {
       lineCount: 2,
       fresh: true,
     },
-    capabilities: { ...LIVE_UNAVAILABLE_CAPABILITIES },
+    capabilities: { ...LIVE_CAPABILITIES },
     diagnostics: [],
+    outline: [],
+    navigate: emptyNavigate(),
   };
   for (const field of LIVE_DEFERRED_FIELDS) {
     assertThrows(() => validateLiveResponse({ ...base, [field]: [] }), Error, field);
   }
+  // outline is no longer deferred — must be accepted.
+  validateLiveResponse(base);
 });
 
 Deno.test("Live contract - CLI envelope distinguishes disk identity", async () => {
@@ -123,8 +145,54 @@ Deno.test("Live contract - CLI envelope distinguishes disk identity", async () =
   assert(validated.source.lineCount > 1);
   assertEquals(validated.capabilities.editing, false);
   assertEquals(validated.capabilities.mapping, false);
-  assertEquals(validated.capabilities.outline, false);
+  assertEquals(validated.capabilities.outline, true);
   assertEquals(validated.capabilities.sourceReveal, false);
+  assert(validated.outline.some((e) => e.text.includes("Introduction")));
+});
+
+Deno.test("Live navigate - Labels lists only leftover anchors (DL131 B)", async () => {
+  const file = syntheticPath("navigate_labels.lyx");
+  const text = await Deno.readTextFile(file);
+  const { response } = await buildLiveResponse(file, parse(text), text);
+  const validated = validateLiveResponse(response);
+  const names = validated.navigate.labels.map((l) => l.name).sort();
+  assertEquals(names, ["box:aside-point", "note:custom-hook"]);
+  // Covered elsewhere — must not reappear under Labels.
+  for (const banned of ["sec:intro", "fig:demo", "eq:demo"]) {
+    assert(!names.includes(banned), `${banned} must not appear under Labels`);
+  }
+  // Leftovers must not inherit enclosing section number/title (that hid them in Explorer dedupe).
+  for (const l of validated.navigate.labels) {
+    assertEquals(l.number, "");
+    assertEquals(l.text, "");
+    assert(!!l.name);
+    assertStringIncludes(response.html, `id="${l.id}"`);
+  }
+  assert(validated.outline.some((e) => /Introduction/i.test(e.text)));
+  assert(validated.navigate.figures.some((e) => e.id.includes("float-figure")));
+  assert(validated.navigate.equations.some((e) => e.name === "eq:demo" || e.id.includes("eq")));
+});
+
+Deno.test("Live outline - disclosure_collapsibles reuses TOC heading ids (DL131 B1)", async () => {
+  const { response } = await buildLiveResponse(
+    syntheticPath("disclosure_collapsibles.lyx"),
+    parse(await Deno.readTextFile(syntheticPath("disclosure_collapsibles.lyx"))),
+    await Deno.readTextFile(syntheticPath("disclosure_collapsibles.lyx")),
+  );
+  const validated = validateLiveResponse(response);
+  assert(validated.outline.length >= 5);
+  for (const e of validated.outline) {
+    assert(e.id.length > 0);
+    assertStringIncludes(response.html, `id="${e.id}"`);
+  }
+  assert(validated.outline.some((e) => /Body footnotes/i.test(e.text)));
+  assert(Array.isArray(validated.navigate.figures));
+  assert(Array.isArray(validated.navigate.tables));
+  assert(validated.navigate.figures.length >= 1, "disclosure fixture has a figure float");
+  assert(validated.navigate.tables.length >= 1, "disclosure fixture has a table float");
+  for (const e of [...validated.navigate.figures, ...validated.navigate.tables]) {
+    assertStringIncludes(response.html, `id="${e.id}"`);
+  }
 });
 
 Deno.test("Live renderer - headings, paragraphs, unicode, empty, emphasis", async () => {
@@ -198,14 +266,15 @@ Deno.test("Live renderer - hostile strings stay escaped", async () => {
   assertStringIncludes(html, "&quot;quotes&quot;");
 });
 
-Deno.test("Live renderer - tracked/ERT follow XHTML omissions", async () => {
-  const { html, warnings, diagnostics } = await renderFile("tracked_ert_notes.lyx");
+Deno.test("Live renderer - tracked changes omit deleted; ERT is a Live disclosure chip", async () => {
+  const { html, diagnostics } = await renderFile("tracked_ert_notes.lyx");
   assertStringIncludes(html, "Visible");
   assertStringIncludes(html, "inserted");
   assert(!html.includes("deleted"), "deleted tracked text must be omitted");
-  assert(!html.includes("textbf"), "ERT must be omitted");
-  assert(warnings.some((w) => w.includes("ERT")));
-  assert(diagnostics.some((d) => d.code === "ERT_OMITTED"));
+  // DL131: ERT is Live-only plain-text disclosure (native XHTML still omits).
+  assertStringIncludes(html, 'class="disclose ert"');
+  assertStringIncludes(html, "\\textbf{nope}");
+  assert(!diagnostics.some((d) => d.code === "ERT_OMITTED"), "ERT_OMITTED retired for Live chips");
 });
 
 Deno.test("Live renderer - click disclosure and private Note/Comment (DL131)", async () => {
@@ -219,7 +288,8 @@ Deno.test("Live renderer - click disclosure and private Note/Comment (DL131)", a
   assertStringIncludes(html, 'class="disclose note note-comment"');
   assertStringIncludes(html, "<summary class=\"disclose-summary\">Comment</summary>");
   assertStringIncludes(html, "private comment body");
-  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, 'class="disclose note note-greyedout"');
+  assertStringIncludes(html, "<summary class=\"disclose-summary\">Greyedout</summary>");
   assertStringIncludes(html, "greyed always visible");
   // Must not use hover-only hide (collapsed by default via <details>).
   assert(!html.includes(":hover"), "Live HTML must not embed hover CSS");
@@ -233,24 +303,51 @@ Deno.test("Live renderer - disclosure_collapsibles covers foldable inset set (DL
     'class="disclose foot"',
     'class="disclose note note-note"',
     'class="disclose note note-comment"',
+    'class="disclose note note-greyedout"',
     'class="disclose marginal"',
     'class="disclose box boxed"',
     'class="disclose float float-figure"',
     'class="disclose float float-table"',
     'class="disclose wrap',
     'class="disclose branch"',
+    'class="disclose ert"',
+    'class="disclose phantom"',
+    'class="disclose index-marker"',
+    'class="disclose nomencl-marker"',
+    'class="disclose argument short-title"',
   ];
   for (const needle of mustDisclose) {
     assertStringIncludes(html, needle);
   }
-  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, ">Float: Figure</summary>");
+  assertStringIncludes(html, ">Float: Table</summary>");
   assertStringIncludes(html, "Greyedout stays visible");
-  // Charstyle Flex Code must remain inline — not a disclosure chip.
+  assertStringIncludes(html, "ShortTitle");
+  assertStringIncludes(html, "\\textbf{chip}");
+  assertStringIncludes(html, "phantom body");
+  assertStringIncludes(html, "IndexTerm");
+  assertStringIncludes(html, "NomSymbol");
+  assertStringIncludes(html, "Nom description");
+  // Non-chip catalog samples present for Live vs GUI comparison.
+  assertStringIncludes(html, "<math");
+  assertStringIncludes(html, "<table");
+  assertStringIncludes(html, "live-figure.png");
+  assertStringIncludes(html, "print(&quot;hello&quot;)");
+  assertStringIncludes(html, 'class="preview"');
+  assert(!html.includes("preview-label"), "Preview box must not add an extra Preview label");
+  assertStringIncludes(html, 'class="lyx-pagebreak"');
+  assertStringIncludes(html, 'class="lyx-separator"');
+  assertStringIncludes(html, 'class="lyx-vspace"');
+  assertStringIncludes(html, "<sup>");
+  assertStringIncludes(html, "<sub>");
+  assertStringIncludes(html, 'href="https://www.lyx.org/"');
+  // Charstyle Flex / URL must remain inline — not disclosure chips.
   assertStringIncludes(html, 'class="flex_code"');
-  assert(
-    !html.includes("<details") || !/details[^>]*flex_code/.test(html),
-    "Flex Code must not be wrapped in details",
-  );
+  assertStringIncludes(html, 'class="flex_emph"');
+  assertStringIncludes(html, 'class="flex_strong"');
+  assertStringIncludes(html, 'class="noun"'); // Flex Noun → span.noun
+  assertStringIncludes(html, 'class="flex_url"');
+  assert(!/class="disclose[^"]*url/i.test(html), "Flex URL must stay inline, not a disclosure chip");
   const codeIdx = html.indexOf('class="flex_code"');
   assert(codeIdx !== -1);
   assert(
@@ -347,14 +444,30 @@ Deno.test({
   },
 });
 
-Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mode as UNKNOWN", async () => {
+Deno.test("Live renderer - dialog-toggle Info icons use icon.aliases (dialog-show_*)", async () => {
+  const { html } = await renderFile("info_icon_shortcut.lyx");
+  // data-info-icon is only set on resolved <img> (glyph fallback has aria-label only).
+  assertStringIncludes(html, 'data-info-icon="dialog-toggle findreplace"');
+  assertStringIncludes(html, 'data-info-icon="dialog-toggle toc"');
+  assert(
+    /<img\b[^>]*data-info-icon="dialog-toggle findreplace"/.test(html),
+    "dialog-toggle findreplace must resolve via icon.aliases → dialog-show_findreplace",
+  );
+  assert(
+    /<img\b[^>]*data-info-icon="dialog-toggle toc"/.test(html),
+    "dialog-toggle toc must resolve via icon.aliases → dialog-show_toc",
+  );
+});
+
+Deno.test("Live renderer - Help Math.lyx Phantom chips; no math-mode UNKNOWN dump", async () => {
   const filePath = fromFileUrl(new URL("./fixtures/Help/Math.lyx", import.meta.url));
   const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
   assertStringIncludes(html, '<article class="lyx-live">');
   const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
   assertEquals(unknown.map((d) => d.message), []);
-  // Native LyXHTML drops Phantom/HPhantom/VPhantom entirely (InsetPhantom::xhtml).
-  assert(!html.includes("unknown-inset"), "Phantom must omit, not fall back");
+  // DL131: Phantom is a Live-only plain-text chip (native XHTML still drops it).
+  assert(!html.includes("unknown-inset"), "Phantom must not fall back to unknown-inset");
+  assertStringIncludes(html, 'class="disclose phantom"');
   assertStringIncludes(html, "<kbd");
   assert(!html.includes('<span class="info">math-mode</span>'), "Info shortcuts must not dump the raw LFUN name as body text");
   // When system bind files are present, resolve LFUN → key chord (keep LFUN in title).
@@ -402,7 +515,7 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
     !html.includes('encoding="application/x-tex">\\newcommand{\\qG}'),
     "FormulaMacro must not be rendered as a formula",
   );
-  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, 'note-greyedout');
   assertStringIncludes(html, "color:#A0A0A0");
   assertStringIncludes(html, 'mathbackground="yellow"');
   assertStringIncludes(html, 'voffset="2mm"');
@@ -561,12 +674,13 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assert(!html.includes(">7 The User Interface"), "appendix chapters must not continue arabic numbering");
   const phantomAt = html.indexOf("What is correct English");
   assert(phantomAt !== -1, "UserGuide phantom example missing");
-  const phantomChunk = html.slice(phantomAt, phantomAt + 350);
+  const phantomChunk = html.slice(phantomAt, phantomAt + 500);
   assertStringIncludes(phantomChunk, "has to be jumped");
   assertStringIncludes(phantomChunk, "jumps");
+  assertStringIncludes(phantomChunk, 'class="disclose phantom"');
   assert(
     !phantomChunk.includes("\u200b"),
-    "Phantom must omit like native XHTML, not emit a zero-width space",
+    "Phantom chip must not emit a zero-width space placeholder",
   );
   // Branches: Question selected; Answer not — only inverted Answer inset prints.
   assertStringIncludes(html, "Who was the first physics Nobel prize winner?");
@@ -585,7 +699,7 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, 'class="href"');
   assertStringIncludes(html, 'href="lyx-docs@lists.lyx.org"');
   assertStringIncludes(html, '<nav class="toc">');
-  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, 'note-greyedout');
   assertStringIncludes(html, "<kbd");
   assertStringIncludes(html, "<br>");
   assertStringIncludes(html, "\u00a0"); // protected space
@@ -769,7 +883,7 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html.slice(mpOpen, mpAt + 20), "rotated cell");
   assertStringIncludes(html, 'class="href"');
   assertStringIncludes(html, '<nav class="toc">');
-  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, 'note-greyedout');
   assertStringIncludes(html, "<kbd");
   assertStringIncludes(html, "“");
   assertStringIncludes(html, "<br>");
@@ -870,7 +984,7 @@ Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels",
   );
   assertStringIncludes(html, 'class="href"');
   assertStringIncludes(html, '<nav class="toc">');
-  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, 'note-greyedout');
   assertStringIncludes(html, 'class="noun"');
   assertStringIncludes(html, 'class="flex_url"');
   assertStringIncludes(html, 'class="Shadowbox"');
@@ -889,7 +1003,7 @@ Deno.test("Live renderer - Help Development.lyx listings, Flex Code, Paragraph",
   assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
   assertStringIncludes(html, 'class="href"');
   assertStringIncludes(html, '<nav class="toc">');
-  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, 'note-greyedout');
   assertStringIncludes(html, 'class="flex_code"');
   assertStringIncludes(html, 'class="flex_url"');
   assertStringIncludes(html, '<code class="listings');
@@ -1131,8 +1245,14 @@ Deno.test("Live comparison - DL130 tolerances (pageref text, icon markup, shortc
 });
 
 Deno.test("Live CSP floor - restrictive policy string has no remote sources", () => {
-  const csp = "default-src 'none'; img-src vscode-webview: data:; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
-  assertStringIncludes(csp, "default-src 'none'");
-  assertStringIncludes(csp, "script-src 'none'");
-  assert(!/https?:\/\//.test(csp), "CSP must not allow remote http(s) URLs");
+  // script-src may be 'none' or nonce-'…' for outline scroll; still no remote scripts/URLs.
+  const cspNone =
+    "default-src 'none'; img-src vscode-webview: data:; style-src 'unsafe-inline'; script-src 'none'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+  const cspNonce =
+    "default-src 'none'; img-src vscode-webview: data:; style-src 'unsafe-inline'; script-src 'nonce-abc'; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'";
+  for (const csp of [cspNone, cspNonce]) {
+    assertStringIncludes(csp, "default-src 'none'");
+    assert(/script-src ('none'|'nonce-[^']+')/.test(csp), "script-src must be none or nonce-only");
+    assert(!/https?:\/\//.test(csp), "CSP must not allow remote http(s) URLs");
+  }
 });

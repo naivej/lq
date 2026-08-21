@@ -75,7 +75,18 @@ arg   "math-mode"
 type  "icon"
 arg   "math-mode"
 \end_inset
+; find 
+\begin_inset Info
+type  "icon"
+arg   "dialog-toggle findreplace"
+\end_inset
+ and toc 
+\begin_inset Info
+type  "icon"
+arg   "dialog-toggle toc"
+\end_inset
 .
 \end_layout
 \end_body
 \end_document
+

@@ -24,12 +24,28 @@ So: Live is **inspired by and checked against** LyXHTML, but it is **not** “em
 | FormulaMacro uses like `\qG` still look like raw commands | Macro *insets* are omitted (like native); call sites are not expanded yet |
 | Math looks close but not identical to LyX’s MathML | lq owns a TeX→MathML subset; not LyX’s converter |
 | No fancy layout CSS / page header chrome | Semantic HTML only; page chrome omitted on purpose |
-| ERT missing | Same omit policy as native LyXHTML |
-| Footnotes / Notes / Boxes start collapsed | **Click** the label to expand/collapse (not hover) so you can select text inside |
+| ERT / Phantom / Index as click chips | Live-only plain-text markers (native LyXHTML still omits them) |
+| Footnotes / Notes / Boxes / Greyedout start collapsed | **Click** the label to expand/collapse (not hover) so you can select text inside |
 | `Note` / `Comment` appear in Live | Live-only: private notes are shown behind a click disclosure (not in LyXHTML/PDF) |
-| Info icon is ▣ instead of a toolbar PNG | LyX image tree missing or icon name unresolved; PNG used when found |
+| Info icon is ▣ instead of a toolbar PNG | LyX image tree missing or icon name unresolved; themed SVGZ/PNG used when found |
 
-Full tolerance list and fixture pointers: development log `130_live_native_xhtml_parity.md` §8 (in the lq_dev repo).
+**Live↔GUI comparison fixture:** open `lq/tests/fixtures/Synthetic/disclosure_collapsibles.lyx` in LyX and in this preview side by side (inventory in the file header; DL131 §10). Companion: `disclosure_notes.lyx`.
+
+**Navigate (M2.7, closed):** **Explorer → LyX Navigate** — Outline, List of Figures/Tables/Equations/Listings/Algorithms, and **Labels**.
+
+| Group | Contents |
+| --- | --- |
+| **Outline** | TOC headings (same ids as Live Contents / preview scroll targets) |
+| **List of Figures / Tables / Equations / Listings / Algorithms** | Numbered floats and formulas |
+| **Labels** | **Leftover** anchors only — mid-body / box / note labels **not** already listed as a heading, float, or equation. Tree shows the label **name** (e.g. `note:custom-hook`), not the enclosing section title |
+
+Click an entry to scroll Live Preview (opens ancestor `<details>` when needed) and pan the visible `.lyx` editor without stealing focus from the tree.
+
+**Fixture:** `lq/tests/fixtures/Synthetic/navigate_labels.lyx` — expect Labels = `note:custom-hook`, `box:aside-point` only (`sec:` / `fig:` / `eq:` stay in Outline / LoF / Equations).
+
+If empty: **Developer: Reload Window**; open a `.lyx` / Live Preview; set `lyx-preview.lqPath` to a current `lq` that emits `navigate`.
+
+Full tolerance list: development log `130_live_native_xhtml_parity.md` §8; disclosure/outline work in `131_live_disclosure_outline_mapping.md` (in the lq_dev repo).
 
 ## Use
 

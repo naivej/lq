@@ -2,10 +2,11 @@
 
 export const LIVE_CONTRACT = "lyx-preview/live-1";
 
-export const LIVE_UNAVAILABLE_CAPABILITIES = {
+/** Live capability flags. `outline: true` since DL131 Phase B (M2.7). */
+export const LIVE_CAPABILITIES = {
   review: false,
   mapping: false,
-  outline: false,
+  outline: true,
   editing: false,
   sourceReveal: false,
 } as const;
@@ -25,14 +26,53 @@ export interface LiveDiagnostic {
   message: string;
 }
 
+export interface LiveOutlineEntry {
+  level: number;
+  number: string;
+  text: string;
+  id: string;
+}
+
+export interface LiveNavEntry {
+  kind: string;
+  number: string;
+  text: string;
+  id: string;
+  name?: string;
+  /** 0-based source line when the extension could locate it in the buffer. */
+  line?: number;
+}
+
+export interface LiveNavigate {
+  figures: LiveNavEntry[];
+  tables: LiveNavEntry[];
+  equations: LiveNavEntry[];
+  labels: LiveNavEntry[];
+  listings: LiveNavEntry[];
+  algorithms: LiveNavEntry[];
+}
+
 export interface LiveRender {
   contract: typeof LIVE_CONTRACT;
   projection: "live";
   html: string;
   source: LiveSourceIdentity;
-  capabilities: typeof LIVE_UNAVAILABLE_CAPABILITIES;
+  capabilities: typeof LIVE_CAPABILITIES;
   diagnostics: LiveDiagnostic[];
+  outline: LiveOutlineEntry[];
+  navigate: LiveNavigate;
   warnings?: string[];
+}
+
+export function emptyNavigate(): LiveNavigate {
+  return {
+    figures: [],
+    tables: [],
+    equations: [],
+    labels: [],
+    listings: [],
+    algorithms: [],
+  };
 }
 
 export type AdapterFailureCode =
@@ -53,7 +93,7 @@ export class AdapterError extends Error {
   }
 }
 
-const DEFERRED = ["tokens", "changes", "mapping", "outline", "editTargets", "reviewRegions", "mode"];
+const DEFERRED = ["tokens", "changes", "mapping", "editTargets", "reviewRegions", "mode"];
 
 export function parseLiveStdout(stdout: string): LiveRender {
   let parsed: unknown;
@@ -83,9 +123,38 @@ export function parseLiveStdout(stdout: string): LiveRender {
     throw new AdapterError("CONTRACT", "lq preview omitted capabilities.");
   }
   const c = caps as Record<string, unknown>;
-  for (const key of Object.keys(LIVE_UNAVAILABLE_CAPABILITIES)) {
-    if (c[key] !== false) {
-      throw new AdapterError("CONTRACT", `capabilities.${key} must be unavailable.`);
+  for (const key of Object.keys(LIVE_CAPABILITIES) as (keyof typeof LIVE_CAPABILITIES)[]) {
+    if (c[key] !== LIVE_CAPABILITIES[key]) {
+      throw new AdapterError(
+        "CONTRACT",
+        `capabilities.${key} must be ${LIVE_CAPABILITIES[key]}.`,
+      );
+    }
+  }
+  if (!Array.isArray(obj.outline)) {
+    throw new AdapterError("CONTRACT", "lq preview omitted outline.");
+  }
+  for (const entry of obj.outline) {
+    if (entry === null || typeof entry !== "object") {
+      throw new AdapterError("CONTRACT", "outline entries must be objects.");
+    }
+    const e = entry as Record<string, unknown>;
+    if (
+      typeof e.level !== "number" ||
+      typeof e.number !== "string" ||
+      typeof e.text !== "string" ||
+      typeof e.id !== "string"
+    ) {
+      throw new AdapterError("CONTRACT", "outline entry needs level/number/text/id.");
+    }
+  }
+  if (obj.navigate === null || typeof obj.navigate !== "object") {
+    throw new AdapterError("CONTRACT", "lq preview omitted navigate.");
+  }
+  const nav = obj.navigate as Record<string, unknown>;
+  for (const key of ["figures", "tables", "equations", "labels", "listings", "algorithms"]) {
+    if (!Array.isArray(nav[key])) {
+      throw new AdapterError("CONTRACT", `navigate.${key} must be an array.`);
     }
   }
   return obj as unknown as LiveRender;

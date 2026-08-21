@@ -1,8 +1,28 @@
 #LyX 2.5 created this file. For more info see https://www.lyx.org/
-# DL131 Phase A checklist: foldable Live disclosures (click chips).
-# Covered: Author Foot, body Foot, Note/Comment/Greyedout, Marginal,
-# Box, Float figure (inline), Float table (block), Wrap figure, Branch.
-# Counterexample: Flex Code must stay inline (not <details>).
+# DL131 Live vs LyX GUI comparison corpus — one example of each common inset kind.
+#
+# Purpose: open this file in LyX GUI and in Live preview side by side.
+#
+# Inventory (INSET_CATALOG + important subtypes):
+#   Collapsible chips: Foot (title+body), Note Note/Comment/Greyedout, Marginal,
+#     Box, Float figure/table, Wrap figure, Branch, Caption (nested)
+#   Charstyle Flex (inline, NOT chips): Code, Emph, Strong, Noun, URL
+#   Plain-text marker chips (Live-only): ERT, Phantom/HPhantom/VPhantom,
+#     Index (+ IndexMacro see), Nomenclature (symbol — description in one chip),
+#     Argument 1 Short title
+#   Other Arguments (post:, 2, …): Live silent (parent-consumed)
+#   Content: Formula (inline+display), FormulaMacro, Graphics, Tabular,
+#     listings, Preview (non-click bordered box)
+#   Spacing chrome: space, Newline, VSpace/Newpage/Separator markers,
+#     CommandInset line
+#   Formatting: Quotes, SpecialChar, script super/sub
+#   CommandInset: label, ref, nameref, citation, href, toc, bibtex,
+#     bibitem, index_print, nomencl_print, include/input, FloatList
+#   IPA/IPADeco: omitted here (needs linguistics module; see Modules/Linguistics.lyx)
+#   External: stub path (no spreadsheet file in Synthetic/)
+#   Accent/Ending: catalog-only; no current Help/Synthetic samples
+#
+# URL stays inline. Charstyles stay inline.
 \lyxformat 643
 \begin_document
 \begin_header
@@ -263,7 +283,132 @@ Selected branch body (should disclose).
 
 \end_layout
 \begin_layout Section
-Counterexample (must NOT be a disclosure chip)
+\begin_inset Argument 1
+status collapsed
+
+\begin_layout Plain Layout
+ShortTitle
+\end_layout
+
+\end_inset
+
+Argument short title (Live omits Argument chip)
+\begin_inset CommandInset label
+LatexCommand label
+name "sec:arg-short"
+
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+See 
+\begin_inset CommandInset ref
+LatexCommand ref
+reference "sec:arg-short"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+ /
+\begin_inset CommandInset ref
+LatexCommand nameref
+reference "sec:arg-short"
+plural "false"
+caps "false"
+noprefix "false"
+nolink "false"
+
+\end_inset
+.
+\end_layout
+\begin_layout Section
+Denylist plain-text markers
+\end_layout
+\begin_layout Standard
+ERT
+\begin_inset ERT
+status collapsed
+
+\begin_layout Plain Layout
+\backslash
+textbf{chip}
+\end_layout
+
+\end_inset
+, Phantom
+\begin_inset Phantom Phantom
+status collapsed
+
+\begin_layout Plain Layout
+phantom body
+\end_layout
+
+\end_inset
+, HPhantom
+\begin_inset Phantom HPhantom
+status collapsed
+
+\begin_layout Plain Layout
+hp body
+\end_layout
+
+\end_inset
+, VPhantom
+\begin_inset Phantom VPhantom
+status collapsed
+
+\begin_layout Plain Layout
+vp body
+\end_layout
+
+\end_inset
+, Index
+\begin_inset Index idx
+range none
+pageformat default
+status collapsed
+
+\begin_layout Plain Layout
+IndexTerm
+\begin_inset IndexMacro see
+status collapsed
+
+\begin_layout Plain Layout
+SeeAlso
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+, Nomencl
+\begin_inset Nomenclature
+status collapsed
+
+\begin_layout Plain Layout
+NomSymbol
+\begin_inset Argument post:1
+status collapsed
+
+\begin_layout Plain Layout
+Nom description
+\end_layout
+
+\end_inset
+
+
+\end_layout
+
+\end_inset
+.
+\end_layout
+\begin_layout Section
+Charstyle Flex (must stay inline)
 \end_layout
 \begin_layout Standard
 Inline 
@@ -275,7 +420,342 @@ code
 \end_layout
 
 \end_inset
- charstyle stays in the line without a Figure/Note-style chip.
+, 
+\begin_inset Flex Emph
+status collapsed
+
+\begin_layout Plain Layout
+emph
+\end_layout
+
+\end_inset
+, 
+\begin_inset Flex Strong
+status collapsed
+
+\begin_layout Plain Layout
+strong
+\end_layout
+
+\end_inset
+, 
+\begin_inset Flex Noun
+status collapsed
+
+\begin_layout Plain Layout
+Noun
+\end_layout
+
+\end_inset
+, 
+\begin_inset Flex URL
+status collapsed
+
+\begin_layout Plain Layout
+https://www.lyx.org/
+\end_layout
+
+\end_inset
+ — charstyles are not Figure/Note-style chips.
+\end_layout
+\begin_layout Section
+Formula, FormulaMacro, Graphics, Tabular
+\end_layout
+\begin_layout Standard
+Inline
+\begin_inset Formula $E=mc^{2}$
+\end_inset
+ and display
+\begin_inset Formula 
+\begin{equation}
+a^{2}+b^{2}=c^{2}
+\end{equation}
+
+\end_inset
+.
+\begin_inset FormulaMacro
+\newcommand{\qDemo}[1]{#1^{2}}
+\end_inset
+
+(FormulaMacro is Live-silent; macros apply to later formulas.)
+\end_layout
+\begin_layout Standard
+\begin_inset Graphics
+	filename live-figure.png
+	scale 40
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+\begin_inset Tabular
+<lyxtabular version="3" rows="2" columns="2">
+<features tabularvalignment="middle">
+<column alignment="left" valignment="top" width="0pt">
+<column alignment="left" valignment="top" width="0pt">
+<row>
+<cell alignment="center" valignment="top" topline="true" usebox="none">
+\begin_inset Text
+\begin_layout Plain Layout
+A
+\end_layout
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" usebox="none">
+\begin_inset Text
+\begin_layout Plain Layout
+B
+\end_layout
+\end_inset
+</cell>
+</row>
+<row>
+<cell alignment="center" valignment="top" topline="true" usebox="none">
+\begin_inset Text
+\begin_layout Plain Layout
+C
+\end_layout
+\end_inset
+</cell>
+<cell alignment="center" valignment="top" topline="true" usebox="none">
+\begin_inset Text
+\begin_layout Plain Layout
+D
+\end_layout
+\end_inset
+</cell>
+</row>
+</lyxtabular>
+\end_inset
+\end_layout
+\begin_layout Section
+Listings and Preview
+\end_layout
+\begin_layout Standard
+\begin_inset listings
+lstparams "basicstyle={\ttfamily},language=Python,showstringspaces=false,tabsize=4"
+inline false
+status collapsed
+
+\begin_layout Plain Layout
+print("hello")
+\end_layout
+
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+Preview wrapper:
+\begin_inset Preview
+
+\begin_layout Standard
+preview body text
+\end_layout
+
+\end_inset
+
+.
+\end_layout
+\begin_layout Section
+Spacing and breaks
+\end_layout
+\begin_layout Standard
+Thin
+\begin_inset space \thinspace{}
+\end_inset
+space, protected
+\begin_inset space ~
+\end_inset
+space, then a hard
+\begin_inset Newline newline
+\end_inset
+break.
+\end_layout
+\begin_layout Standard
+\begin_inset VSpace medskip
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+After medskip.
+\begin_inset Separator latexpar
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+After separator.
+\begin_inset CommandInset line
+LatexCommand rule
+offset "0.5ex"
+width "100line%"
+height "1pt"
+
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+\begin_inset Newpage newpage
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+After newpage (Live usually omits page breaks).
+\end_layout
+\begin_layout Section
+Quotes, SpecialChar, script
+\end_layout
+\begin_layout Standard
+\begin_inset Quotes eld
+\end_inset
+quoted
+\begin_inset Quotes erd
+\end_inset
+ with \SpecialChar LyX
+ and \SpecialChar LaTeX
+ marks; x
+\begin_inset script superscript
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+ and H
+\begin_inset script subscript
+
+\begin_layout Plain Layout
+2
+\end_layout
+
+\end_inset
+O.
+\end_layout
+\begin_layout Section
+Info, href, citation
+\end_layout
+\begin_layout Standard
+Info shortcut 
+\begin_inset Info
+type  "shortcuts"
+arg   "math-mode"
+\end_inset
+ and icon 
+\begin_inset Info
+type  "icon"
+arg   "math-mode"
+\end_inset
+; link 
+\begin_inset CommandInset href
+LatexCommand href
+name "LyX site"
+target "https://www.lyx.org/"
+literal "false"
+
+\end_inset
+; cite 
+\begin_inset CommandInset citation
+LatexCommand cite
+key "companion"
+literal "false"
+
+\end_inset
+.
+\end_layout
+\begin_layout Section
+TOC, FloatList, External, Include
+\end_layout
+\begin_layout Standard
+\begin_inset CommandInset toc
+LatexCommand tableofcontents
+
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+\begin_inset FloatList figure
+
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+\begin_inset FloatList table
+
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+External stub (file missing on purpose):
+\begin_inset External
+	template GnumericSpreadsheet
+	filename missing-sheet.gnumeric
+
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+Include/input stub:
+\begin_inset CommandInset include
+LatexCommand input
+filename "missing-include.lyx"
+literal "false"
+
+\end_inset
+
+
+\end_layout
+\begin_layout Section
+Index and nomenclature print
+\end_layout
+\begin_layout Standard
+\begin_inset CommandInset index_print
+LatexCommand printindex
+type "idx"
+name "Index"
+literal "true"
+
+\end_inset
+
+
+\end_layout
+\begin_layout Standard
+\begin_inset CommandInset nomencl_print
+LatexCommand printnomenclature
+set_width "auto"
+
+\end_inset
+
+
+\end_layout
+\begin_layout Bibliography
+\begin_inset CommandInset bibitem
+LatexCommand bibitem
+key "companion"
+literal "false"
+
+\end_inset
+
+The LaTeX Companion (bibitem sample).
+\end_layout
+\begin_layout Standard
+\begin_inset CommandInset bibtex
+LatexCommand bibtex
+btprint "btPrintCited"
+bibfiles "../biblioExample"
+options "plain"
+encoding "default"
+
+\end_inset
+
+
 \end_layout
 \end_body
 \end_document

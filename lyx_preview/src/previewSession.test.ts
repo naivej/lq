@@ -4,6 +4,7 @@ import {
   AdapterError,
   LIVE_CONTRACT,
   PreviewSession,
+  emptyNavigate,
   parseLiveStdout,
 } from "./previewSession";
 
@@ -24,11 +25,15 @@ function validRender(over: Record<string, unknown> = {}): string {
     capabilities: {
       review: false,
       mapping: false,
-      outline: false,
+      outline: true,
       editing: false,
       sourceReveal: false,
     },
     diagnostics: [],
+    outline: [
+      { level: 1, number: "1", text: "Intro", id: "sec-1" },
+    ],
+    navigate: emptyNavigate(),
     ...over,
   });
 }
@@ -56,6 +61,26 @@ describe("parseLiveStdout", () => {
       () => parseLiveStdout(validRender({ tokens: [] })),
       (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",
     );
+  });
+
+  it("requires outline when capabilities.outline is true", () => {
+    const raw = JSON.parse(validRender()) as Record<string, unknown>;
+    delete raw.outline;
+    assert.throws(
+      () => parseLiveStdout(JSON.stringify(raw)),
+      (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",
+    );
+  });
+
+  it("accepts outline entries", () => {
+    const render = parseLiveStdout(validRender({
+      outline: [
+        { level: 1, number: "1", text: "A", id: "sec-1" },
+        { level: 2, number: "1.1", text: "B", id: "sec-1-1" },
+      ],
+    }));
+    assert.equal(render.outline.length, 2);
+    assert.equal(render.capabilities.outline, true);
   });
 });
 
