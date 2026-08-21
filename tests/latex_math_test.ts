@@ -3,7 +3,12 @@ import { assert, assertEquals, assertStringIncludes } from "@std/assert";
 function assertFalse(cond: boolean, msg: string): void {
   if (cond) throw new Error(msg);
 }
-import { latexToMathML, renderFormulaHtml, unwrapLatexSource } from "../src/latex_math.ts";
+import {
+  latexToMathML,
+  parseNewcommands,
+  renderFormulaHtml,
+  unwrapLatexSource,
+} from "../src/latex_math.ts";
 
 Deno.test("unwrapLatexSource - dollar, equation, label", () => {
   assertEquals(unwrapLatexSource("$x$"), { display: false, numbered: false, env: "$", body: "x" });
@@ -188,4 +193,32 @@ Deno.test("latexToMathML - smashoperator, optional args, brace limits, phantom, 
   assertFalse(ce.includes("SO4^{2-}"), "ce must expand scripts, not dump raw tex in one mtext");
   const arrow = latexToMathML("\\ce{A -> B}");
   assertStringIncludes(arrow, "<mo>→</mo>");
+  const bonds = latexToMathML("\\ce{A-B\\dbond C\\tbond D}");
+  assertStringIncludes(bonds, "<mo>=</mo>");
+  assertStringIncludes(bonds, "<mo>≡</mo>");
+  assertFalse(bonds.includes("\\dbond"), "ce must expand dbond/tbond");
+  const hyphen = latexToMathML("\\ce{\\ensuremath{\\mu\\hyphen}Cl}");
+  assertStringIncludes(hyphen, "μ");
+  assertFalse(hyphen.includes("\\hyphen"), "ce must expand hyphen");
+});
+
+Deno.test("latexToMathML - preamble newcommand macros (Math.lyx aliases)", () => {
+  const macros = parseNewcommands(String.raw`
+\newcommand{\gr}{\Longrightarrow}
+\newcommand{\us}[1]{\underline{#1}}
+\newcommand{\fb}[3]{\framebox#1#2{$#3$}}
+\newcommand{\cb}[3][white]{\fcolorbox{#2}{#1}{$#3$}}
+`);
+  assertStringIncludes(latexToMathML("A\\gr B", macros), "⟹");
+  assertFalse(latexToMathML("A\\gr B", macros).includes("\\gr"), "gr macro must expand");
+  const us = latexToMathML("\\us{ABcd}", macros);
+  assertStringIncludes(us, "<munder>");
+  assertFalse(us.includes("\\us"), "us macro must expand");
+  const cb = latexToMathML("\\cb{red}{\\int A=B}", macros);
+  assertStringIncludes(cb, "mathbackground");
+  assertStringIncludes(cb, "∫");
+  assertFalse(cb.includes("\\cb"), "cb macro must expand");
+  const fb = latexToMathML("\\fb{[2cm]}{}{\\int A=B}", macros);
+  assertStringIncludes(fb, "menclose");
+  assertStringIncludes(fb, "∫");
 });

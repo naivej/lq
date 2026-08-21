@@ -17,7 +17,12 @@ import {
 } from "./text_utils.ts";
 import * as path from "@std/path";
 import { formatBibliographyEntry, parseBibtex, type Citation } from "./bib.ts";
-import { planFormulaLines, renderFormulaHtml } from "./latex_math.ts";
+import {
+  parseNewcommands,
+  planFormulaLines,
+  renderFormulaHtml,
+  type MathMacroMap,
+} from "./latex_math.ts";
 import {
   extractDocumentLayoutContext,
   findLayoutFile,
@@ -237,6 +242,8 @@ interface RenderCtx {
   layoutHtml: Map<string, LayoutHtml> | null;
   /** LFUN → key display strings from system cua.bind (Info shortcuts). */
   shortcuts: ShortcutMap | null;
+  /** Preamble `\newcommand` macros for formula conversion (DL130 Step 5). */
+  mathMacros: MathMacroMap | null;
   nomencl: NomenclEntry[];
   index: IndexEntry[];
   nomenclSeq: number;
@@ -931,6 +938,7 @@ export async function renderLiveHtml(
       bindDirFromLayouts(systemLayoutsDir),
       bindDirFromLayouts(await getLyxUserLayoutsDir(systemLayoutsDir)),
     ),
+    mathMacros: extractMathMacros(ast),
     nomencl: [],
     index: [],
     nomenclSeq: 0,
@@ -1538,7 +1546,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Formula" || kind.startsWith("Formula ") || kind.startsWith("Formula")) {
     const source = formulaSource(block);
-    return renderFormulaHtml(source, takeFormulaNumbers(source, ctx));
+    return renderFormulaHtml(source, takeFormulaNumbers(source, ctx), ctx.mathMacros ?? undefined);
   }
   if (
     kind === "Newpage" || kind.startsWith("Newpage ") ||
@@ -1821,6 +1829,22 @@ function walkSubequationLabels(nodes: Node[], ctx: RenderCtx): void {
     }
     walkSubequationLabels(n.children, ctx);
   }
+}
+
+function extractMathMacros(ast: DocumentNode): MathMacroMap | null {
+  const doc = ast.children.find((n) => n.type === "block" && n.tag === "document");
+  const roots = doc && doc.type === "block" ? doc.children : ast.children;
+  const header = roots.find((n) => n.type === "block" && n.tag === "header");
+  if (!header || header.type !== "block") return null;
+  const preamble = header.children.find((n) => n.type === "block" && n.tag === "preamble");
+  if (!preamble || preamble.type !== "block") return null;
+  const text = preamble.children
+    .filter((n): n is { type: "text"; text: string } => n.type === "text")
+    .map((n) => n.text)
+    .join("\n");
+  if (!text.trim()) return null;
+  const macros = parseNewcommands(text);
+  return macros.size > 0 ? macros : null;
 }
 
 function formulaSource(block: BlockNode): string {

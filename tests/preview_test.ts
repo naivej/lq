@@ -331,6 +331,15 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, "<mphantom>");
   assertStringIncludes(html, "mmultiscripts");
   assertStringIncludes(html, "⏞");
+  // DL130 Step 5: chem bonds + preamble aliases must not dump as <mi>\cmd</mi>.
+  assert(!html.includes("<mi>\\dbond</mi>"));
+  assert(!html.includes("<mi>\\tbond</mi>"));
+  assert(!html.includes("<mi>\\hyphen</mi>"));
+  assert(!html.includes("<mi>\\gr</mi>"));
+  assert(!html.includes("<mi>\\us</mi>"));
+  assert(!html.includes("<mi>\\cb</mi>"));
+  assert(!html.includes("<mi>\\fb</mi>"));
+  assertStringIncludes(html, "⟹"); // \gr → \Longrightarrow via preamble newcommand
   assert(!html.includes('encoding="application/x-tex">$\\begin{cases}'), "multi-line cases must include the body, not only the first line");
   assert(
     !html.includes('encoding="application/x-tex">\\newcommand{\\qG}'),

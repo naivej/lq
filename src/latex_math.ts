@@ -106,7 +106,19 @@ const SYM_MO: Record<string, string> = {
   lhd: "◃", rhd: "▹", unlhd: "⊴", unrhd: "⊵",
   circeq: "≗", circlearrowright: "↻", circlearrowleft: "↺",
   mathcircumflex: "^",
+  // mhchem bond atoms (also used inside `\ce{…}`)
+  sbond: "−", dbond: "=", tbond: "≡", hyphen: "‐",
 };
+
+/** Optional preamble `\newcommand` macros applied while converting formulas. */
+export type MathMacro = {
+  nargs: number;
+  /** Optional first-arg default when `\newcommand{\x}[n][default]{…}`. */
+  optionalDefault?: string;
+  body: string;
+};
+
+export type MathMacroMap = Map<string, MathMacro>;
 
 const MATRIX_ENV: Record<string, { open: string; close: string }> = {
   matrix: { open: "", close: "" },
@@ -298,15 +310,15 @@ function stripLineCommands(tex: string): string {
     .trim();
 }
 
-function lineToMathML(tex: string): string {
+function lineToMathML(tex: string, macros?: MathMacroMap): string {
   const clean = stripLineCommands(tex);
   if (clean.includes("&")) {
     const cells = splitTopLevel(clean, "&").map((c) =>
-      `<mtd>${latexToMathML(c) || "<mrow/>"}</mtd>`
+      `<mtd>${latexToMathML(c, macros) || "<mrow/>"}</mtd>`
     );
     return `<mtable><mtr>${cells.join("")}</mtr></mtable>`;
   }
-  return latexToMathML(clean);
+  return latexToMathML(clean, macros);
 }
 
 function mathHtml(inner: string, body: string, display: boolean): string {
@@ -327,27 +339,59 @@ function lineEqnoHtml(line: FormulaLine, no?: number | string): string {
 export function renderFormulaHtml(
   source: string,
   equationNo?: number | string | Array<number | string | undefined>,
+  macros?: MathMacroMap,
 ): string {
   const plan = planFormulaLines(source);
   const nos = Array.isArray(equationNo) ? equationNo : [equationNo];
   if (plan.lines.length > 1) {
     const rows = plan.lines.map((line, i) => {
       const body = stripLineCommands(line.tex);
-      const math = mathHtml(lineToMathML(line.tex), body, true);
+      const math = mathHtml(lineToMathML(line.tex, macros), body, true);
       return `<span class="formula-row">${math}${lineEqnoHtml(line, nos[i])}</span>`;
     });
     return `<span class="formula">${rows.join("")}</span>`;
   }
   const line = plan.lines[0] ?? { tex: "", consumesNumber: false, labels: [] as string[] };
   const body = stripLineCommands(line.tex);
-  const inner = latexToMathML(body);
+  const inner = latexToMathML(body, macros);
   return `<span class="formula">${mathHtml(inner, body, plan.display)}${lineEqnoHtml(line, nos[0])}</span>`;
 }
 
-export function latexToMathML(source: string): string {
-  const p = new Parser(source);
+export function latexToMathML(source: string, macros?: MathMacroMap): string {
+  const p = new Parser(source, 0, macros);
   const body = p.parseExpr();
   return body || `<mtext>${escapeLiveHtml(source)}</mtext>`;
+}
+
+/**
+ * Parse simple `\newcommand{\name}[n][default]{body}` forms from a LaTeX preamble.
+ * Enough for Help Math.lyx demo aliases (`\gr`, `\us`, `\cb`, `\fb`, …).
+ */
+export function parseNewcommands(preamble: string): MathMacroMap {
+  const out: MathMacroMap = new Map();
+  const cmdRe =
+    /\\newcommand\*?\{\\([A-Za-z]+)\}(?:\[(\d+)\])?(?:\[([^\]]*)\])?\{/g;
+  let m: RegExpExecArray | null;
+  while ((m = cmdRe.exec(preamble)) !== null) {
+    const name = m[1]!;
+    const nargs = m[2] ? parseInt(m[2], 10) : 0;
+    const optionalDefault = m[3];
+    const bodyStart = m.index + m[0].length;
+    let depth = 1;
+    let i = bodyStart;
+    while (i < preamble.length && depth > 0) {
+      const ch = preamble[i++]!;
+      if (ch === "{") depth++;
+      else if (ch === "}") depth--;
+    }
+    const body = preamble.slice(bodyStart, i - 1);
+    out.set(name, {
+      nargs,
+      optionalDefault: optionalDefault !== undefined ? optionalDefault : undefined,
+      body,
+    });
+  }
+  return out;
 }
 
 function parseCdGroup(line: string, i: number): { text: string; next: number } {
@@ -526,7 +570,11 @@ function expandChemExpr(tex: string): string {
 }
 
 class Parser {
-  constructor(private readonly s: string, private i = 0) {}
+  constructor(
+    private readonly s: string,
+    private i = 0,
+    private readonly macros: MathMacroMap | undefined = undefined,
+  ) {}
 
   parseExpr(): string {
     const parts: string[] = [];
@@ -645,6 +693,8 @@ class Parser {
     let name = "";
     while (this.i < this.s.length && /[A-Za-z]/.test(this.s[this.i])) name += this.s[this.i++];
     this.skipSpace();
+    const macro = this.macros?.get(name);
+    if (macro) return this.expandMacro(macro);
     if (name === "left") {
       const open = this.readDelimiter();
       const parts: string[] = [];
@@ -1108,6 +1158,34 @@ class Parser {
     if (parts.length === 0) return "";
     if (parts.length === 1) return parts[0];
     return `<mrow>${parts.join("")}</mrow>`;
+  }
+
+  private expandMacro(macro: MathMacro): string {
+    const args: string[] = [];
+    let mandatory = macro.nargs;
+    if (macro.optionalDefault !== undefined && mandatory > 0) {
+      if (this.s[this.i] === "[") {
+        this.i++;
+        let raw = "";
+        while (this.i < this.s.length && this.s[this.i] !== "]") raw += this.s[this.i++];
+        if (this.s[this.i] === "]") this.i++;
+        args.push(raw);
+      } else {
+        args.push(macro.optionalDefault);
+      }
+      mandatory -= 1;
+    }
+    for (let n = 0; n < mandatory; n++) {
+      this.skipSpace();
+      args.push(this.readGroupText());
+    }
+    let body = macro.body;
+    for (let n = args.length; n >= 1; n--) {
+      body = body.replaceAll(`#${n}`, args[n - 1]!);
+    }
+    // Macros often wrap math in `$…$` for `\framebox` / `\fcolorbox`.
+    body = body.replace(/\$([^$]*)\$/g, "$1");
+    return latexToMathML(body, this.macros);
   }
 
   /** Limits on \overbrace/\underbrace sit above/below the brace (not msup/msub). */
