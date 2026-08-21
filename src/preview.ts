@@ -215,6 +215,8 @@ interface RenderCtx {
   systemDocDir?: string;
   magickPath?: string;
   labels: Map<string, string>;
+  /** Plain title/caption text for `nameref` (heading or float caption). */
+  labelTitles: Map<string, string>;
   bib: Map<string, Citation>;
   citedKeys: string[];
   bibfiles: string;
@@ -622,6 +624,8 @@ class HeadingState {
 function indexDocument(nodes: Node[], ctx: RenderCtx): void {
   const headings = new HeadingState();
   let currentHeading = "";
+  let currentHeadingTitle = "";
+  let currentFloatCaption = "";
 
   const walk = (list: Node[], floatNo: string | undefined, atBody: boolean) => {
     for (const n of list) {
@@ -637,8 +641,9 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         if (heading.kind === "heading") {
           currentHeading = headings.next(layout, heading.level, hasStartOfAppendix(n)).trim();
           noteChapterHeading(ctx, heading, currentHeading);
+          currentHeadingTitle = headingPlainText(n);
           if (atBody) {
-            const text = headingPlainText(n);
+            const text = currentHeadingTitle;
             ctx.outline.push({
               level: heading.level,
               number: currentHeading,
@@ -663,7 +668,11 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
           : kind.slice("Wrap ".length).trim();
         const taken = takeFloatNumber(ctx, variant) ?? takeGenericFloatNumber(ctx, variant);
         noteFloatListEntry(ctx, n, variant, taken);
+        const prevCap = currentFloatCaption;
+        const caps = captionBlocks(n);
+        currentFloatCaption = caps.map((c) => collectVisibleText(c)).join(" ").replace(/\s+/g, " ").trim();
         walk(n.children, taken ?? floatNo, false);
+        currentFloatCaption = prevCap;
         continue;
       }
       if (kind === "listings" || kind.startsWith("listings ")) {
@@ -680,7 +689,11 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       }
       if (kind.startsWith("CommandInset label")) {
         const name = findProperty(n, "name");
-        if (name) ctx.labels.set(name, floatNo ?? currentHeading);
+        if (name) {
+          ctx.labels.set(name, floatNo ?? currentHeading);
+          const title = (currentFloatCaption || currentHeadingTitle).trim();
+          if (title) ctx.labelTitles.set(name, title);
+        }
         continue;
       }
       if (kind === "FormulaMacro" || kind.startsWith("FormulaMacro")) {
@@ -875,6 +888,7 @@ export async function renderLiveHtml(
     systemDocDir: systemLayoutsDir ? path.resolve(systemLayoutsDir, "..", "doc") : undefined,
     magickPath: findMagick(systemLayoutsDir),
     labels: new Map(),
+    labelTitles: new Map(),
     bib: new Map(),
     citedKeys: [],
     bibfiles: "",
@@ -2686,6 +2700,7 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
     const target = findProperty(block, "reference") ?? name;
     const id = xmlId(target);
     const resolved = ctx.labels.get(target);
+    const named = ctx.labelTitles.get(target);
     let text = resolved || target;
     if (command === "eqref" || subtype === "eqref") text = `(${text})`;
     else if (command === "pageref" || command === "vpageref" || subtype === "pageref" || subtype === "vpageref") {
@@ -2693,7 +2708,7 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
       // when known; otherwise the reference name. Avoid the opaque "elsewhere".
       text = resolved || target || "elsewhere";
     } else if (command === "nameref" || subtype === "nameref") {
-      text = resolved || target;
+      text = named || resolved || target;
     }
     const title = (command === "pageref" || command === "vpageref" || subtype === "pageref" || subtype === "vpageref")
       ? ` title="page reference (Live shows target number/name, not a page)"`

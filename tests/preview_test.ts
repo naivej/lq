@@ -871,6 +871,14 @@ Deno.test("Live renderer - Chunk, Structure Tree, LilyPond, ChessBoard wrappers"
   assertStringIncludes(chess.html, 'class="chessboard"');
 });
 
+Deno.test("Live renderer - nameref uses heading and caption titles", async () => {
+  const filePath = syntheticPath("nameref_titles.lyx");
+  const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, 'href="#sec_intro_name">Named Introduction</a>');
+  assertStringIncludes(html, 'href="#sec_intro_name">1</a>');
+  assertStringIncludes(html, 'href="#fig_demo_cap">A demo caption</a>');
+});
+
 Deno.test("Live renderer - pageref uses target number not elsewhere", async () => {
   const filePath = fromFileUrl(new URL("./fixtures/Help/UserGuide.lyx", import.meta.url));
   const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
