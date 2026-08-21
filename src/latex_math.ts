@@ -168,7 +168,8 @@ const ACCENT_OVER: Record<string, string> = {
 };
 
 const ACCENT_UNDER: Record<string, string> = {
-  underline: "_", underbar: "_", underrightarrow: "→", underleftarrow: "←", underleftrightarrow: "↔",
+  // underline/underbar use menclose "bottom" (full-width), not a short "_" mo.
+  underrightarrow: "→", underleftarrow: "←", underleftrightarrow: "↔",
   utilde: "˜",
 };
 
@@ -811,10 +812,17 @@ class Parser {
       return `<mstyle mathbackground="${escapeLiveHtml(mathColor(color))}">${inner}</mstyle>`;
     }
     if (name === "fcolorbox") {
-      this.readGroupText();
+      // \fcolorbox{frame}{fill}{content} — frame must stay visible (Math.lyx `\cb{red}{…}`).
+      const frame = this.readGroupText().trim();
       const fill = this.readGroupText().trim();
       const inner = this.parseGroupOrAtom();
-      return `<menclose notation="box"><mstyle mathbackground="${escapeLiveHtml(mathColor(fill))}">${inner}</mstyle></menclose>`;
+      const border = mathColor(frame);
+      const bg = mathColor(fill);
+      return `<menclose notation="box" style="border:2px solid ${escapeLiveHtml(border)};padding:0.15em"><mstyle mathbackground="${escapeLiveHtml(bg)}">${inner}</mstyle></menclose>`;
+    }
+    if (name === "underline" || name === "underbar") {
+      // Full-width rule under the whole argument (not a short "_" glyph).
+      return `<menclose notation="bottom">${this.parseGroupOrAtom()}</menclose>`;
     }
     if (name === "fbox" || name === "framebox") {
       if (this.s[this.i] === "[") {
