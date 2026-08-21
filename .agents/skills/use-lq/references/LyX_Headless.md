@@ -5,7 +5,7 @@
 Prefer `lyx`/`tex2lyx` on `PATH` when present (typically not on Windows); otherwise invoke the full path: 
 
 ```bash
-lq init    # prints layoutsDir = {installRoot}/Resources/layouts
+lq init    # JSON includes layoutRoots.system = {installRoot}/Resources/layouts
 # lyx      = {installRoot}/bin/LyX.exe (Windows) or {installRoot}/bin/lyx (Unix)
 # tex2lyx  = {installRoot}/bin/tex2lyx.exe (or tex2lyx)
 ```
@@ -14,20 +14,11 @@ lq init    # prints layoutsDir = {installRoot}/Resources/layouts
 
 **Finding official templates:**
 
-Templates live at `{installRoot}/Resources/templates/`, derived from `lq init`:
-
-```bash
-lq init    # prints layoutsDir = {installRoot}/Resources/layouts
-# templates dir = {installRoot}/Resources/templates/
-```
+Templates live at `{installRoot}/Resources/templates/`, derived from `lq init` `layoutRoots.system`:
 
 List available templates:
 
 ```bash
-# On Windows (bash):
-ls "$(dirname "$(lq init | grep layoutsDir | sed 's/.*: //')")/../templates/"**/*.lyx
-
-# Or directly (Windows/Linux/macOS):
 ls "{installRoot}/Resources/templates/"**/*.lyx
 ```
 

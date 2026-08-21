@@ -1,7 +1,16 @@
 import { parse } from "./parser.ts";
 import { serialize } from "./serializer.ts";
 import { query, parseSelector, buildScopePredicate, buildTraversalStateIndex, selectorNoteScope, isValidNthMatchFormula, type ScopePredicate, type SelectorPart } from "./query.ts";
-import { getSchemaForClass, INSET_LAYOUTS, INSET_CATALOG, INLINE_PROPERTIES, getDefaultLayoutsDir } from "./schema.ts";
+import {
+  getSchemaForClass,
+  INSET_LAYOUTS,
+  INSET_CATALOG,
+  INLINE_PROPERTIES,
+  getDefaultLayoutsDir,
+  resolveLayoutSearchPaths,
+  extractDocumentLayoutContext,
+  type LayoutSearchOptions,
+} from "./schema.ts";
 import { parseBibtex, Citation } from "./bib.ts";
 import { parseArgs } from "@std/cli/parse-args";
 import { Node, BlockNode, DocumentNode, PropertyNode, TextNode } from "./ast.ts";
@@ -200,14 +209,15 @@ async function configFileExists(statePaths: StatePaths): Promise<boolean> {
 }
 
 /**
- * Resolve the layouts dir for schema validation: configured value, else
- * runtime auto-detect. DL105 B1 invariant — every schema user (schema, dump,
- * insert) must use config-first with the same fallback; a single site keeps
- * the "one command diverges" failure mode (a946bc5 / DL105 issue 4) from
- * recurring. R3a (test_report_50).
+ * LyX-like layout search paths for schema / insert / preview.
+ * Config `layoutsDir` is a user-tier overlay only; system is always auto-detected.
  */
-async function resolveLayoutsDir(config: { layoutsDir?: string }): Promise<string> {
-  return config.layoutsDir || await getDefaultLayoutsDir();
+async function resolveDocumentLayoutRoots(
+  config: { layoutsDir?: string },
+): Promise<{ system: string; user?: string; overlay?: string; searchPaths: string[] }> {
+  const opts: LayoutSearchOptions = {};
+  if (config.layoutsDir) opts.overlayLayoutsDir = config.layoutsDir;
+  return await resolveLayoutSearchPaths(opts);
 }
 
 // Warnings accumulator — all warnings go to stdout JSON, never stderr.
@@ -984,19 +994,18 @@ export async function runCli(args: string[]) {
       return;
     }
 
-    const dir = dirFlag ?? existing.layoutsDir ?? await getDefaultLayoutsDir();
-
-    try {
-      const stat = await Deno.stat(dir);
-      if (!stat.isDirectory) {
-        printError("INVALID_DIR", `The path '${dir}' is not a directory. Please provide a valid --layouts-dir.`);
+    if (dirFlag !== undefined) {
+      try {
+        const stat = await Deno.stat(dirFlag);
+        if (!stat.isDirectory) {
+          printError("INVALID_DIR", `The path '${dirFlag}' is not a directory. Please provide a valid --layouts-dir.`);
+        }
+      } catch {
+        printError("DIR_NOT_FOUND", `Could not find layouts directory at '${dirFlag}'. Please provide it manually via --layouts-dir.`);
       }
-    } catch {
-      printError("DIR_NOT_FOUND", `Could not find layouts directory at '${dir}'. Please provide it manually via --layouts-dir.`);
     }
 
     const config: UserConfig = {
-      layoutsDir: dir,
       refresh: refresh as "none" | "reload" | "save-reload" ?? existing.refresh ?? "none",
       trackChanges: trackChangesFlag !== undefined
         ? trackChangesFlag === "on"
@@ -1004,6 +1013,10 @@ export async function runCli(args: string[]) {
       maxCacheEntries: maxCacheEntries ?? existing.maxCacheEntries ?? 50,
       authorName: authorNameFlag ?? existing.authorName ?? "lq user",
     };
+    // layoutsDir is optional user-tier overlay. New init omits it unless --layouts-dir.
+    // Existing stored values persist when the flag is omitted (new overlay meaning).
+    if (dirFlag !== undefined) config.layoutsDir = dirFlag;
+    else if (existing.layoutsDir !== undefined) config.layoutsDir = existing.layoutsDir;
 
     // If refresh is enabled, verify LyXServer is reachable. Dispatch-based
     // probe (test_report_38 F10) — truthful for both "no socket found" and
@@ -1019,6 +1032,12 @@ export async function runCli(args: string[]) {
       }
     }
 
+    const roots = await resolveDocumentLayoutRoots(config);
+    // Order only here; concrete paths live in layoutRoots (avoid repeating them).
+    const layoutSearch = config.layoutsDir
+      ? "overlay → user → system → LocalLayout"
+      : "user → system → LocalLayout";
+
     try {
       await Deno.mkdir(statePaths.root, { recursive: true });
       await Deno.writeTextFile(statePaths.config, JSON.stringify(config, null, 2));
@@ -1027,6 +1046,12 @@ export async function runCli(args: string[]) {
         configPath: statePaths.config,
         action: configExists ? "updated" : "created",
         data: config,
+        layoutSearch,
+        layoutRoots: {
+          overlay: roots.overlay ?? null,
+          user: roots.user ?? null,
+          system: roots.system,
+        },
       });
     } catch (e: Error | unknown) {
       printError("WRITE_ERROR", `Failed to write config file: ${(e as Error).message}`);
@@ -1216,8 +1241,14 @@ function foldNegativeDepth(args: string[]): string[] {
       }
       let headingHierarchy: { layout: string; tocLevel: number }[];
       try {
-        const layoutsDir = await resolveLayoutsDir(userConfig);
-        const schema = await getSchemaForClass(textclass, layoutsDir);
+        const roots = await resolveDocumentLayoutRoots(userConfig);
+        const ctx = extractDocumentLayoutContext(ast);
+        const schema = await getSchemaForClass(
+          textclass,
+          roots.searchPaths,
+          ctx.modules,
+          ctx.local,
+        );
         headingHierarchy = schema.headingHierarchy;
       } catch {
         // Fallback: standard LaTeX hierarchy
@@ -1358,24 +1389,21 @@ function foldNegativeDepth(args: string[]): string[] {
 
   if (command === "schema") {
     const config = (await loadUserConfig(statePaths)).config;
-    const layoutsDir = await resolveLayoutsDir(config);
-    if (!layoutsDir) {
-      printError("NO_CONFIG", "No layouts directory found. Run 'lq init' to auto-detect and save your LyX layouts path.");
-    }
-
-    const textclassNode = query(ast, "textclass")[0];
-    if (!textclassNode || textclassNode.type !== "property" || !textclassNode.value) {
+    const roots = await resolveDocumentLayoutRoots(config);
+    const ctx = extractDocumentLayoutContext(ast);
+    const textclass = ctx.textclass;
+    if (!textclass) {
       printError("NO_TEXTCLASS", "Could not determine textclass from the document.");
     }
-    
+
     try {
-      const schema = await getSchemaForClass(textclassNode.value, layoutsDir);
+      const schema = await getSchemaForClass(textclass, roots.searchPaths, ctx.modules, ctx.local);
       printJson({ data: schema });
     } catch (e: Error | unknown) {
-      pushWarning(`Could not read layout file for textclass '${textclassNode.value}': ${(e as Error).message}`);
+      pushWarning(`Could not read layout file for textclass '${textclass}': ${(e as Error).message}`);
       printJson({
         data: {
-          textclass: textclassNode.value,
+          textclass,
           documentLayouts: [],
           insetLayouts: INSET_LAYOUTS,
           insets: [...INSET_CATALOG],
@@ -1397,9 +1425,20 @@ function foldNegativeDepth(args: string[]): string[] {
     const previewArgs = selector ? [selector, ...restArgs] : restArgs;
     const previewFlags = parseArgs(previewArgs, {});
     assertNoUnknownFlags(previewFlags, [], "preview");
-    const result = await buildLiveResponse(path.resolve(filePath), ast, text);
-    for (const warning of result.warnings) pushWarning(warning);
-    printJson(result.response);
+    const previewConfig = (await loadUserConfig(statePaths)).config;
+    try {
+      const result = await buildLiveResponse(path.resolve(filePath), ast, text, {
+        overlayLayoutsDir: previewConfig.layoutsDir,
+      });
+      for (const warning of result.warnings) pushWarning(warning);
+      printJson(result.response);
+    } catch (e: Error | unknown) {
+      const err = e as Error & { code?: string };
+      if (err.code === "LAYOUT_NOT_FOUND" || err.code === "NO_TEXTCLASS") {
+        printError(err.code, err.message);
+      }
+      printError("PREVIEW_ERROR", err.message ?? String(e));
+    }
     return;
   }
 
@@ -2091,19 +2130,22 @@ function foldNegativeDepth(args: string[]): string[] {
       // validation is not silently skipped when no layouts dir is configured
       // (DL105 issue 4 — fallback restored after a946bc5 removed it).
       const config = (await loadUserConfig(statePaths)).config;
-      const layoutsDir = await resolveLayoutsDir(config);
-      if (layoutsDir) {
-         const textclassNode = query(ast, "textclass")[0];
-         if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
-            try {
-               const schema = await getSchemaForClass(textclassNode.value, layoutsDir);
-               if (!schema.documentLayouts.includes(flags.layout) && !schema.insetLayouts.includes(flags.layout)) {
-                 printError("INVALID_LAYOUT", `The layout '${flags.layout}' is not permitted in textclass '${textclassNode.value}'. Allowed document layouts: ${schema.documentLayouts.join(", ")}`);
-               }
-            } catch (_e) {
-               // Layout files unavailable — skip validation, insert proceeds
-            }
-         }
+      const roots = await resolveDocumentLayoutRoots(config);
+      const layoutCtx = extractDocumentLayoutContext(ast);
+      if (layoutCtx.textclass) {
+        try {
+          const schema = await getSchemaForClass(
+            layoutCtx.textclass,
+            roots.searchPaths,
+            layoutCtx.modules,
+            layoutCtx.local,
+          );
+          if (!schema.documentLayouts.includes(flags.layout) && !schema.insetLayouts.includes(flags.layout)) {
+            printError("INVALID_LAYOUT", `The layout '${flags.layout}' is not permitted in textclass '${layoutCtx.textclass}'. Allowed document layouts: ${schema.documentLayouts.join(", ")}`);
+          }
+        } catch (_e) {
+          // Layout files unavailable — skip validation, insert proceeds
+        }
       }
 
       newNodesToInsert.push({
@@ -2247,16 +2289,19 @@ function foldNegativeDepth(args: string[]): string[] {
     let schema: Awaited<ReturnType<typeof getSchemaForClass>> | null = null;
     let textclassValue: string | null = null;
     const config = (await loadUserConfig(statePaths)).config;
-    const layoutsDir = await resolveLayoutsDir(config);
-    if (layoutsDir) {
-      const textclassNode = query(ast, "textclass")[0];
-      if (textclassNode && textclassNode.type === "property" && textclassNode.value) {
-        textclassValue = textclassNode.value;
-        try {
-          schema = await getSchemaForClass(textclassValue, layoutsDir);
-        } catch (_e) {
-          // Layout files unavailable — skip validation, insert proceeds
-        }
+    const roots = await resolveDocumentLayoutRoots(config);
+    const layoutCtx = extractDocumentLayoutContext(ast);
+    if (layoutCtx.textclass) {
+      textclassValue = layoutCtx.textclass;
+      try {
+        schema = await getSchemaForClass(
+          textclassValue,
+          roots.searchPaths,
+          layoutCtx.modules,
+          layoutCtx.local,
+        );
+      } catch (_e) {
+        // Layout files unavailable — skip validation, insert proceeds
       }
     }
 

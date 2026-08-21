@@ -18,7 +18,13 @@ import {
 import * as path from "@std/path";
 import { formatBibliographyEntry, parseBibtex, type Citation } from "./bib.ts";
 import { planFormulaLines, renderFormulaHtml } from "./latex_math.ts";
-import { getDefaultLayoutsDir, getLayoutHtmlForClass, type LayoutHtml } from "./schema.ts";
+import {
+  extractDocumentLayoutContext,
+  findLayoutFile,
+  getLayoutHtmlForClass,
+  resolveLayoutSearchPaths,
+  type LayoutHtml,
+} from "./schema.ts";
 
 export const LIVE_CONTRACT = "lyx-preview/live-1";
 export const LIVE_PROJECTION = "live";
@@ -693,41 +699,6 @@ async function loadBibliography(ctx: RenderCtx): Promise<void> {
   }
 }
 
-function documentTextclass(ast: DocumentNode): string | undefined {
-  const walk = (nodes: Node[]): string | undefined => {
-    for (const n of nodes) {
-      if (n.type === "property" && n.key === "textclass" && n.value) return n.value;
-      if (n.type === "block") {
-        const found = walk(n.children);
-        if (found) return found;
-      }
-    }
-    return undefined;
-  };
-  return walk(ast.children);
-}
-
-function documentModules(ast: DocumentNode): string[] {
-  const out: string[] = [];
-  const walk = (nodes: Node[]) => {
-    for (const n of nodes) {
-      if (n.type !== "block") continue;
-      if (n.tag === "modules") {
-        for (const c of n.children) {
-          if (c.type === "text") {
-            const name = c.text.trim();
-            if (name) out.push(name);
-          }
-        }
-        continue;
-      }
-      if (n.tag === "header" || n.tag === "document") walk(n.children);
-    }
-  };
-  walk(ast.children);
-  return out;
-}
-
 /** Header `\branch Name` → `\selected 0|1` (missing branch = not selected). */
 function documentBranches(ast: DocumentNode): Map<string, boolean> {
   const out = new Map<string, boolean>();
@@ -760,31 +731,75 @@ function branchProducesOutput(block: BlockNode, ctx: RenderCtx): boolean {
   return selected !== inverted;
 }
 
+/**
+ * Require `{textclass}.layout` on the search path. Hardcoded role floor is only
+ * for Styles that load but lack HTML keys — not a substitute for a missing class file.
+ */
 async function loadLayoutHtml(
   ast: DocumentNode,
-  layoutsDir?: string,
-): Promise<Map<string, LayoutHtml> | null> {
-  const textclass = documentTextclass(ast);
-  if (!textclass) return null;
-  try {
-    const dir = layoutsDir || await getDefaultLayoutsDir();
-    const map = await getLayoutHtmlForClass(textclass, dir, documentModules(ast));
-    return map.size > 0 ? map : null;
-  } catch {
-    return null;
+  searchPaths: string[],
+): Promise<Map<string, LayoutHtml>> {
+  const ctx = extractDocumentLayoutContext(ast);
+  if (!ctx.textclass) {
+    throw Object.assign(
+      new Error("Could not determine textclass from the document."),
+      { code: "NO_TEXTCLASS" },
+    );
   }
+  if (searchPaths.length === 0) {
+    throw Object.assign(
+      new Error(
+        `Layout file not found for textclass '${ctx.textclass}' (no layout search paths). ` +
+          "Install LyX or set --layouts-dir / config layoutsDir.",
+      ),
+      { code: "LAYOUT_NOT_FOUND" },
+    );
+  }
+  const classFile = await findLayoutFile(`${ctx.textclass}.layout`, searchPaths);
+  if (!classFile) {
+    throw Object.assign(
+      new Error(
+        `Layout file not found for textclass '${ctx.textclass}' in: ${searchPaths.join(", ")}. ` +
+          "Install LyX layouts, add a LyX user-dir layout, or set layoutsDir.",
+      ),
+      { code: "LAYOUT_NOT_FOUND" },
+    );
+  }
+  return await getLayoutHtmlForClass(
+    ctx.textclass,
+    searchPaths,
+    ctx.modules,
+    ctx.local,
+  );
 }
 
 export async function renderLiveHtml(
   ast: DocumentNode,
-  options: { filePath?: string; layoutsDir?: string } = {},
+  options: {
+    filePath?: string;
+    /** @deprecated Prefer overlayLayoutsDir; treated as sole search path when set alone for tests. */
+    layoutsDir?: string;
+    overlayLayoutsDir?: string;
+    systemLayoutsDir?: string;
+  } = {},
 ): Promise<{ html: string; warnings: string[]; diagnostics: LiveDiagnostic[] }> {
-  let layoutsDir = options.layoutsDir;
-  if (!layoutsDir) {
+  let searchPaths: string[];
+  let systemLayoutsDir: string | undefined;
+  if (options.layoutsDir && !options.overlayLayoutsDir && !options.systemLayoutsDir) {
+    // Legacy/test: single directory search path.
+    searchPaths = [options.layoutsDir];
+    systemLayoutsDir = options.layoutsDir;
+  } else {
     try {
-      layoutsDir = await getDefaultLayoutsDir();
+      const roots = await resolveLayoutSearchPaths({
+        overlayLayoutsDir: options.overlayLayoutsDir,
+        systemLayoutsDir: options.systemLayoutsDir,
+      });
+      searchPaths = roots.searchPaths;
+      systemLayoutsDir = roots.system;
     } catch {
-      layoutsDir = undefined;
+      searchPaths = [];
+      systemLayoutsDir = undefined;
     }
   }
   const ctx: RenderCtx = {
@@ -801,8 +816,8 @@ export async function renderLiveHtml(
     inTitle: false,
     inWrap: false,
     filePath: options.filePath,
-    systemDocDir: layoutsDir ? path.resolve(layoutsDir, "..", "doc") : undefined,
-    magickPath: findMagick(layoutsDir),
+    systemDocDir: systemLayoutsDir ? path.resolve(systemLayoutsDir, "..", "doc") : undefined,
+    magickPath: findMagick(systemLayoutsDir),
     labels: new Map(),
     bib: new Map(),
     citedKeys: [],
@@ -810,7 +825,7 @@ export async function renderLiveHtml(
     btprint: "",
     biboptions: "",
     outline: [],
-    layoutHtml: await loadLayoutHtml(ast, layoutsDir),
+    layoutHtml: await loadLayoutHtml(ast, searchPaths),
     nomencl: [],
     index: [],
     nomenclSeq: 0,
@@ -835,8 +850,13 @@ export async function buildLiveResponse(
   filePath: string,
   ast: DocumentNode,
   text: string,
+  options: { overlayLayoutsDir?: string; systemLayoutsDir?: string } = {},
 ): Promise<LiveRenderResult> {
-  const rendered = await renderLiveHtml(ast, { filePath: path.resolve(filePath) });
+  const rendered = await renderLiveHtml(ast, {
+    filePath: path.resolve(filePath),
+    overlayLayoutsDir: options.overlayLayoutsDir,
+    systemLayoutsDir: options.systemLayoutsDir,
+  });
   const resolved = path.resolve(filePath);
   const response: LivePreviewResponse = {
     contract: LIVE_CONTRACT,

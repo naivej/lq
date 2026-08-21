@@ -1,5 +1,11 @@
-import { getSchemaForClass, getLayoutHtmlForClass, getDefaultLayoutsDir } from "../src/schema.ts";
+import {
+  getSchemaForClass,
+  getLayoutHtmlForClass,
+  getDefaultLayoutsDir,
+  resolveLayoutSearchPaths,
+} from "../src/schema.ts";
 import { assert, assertEquals } from "@std/assert";
+import * as path from "@std/path";
 
 Deno.test("Schema parsing for book class", async () => {
   // Resolve the same layouts dir the CLI uses. getDefaultLayoutsDir returns a
@@ -88,4 +94,51 @@ Deno.test("Layout HTML lookup is renderer-private and resolves CopyStyle", async
   assertEquals(theorems.get("Theorem")?.labelType?.toLowerCase(), "static");
   assertEquals(theorems.get("Theorem")?.labelString, "Theorem \\thetheorem.");
   assertEquals(theorems.get("Theorem")?.labelCounter, "theorem");
+});
+
+Deno.test("Layout search: overlay before system; LocalLayout merges Style HTML", async () => {
+  const system = await getDefaultLayoutsDir();
+  const roots = await resolveLayoutSearchPaths({ systemLayoutsDir: system });
+  assertEquals(roots.searchPaths[roots.searchPaths.length - 1], system);
+  assert(roots.searchPaths.includes(system));
+
+  const overlay = await Deno.makeTempDir({ prefix: "lq_layout_overlay_" });
+  try {
+    // Minimal overlay that only adds a Style with HTMLTag (Input-free).
+    await Deno.writeTextFile(
+      path.join(overlay, "article.layout"),
+      [
+        "# overlay article",
+        'Format 104',
+        "Input stdclass.inc",
+        "Style OverlayProbe",
+        "HTMLTag               div",
+        "Category             FrontMatter",
+        "End",
+      ].join("\n"),
+    );
+    // Overlay article.layout wins file search; must still resolve Inputs from system.
+    const searchPaths = [overlay, system];
+    const html = await getLayoutHtmlForClass("article", searchPaths);
+    assertEquals(html.get("OverlayProbe")?.htmlTag?.toLowerCase(), "div");
+    assertEquals(html.get("Section")?.htmlTag?.toLowerCase(), "h2", "Input stdclass from system still loads");
+
+    const withLocal = await getLayoutHtmlForClass("article", system, [], {
+      normal: [
+        "Style LocalProbe",
+        "CopyStyle             Section",
+        "HTMLTag               h3",
+        "End",
+      ].join("\n"),
+    });
+    assertEquals(withLocal.get("LocalProbe")?.htmlTag?.toLowerCase(), "h3");
+    assertEquals(withLocal.get("LocalProbe")?.tocLevel, 1, "CopyStyle Section brings TocLevel");
+
+    const schema = await getSchemaForClass("article", system, [], {
+      normal: "Style LocalOnly\nHTMLTag div\nEnd\n",
+    });
+    assert(schema.documentLayouts.includes("LocalOnly"));
+  } finally {
+    await Deno.remove(overlay, { recursive: true });
+  }
 });

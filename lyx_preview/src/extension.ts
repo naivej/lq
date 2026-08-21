@@ -1,4 +1,4 @@
-import { dirname } from "node:path";
+import { basename, dirname } from "node:path";
 import * as vscode from "vscode";
 import { AdapterError, PreviewSession } from "./previewSession";
 import { discoverLqBinary, runLivePreview } from "./lqClient";
@@ -28,6 +28,20 @@ class LivePreviewPanel {
       this.session.markStale();
       this.paint();
     }));
+    // External disk changes (e.g. lq): refresh only when the editor buffer is clean.
+    const watcher = vscode.workspace.createFileSystemWatcher(
+      new vscode.RelativePattern(
+        dirname(this.document.uri.fsPath),
+        basename(this.document.uri.fsPath),
+      ),
+    );
+    this.disposables.push(watcher);
+    const onDisk = () => {
+      if (this.document.isDirty) return;
+      void this.refresh();
+    };
+    watcher.onDidChange(onDisk, this, this.disposables);
+    watcher.onDidCreate(onDisk, this, this.disposables);
     this.paint();
     void this.refresh();
   }
@@ -55,6 +69,7 @@ class LivePreviewPanel {
       column,
       {
         enableScripts: false,
+        enableFindWidget: true,
         retainContextWhenHidden: true,
         localResourceRoots: [...roots.values()],
       },

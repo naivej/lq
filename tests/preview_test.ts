@@ -154,14 +154,20 @@ Deno.test("Live renderer - lists and quotes", async () => {
   assertStringIncludes(html, "A quoted line.");
 });
 
-Deno.test("Live renderer - missing layoutsDir still uses the hardcoded floor", async () => {
+Deno.test("Live renderer - missing textclass.layout is a hard error", async () => {
   const filePath = syntheticPath("headings_paragraphs.lyx");
-  const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), {
-    filePath,
-    layoutsDir: "Z:\\lq-no-such-layouts",
-  });
-  assertStringIncludes(html, "<h2>1 Introduction</h2>");
-  assertStringIncludes(html, "<h3>1.1 Details</h3>");
+  let caught: (Error & { code?: string }) | undefined;
+  try {
+    await renderLiveHtml(parse(await Deno.readTextFile(filePath)), {
+      filePath,
+      layoutsDir: "Z:\\lq-no-such-layouts",
+    });
+  } catch (e) {
+    caught = e as Error & { code?: string };
+  }
+  assert(caught !== undefined, "expected LAYOUT_NOT_FOUND");
+  assertEquals(caught!.code, "LAYOUT_NOT_FOUND");
+  assertStringIncludes(caught!.message, "article");
 });
 
 Deno.test("Live renderer - table, figure, footnote, formula", async () => {

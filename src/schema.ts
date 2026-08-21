@@ -1,4 +1,5 @@
 import * as path from "@std/path";
+import type { BlockNode, DocumentNode, Node } from "./ast.ts";
 import {
   KNOWN_INSET_TYPES,
   INLINE_PROPERTIES,
@@ -67,7 +68,23 @@ function emptyParsed(): ParsedLayout {
 async function parseLayoutFile(
   filePath: string,
   searchPaths: string[],
-  visited = new Set<string>()
+  visited = new Set<string>(),
+): Promise<ParsedLayout> {
+  if (visited.has(filePath)) return emptyParsed();
+  visited.add(filePath);
+  let text: string;
+  try {
+    text = await Deno.readTextFile(filePath);
+  } catch {
+    return emptyParsed();
+  }
+  return parseLayoutText(text, searchPaths, visited);
+}
+
+async function parseLayoutText(
+  text: string,
+  searchPaths: string[],
+  visited = new Set<string>(),
 ): Promise<ParsedLayout> {
   const allowed = new Set<string>();
   const disallowed = new Set<string>();
@@ -75,18 +92,6 @@ async function parseLayoutFile(
   const customInsets = new Set<string>();
   const disallowedInsets = new Set<string>();
   const styles = new Map<string, RawStyle>();
-
-  if (visited.has(filePath)) {
-    return emptyParsed();
-  }
-  visited.add(filePath);
-
-  let text: string;
-  try {
-    text = await Deno.readTextFile(filePath);
-  } catch (_e) {
-    return emptyParsed();
-  }
 
   const lines = text.split(/\r?\n/);
   for (let i = 0; i < lines.length; i++) {
@@ -292,37 +297,241 @@ function resolveStyle(name: string, raw: Map<string, RawStyle>, seen: Set<string
   return out;
 }
 
-/**
- * Renderer-private HTML keys for a textclass. Missing layout file → empty map.
- * Not returned by `lq schema`.
- */
-export async function getLayoutHtmlForClass(
-  textclass: string,
-  layoutsDir: string,
-  modules: readonly string[] = [],
-): Promise<Map<string, LayoutHtml>> {
-  const mainLayoutPath = path.join(layoutsDir, `${textclass}.layout`);
-  try {
-    const stat = await Deno.stat(mainLayoutPath);
-    if (!stat.isFile) return new Map();
-  } catch {
-    return new Map();
+export interface LocalLayoutTexts {
+  forced?: string;
+  normal?: string;
+}
+
+function layoutBlockToText(block: BlockNode): string {
+  const lines: string[] = [];
+  for (const c of block.children) {
+    if (c.type === "text") lines.push(c.text);
+    else if (c.type === "property") {
+      lines.push(c.value != null && c.value !== "" ? `\\${c.key} ${c.value}` : `\\${c.key}`);
+    }
   }
-  const searchPaths = [layoutsDir];
+  return lines.join("\n");
+}
+
+/** textclass, modules, and LocalLayout bodies from a parsed document. */
+export function extractDocumentLayoutContext(ast: DocumentNode): {
+  textclass?: string;
+  modules: string[];
+  local: LocalLayoutTexts;
+} {
+  let textclass: string | undefined;
+  const modules: string[] = [];
+  const local: LocalLayoutTexts = {};
+
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type === "property" && n.key === "textclass" && n.value) {
+        if (!textclass) textclass = n.value;
+        continue;
+      }
+      if (n.type !== "block") continue;
+      if (n.tag === "modules") {
+        for (const c of n.children) {
+          if (c.type === "text") {
+            const name = c.text.trim();
+            if (name) modules.push(name);
+          }
+        }
+        continue;
+      }
+      if (n.tag === "forced_local_layout" && local.forced === undefined) {
+        local.forced = layoutBlockToText(n);
+        continue;
+      }
+      if (n.tag === "local_layout" && local.normal === undefined) {
+        local.normal = layoutBlockToText(n);
+        continue;
+      }
+      if (n.tag === "header" || n.tag === "document") walk(n.children);
+    }
+  };
+  walk(ast.children);
+  return { textclass, modules, local };
+}
+
+/** Optional roots for LyX-like layout search (overlay → user-dir → system). */
+export interface LayoutSearchOptions {
+  /** lq config `layoutsDir` — user-tier overlay, not a system replacement. */
+  overlayLayoutsDir?: string;
+  /** Override auto-detected install `Resources/layouts` (tests). */
+  systemLayoutsDir?: string;
+}
+
+async function isDir(p: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(p)).isDirectory;
+  } catch {
+    return false;
+  }
+}
+
+async function isFile(p: string): Promise<boolean> {
+  try {
+    return (await Deno.stat(p)).isFile;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * LyX user-dir layouts folder aligned with the install that owns `systemLayoutsDir`
+ * when possible (e.g. Windows `%APPDATA%\\LyX2.5\\layouts`).
+ */
+export async function getLyxUserLayoutsDir(
+  systemLayoutsDir?: string,
+): Promise<string | undefined> {
+  const family = systemLayoutsDir
+    ? versionFamilyFromSystemLayouts(systemLayoutsDir)
+    : undefined;
+  // family "25" → dotted "2.5"
+  const dotted = family && family.length >= 2
+    ? `${family[0]}.${family.slice(1)}`
+    : undefined;
+
+  if (Deno.build.os === "windows") {
+    const roaming = Deno.env.get("APPDATA");
+    if (!roaming) return undefined;
+    const candidates: string[] = [];
+    if (family) candidates.push(path.join(roaming, `LyX${family}`, "layouts"));
+    try {
+      for await (const entry of Deno.readDir(roaming)) {
+        if (!entry.isDirectory) continue;
+        if (/^LyX\d+$/.test(entry.name)) {
+          candidates.push(path.join(roaming, entry.name, "layouts"));
+        }
+      }
+    } catch { /* ignore */ }
+    for (const c of candidates) {
+      if (await isDir(c)) return c;
+    }
+    return undefined;
+  }
+
+  if (Deno.build.os === "darwin") {
+    const home = Deno.env.get("HOME");
+    if (!home) return undefined;
+    const library = path.join(home, "Library", "Application Support");
+    const candidates: string[] = [];
+    if (dotted) candidates.push(path.join(library, `LyX${dotted}`, "layouts"));
+    if (family) candidates.push(path.join(library, `LyX${family}`, "layouts"));
+    candidates.push(path.join(home, ".lyx", "layouts"));
+    for (const c of candidates) {
+      if (await isDir(c)) return c;
+    }
+    return undefined;
+  }
+
+  const home = Deno.env.get("HOME");
+  if (!home) return undefined;
+  const candidates = [path.join(home, ".lyx", "layouts")];
+  if (dotted) candidates.unshift(path.join(home, `.lyx${dotted}`, "layouts"));
+  for (const c of candidates) {
+    if (await isDir(c)) return c;
+  }
+  return undefined;
+}
+
+function versionFamilyFromSystemLayouts(systemLayoutsDir: string): string | undefined {
+  // .../LyX 2.5/Resources/layouts or .../LyX2.5.app/.../layouts
+  const norm = systemLayoutsDir.replace(/\\/g, "/");
+  const win = norm.match(/LyX\s+(\d+)\.(\d+)/i);
+  if (win) return `${win[1]}${win[2]}`;
+  const app = norm.match(/LyX(\d+)\.(\d+)/i);
+  if (app) return `${app[1]}${app[2]}`;
+  return undefined;
+}
+
+/**
+ * Search path order (LyX-like): config overlay, LyX user-dir, system install.
+ * Missing dirs are omitted.
+ */
+export async function resolveLayoutSearchPaths(
+  opts: LayoutSearchOptions = {},
+): Promise<{ system: string; user?: string; overlay?: string; searchPaths: string[] }> {
+  const system = opts.systemLayoutsDir && await isDir(opts.systemLayoutsDir)
+    ? opts.systemLayoutsDir
+    : await getDefaultLayoutsDir();
+  const user = await getLyxUserLayoutsDir(system);
+  const overlay = opts.overlayLayoutsDir && await isDir(opts.overlayLayoutsDir)
+    ? opts.overlayLayoutsDir
+    : undefined;
+  const searchPaths: string[] = [];
+  if (overlay) searchPaths.push(overlay);
+  if (user && user !== overlay && user !== system) searchPaths.push(user);
+  if (!searchPaths.includes(system)) searchPaths.push(system);
+  return { system, user, overlay, searchPaths };
+}
+
+/** First hit for `fileName` in ordered search paths (overlay → user → system). */
+export async function findLayoutFile(
+  fileName: string,
+  searchPaths: readonly string[],
+): Promise<string | undefined> {
+  for (const dir of searchPaths) {
+    const full = path.join(dir, fileName);
+    if (await isFile(full)) return full;
+  }
+  return undefined;
+}
+
+function mergeParsed(into: ParsedLayout, sub: ParsedLayout): void {
+  for (const s of sub.allowed) into.allowed.add(s);
+  for (const s of sub.disallowed) into.disallowed.add(s);
+  for (const [k, v] of sub.headingLevels) into.headingLevels.set(k, v);
+  for (const s of sub.customInsets) into.customInsets.add(s);
+  for (const s of sub.disallowedInsets) into.disallowedInsets.add(s);
+  for (const [k, v] of sub.styles) into.styles.set(k, mergeStyle(into.styles.get(k), v));
+}
+
+function asSearchPaths(layoutsDir: string | readonly string[]): string[] {
+  return typeof layoutsDir === "string" ? [layoutsDir] : [...layoutsDir];
+}
+
+async function loadParsedForClass(
+  textclass: string,
+  layoutsDir: string | readonly string[],
+  modules: readonly string[] = [],
+  local?: LocalLayoutTexts,
+): Promise<ParsedLayout | null> {
+  const searchPaths = asSearchPaths(layoutsDir);
+  const mainLayoutPath = await findLayoutFile(`${textclass}.layout`, searchPaths);
+  if (!mainLayoutPath) return null;
   const visited = new Set<string>();
   const parsed = await parseLayoutFile(mainLayoutPath, searchPaths, visited);
   for (const name of modules) {
     const trimmed = name.trim();
     if (!trimmed) continue;
-    const modulePath = path.join(layoutsDir, `${trimmed}.module`);
-    const sub = await parseLayoutFile(modulePath, searchPaths, visited);
-    for (const s of sub.allowed) parsed.allowed.add(s);
-    for (const s of sub.disallowed) parsed.disallowed.add(s);
-    for (const [k, v] of sub.headingLevels) parsed.headingLevels.set(k, v);
-    for (const s of sub.customInsets) parsed.customInsets.add(s);
-    for (const s of sub.disallowedInsets) parsed.disallowedInsets.add(s);
-    for (const [k, v] of sub.styles) parsed.styles.set(k, mergeStyle(parsed.styles.get(k), v));
+    const modulePath = await findLayoutFile(`${trimmed}.module`, searchPaths);
+    if (!modulePath) continue;
+    mergeParsed(parsed, await parseLayoutFile(modulePath, searchPaths, visited));
   }
+  if (local?.forced?.trim()) {
+    mergeParsed(parsed, await parseLayoutText(local.forced, searchPaths, visited));
+  }
+  if (local?.normal?.trim()) {
+    mergeParsed(parsed, await parseLayoutText(local.normal, searchPaths, visited));
+  }
+  return parsed;
+}
+
+/**
+ * Renderer-private HTML keys for a textclass. Missing layout file → empty map.
+ * `layoutsDir` may be one directory (tests / legacy) or an ordered search-path list.
+ * Not returned by `lq schema`.
+ */
+export async function getLayoutHtmlForClass(
+  textclass: string,
+  layoutsDir: string | readonly string[],
+  modules: readonly string[] = [],
+  local?: LocalLayoutTexts,
+): Promise<Map<string, LayoutHtml>> {
+  const parsed = await loadParsedForClass(textclass, layoutsDir, modules, local);
+  if (!parsed) return new Map();
   const out = new Map<string, LayoutHtml>();
   for (const name of parsed.styles.keys()) {
     if (parsed.disallowed.has(name)) continue;
@@ -331,39 +540,29 @@ export async function getLayoutHtmlForClass(
   return out;
 }
 
-export async function getSchemaForClass(textclass: string, layoutsDir: string): Promise<LyxSchema> {
-  const mainLayoutPath = path.join(layoutsDir, `${textclass}.layout`);
-  
-  try {
-    const stat = await Deno.stat(mainLayoutPath);
-    if (!stat.isFile) throw new Error("Not a file");
-  } catch (_e) {
-    throw new Error(`Layout file not found for textclass '${textclass}' at ${mainLayoutPath}`);
+export async function getSchemaForClass(
+  textclass: string,
+  layoutsDir: string | readonly string[],
+  modules: readonly string[] = [],
+  local?: LocalLayoutTexts,
+): Promise<LyxSchema> {
+  const parsed = await loadParsedForClass(textclass, layoutsDir, modules, local);
+  if (!parsed) {
+    const hint = typeof layoutsDir === "string" ? layoutsDir : layoutsDir.join(", ");
+    throw new Error(`Layout file not found for textclass '${textclass}' in: ${hint}`);
   }
 
-  // The search paths for Input files are usually the layouts directory itself
-  const searchPaths = [layoutsDir];
-  
-  const result = await parseLayoutFile(mainLayoutPath, searchPaths);
-  
-  // Remove disallowed styles from the final list
-  for (const s of result.disallowed) {
-    result.allowed.delete(s);
+  for (const s of parsed.disallowed) {
+    parsed.allowed.delete(s);
   }
 
-  // Merge hardcoded insets with per-class custom InsetLayout declarations
   const allInsets = new Set(KNOWN_INSET_TYPES);
-  for (const s of result.customInsets) {
-    allInsets.add(s);
-  }
-  for (const s of result.disallowedInsets) {
-    allInsets.delete(s);
-  }
+  for (const s of parsed.customInsets) allInsets.add(s);
+  for (const s of parsed.disallowedInsets) allInsets.delete(s);
 
-  // Build heading hierarchy sorted by TocLevel, excluding disallowed styles
   const headingHierarchy: HeadingLevel[] = [];
-  for (const [layout, tocLevel] of result.headingLevels) {
-    if (!result.disallowed.has(layout)) {
+  for (const [layout, tocLevel] of parsed.headingLevels) {
+    if (!parsed.disallowed.has(layout)) {
       headingHierarchy.push({ layout, tocLevel });
     }
   }
@@ -378,7 +577,7 @@ export async function getSchemaForClass(textclass: string, layoutsDir: string): 
 
   return {
     textclass,
-    documentLayouts: Array.from(result.allowed).sort(),
+    documentLayouts: Array.from(parsed.allowed).sort(),
     insetLayouts: INSET_LAYOUTS,
     insets,
     inlineProperties: INLINE_PROPERTIES,

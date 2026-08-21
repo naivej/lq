@@ -19,7 +19,7 @@ Three ideas carry the whole skill:
 Run the same sequence for every task:
 
 1. **Set the task's author name first.** `lq init --author-name "<task>"` before the first mutation, and switch when the task changes. Replay undo is author-scoped, so each task's edits stay separately revertible. Name the task, not the human.
-2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, `layoutsDir`, `refresh`. Change configuration only with authorization. See the state-scope note below.
+2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, optional `layoutsDir` overlay, `refresh` — plus `layoutSearch` (order) and `layoutRoots` (paths) when writing config. Change configuration only with authorization. See the state-scope note below.
 3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → count (`--count`) → text-only on the narrowed result. Done when you can see the exact node(s) you will touch.
 4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not.
 5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.
@@ -68,7 +68,7 @@ Pick the workflow up front — it chooses the author name, the selection scale, 
 
 ## Ground-up writing and autonomous drafting
 
-Structural work. Set the per-task author name so the whole draft is one review unit, check `lq schema`, and confirm the layouts directory resolves. Build the skeleton first — headings and blocks with `insert --layout` — then fill in with `--text`, `split-after`, and `--raw-file` for citations, references, and math. Verify each section with `read --text-only`; run a LyX export at milestones as the structural acceptance check. The payload recipes behind `--ref`, `--cite`, and `--raw-file` live in `references/Domain_recipes.md`; opaque formula, ERT, and preamble payloads are covered in `references/Inset_data.md`.
+Structural work. Set the per-task author name so the whole draft is one review unit, check `lq schema`, and confirm layouts resolve. Build the skeleton first — headings and blocks with `insert --layout` — then fill in with `--text`, `split-after`, and `--raw-file` for citations, references, and math. Verify each section with `read --text-only`; run a LyX export at milestones as the structural acceptance check. The payload recipes behind `--ref`, `--cite`, and `--raw-file` live in `references/Domain_recipes.md`; opaque formula, ERT, and preamble payloads are covered in `references/Inset_data.md`.
 
 ## Proofreading and surgical typo fixes
 

@@ -507,8 +507,9 @@ export const HELP_PAGES: HelpPage[] = [
       ),
       sec(
         "Options",
-        "  --layouts-dir <path>      Set the LyX layouts directory.\n" +
-          "                            Default: auto-detect the highest installed version.\n" +
+        "  --layouts-dir <path>      User-tier layouts overlay (searched before\n" +
+          "                            the LyX user-dir and the install layouts).\n" +
+          "                            Default: omitted.\n" +
           "  --refresh <mode>          Configure automatic refresh after mutations.\n" +
           "                            none (default): no refresh; LyX detects changes via polling.\n" +
           "                            reload:         reload and discard unsaved in-LyX edits.\n" +
@@ -536,9 +537,13 @@ export const HELP_PAGES: HelpPage[] = [
       ),
       sec(
         "Config precedence",
-        "  New config: built-in defaults, then explicit options.\n" +
+        "  New config: built-in defaults, then explicit options. 'layoutsDir' is only\n" +
+          "  written when --layouts-dir is passed.\n" +
           "  Existing config: existing values, then explicit options; omitted values\n" +
-          "  persist, including 'layoutsDir'.\n\n" +
+          "  persist, including a previously stored 'layoutsDir' (user-tier overlay).\n\n" +
+          "Layout search: optional overlay → LyX user-dir →\n" +
+          "install layouts → document LocalLayout. Init JSON reports layoutSearch\n" +
+          "(order) and layoutRoots (resolved paths).\n\n" +
           "Setting a non-'none' refresh mode runs a fast reachability probe; a probe\n" +
           "warning does not abort init. A refresh that is dispatched but not confirmed\n" +
           "proceeds with a warning rather than aborting.",
@@ -673,12 +678,13 @@ export const HELP_PAGES: HelpPage[] = [
         "Constraints",
         "- Deleted tracked text is omitted; inserted text is rendered as current text.\n" +
           "- ERT and private notes (Note, Comment) are omitted, matching native XHTML.\n" +
-          "- Formulas are escaped source, not executed or converted.\n" +
+          "- Formulas use a TeX→MathML subset with escaped fallback; they are not executed.\n" +
           "- Unknown insets become an escaped, marked fallback plus a diagnostic.\n" +
           "- No source tokens, selection references, or edit commands are emitted.",
       ),
     ],
     furtherReading: [
+      fr("commands/init", "layoutSearch / layoutRoots and --layouts-dir overlay"),
       fr("model/cst", "the tree this projection is built from"),
       fr("concepts/private-notes", "notes omitted from the reader projection"),
       fr("concepts/tracked-changes", "deleted regions omitted like native XHTML"),

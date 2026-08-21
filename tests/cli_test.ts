@@ -180,10 +180,10 @@ Deno.test("CLI - no help output references the removed lq selector --help", { ti
 
 /** High-risk facts each command page must document (edge-case checklist). */
 const PAGE_FACTS: [string, string[]][] = [
-  ["init", ["--global", "--refresh", "auto-detect", "--track-changes", "save-reload"]],
+  ["init", ["--global", "--refresh", "layoutSearch", "layoutRoots", "--track-changes", "save-reload"]],
   ["schema", ["documentLayouts", "insetLayouts", "insets", "headingHierarchy", "textclass", "kind"]],
   ["dump", ["--depth", "--toc", "TocLevel", "truncated"]],
-  ["preview", ["lyx-preview/live-1", "sha256", "raw-file-bytes", "does not mutate"]],
+  ["preview", ["lyx-preview/live-1", "sha256", "raw-file-bytes", "does not mutate", "LAYOUT_NOT_FOUND"]],
   ["read", ["--count", "--text-only", "change_deleted", "empty result"]],
   ["bib", ["--search", ".bib"]],
   ["set", ["--find", "--replace-all", "inset is rejected"]],
@@ -554,6 +554,28 @@ Deno.test("CLI - init success with fake home", { timeout: 10000 }, async () => {
     try { await Deno.remove(projectDir, { recursive: true }); } catch { /* ignore */ }
     try { await Deno.remove(tmpHome, { recursive: true }); } catch { /* ignore */ }
     try { await Deno.remove(layoutsDir, { recursive: true }); } catch { /* ignore */ }
+  }
+});
+
+Deno.test("CLI - init without --layouts-dir omits overlay and explains policy", { timeout: 10000 }, async () => {
+  const projectDir = await Deno.makeTempDir({ prefix: "lq_test_project_noload" });
+  const tmpHome = await Deno.makeTempDir({ prefix: "lq_test_home_noload" });
+  try {
+    const result = await runCliWithEnv(
+      ["init", "--author-name", "policy tester"],
+      { HOME: tmpHome, USERPROFILE: tmpHome },
+      projectDir,
+    ) as Record<string, unknown>;
+    const config = JSON.parse(await Deno.readTextFile(`${projectDir}/.lq/config.json`));
+    assertEquals("layoutsDir" in config, false);
+    assertEquals(config.authorName, "policy tester");
+    assertEquals(result.layoutSearch, "user → system → LocalLayout");
+    const roots = result.layoutRoots as { system?: string; overlay?: string | null };
+    assertEquals(typeof roots?.system, "string");
+    assertEquals(roots?.overlay ?? null, null);
+  } finally {
+    try { await Deno.remove(projectDir, { recursive: true }); } catch { /* ignore */ }
+    try { await Deno.remove(tmpHome, { recursive: true }); } catch { /* ignore */ }
   }
 });
 

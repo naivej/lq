@@ -6,7 +6,7 @@ VS Code extension that shows a read-only **Live** preview of saved `.lyx` files 
 
 1. Open a `.lyx` file.
 2. Run **LyX Preview: Open LyX Preview** (command palette), or use the editor title icon when a `.lyx` buffer is active.
-3. The preview refreshes from the **saved** file (unsaved editor buffer changes are not shown until you save).
+3. The preview refreshes from the **saved** file on open, save, and when the file changes on disk while the editor buffer is **not** dirty. Unsaved buffer edits mark the preview stale until you save (or reload from disk). Use Ctrl+F in the preview panel for find.
 
 ## Settings
 
