@@ -62,6 +62,13 @@ Deno.test("Layout HTML lookup is renderer-private and resolves CopyStyle", async
   assertEquals(html.get("Quotation")?.htmlTag?.toLowerCase(), "blockquote", "CopyStyle Quote must inherit HTMLTag");
   assertEquals(html.get("Title")?.htmlTitle, true);
   assertEquals(html.get("LyX-Code")?.htmlTag, undefined, "LyX-Code has no HTMLTag; fallback tables still apply");
+  const logical = await getLayoutHtmlForClass("article", layoutsDir, ["logicalmkup"]);
+  assertEquals(logical.get("Flex:Emph")?.htmlTag?.toLowerCase(), "em", "InsetLayout Flex:Emph HTMLTag");
+  assertEquals(logical.get("Flex:Strong")?.htmlTag?.toLowerCase(), "strong");
+  assertEquals(logical.get("Flex:Code")?.htmlTag?.toLowerCase(), "code");
+  assertEquals(logical.get("Flex:Noun")?.htmlTag?.toLowerCase(), "span");
+  assertEquals(logical.get("Flex:Noun")?.htmlClass, "noun");
+  assertEquals(logical.get("Flex:Noun")?.font?.shape?.toLowerCase(), "smallcaps");
   const koma = await getLayoutHtmlForClass("scrbook", layoutsDir);
   assertEquals(koma.get("Labeling")?.htmlTag?.toLowerCase(), "ol", "later Style Labeling must merge, not replace");
   assertEquals(koma.get("Section")?.htmlTag?.toLowerCase(), "h2");

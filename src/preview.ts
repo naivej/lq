@@ -23,8 +23,15 @@ import {
   findLayoutFile,
   getLayoutHtmlForClass,
   resolveLayoutSearchPaths,
+  type LayoutFont,
   type LayoutHtml,
 } from "./schema.ts";
+import {
+  bindDirFromLayouts,
+  loadShortcutMap,
+  lookupShortcut,
+  type ShortcutMap,
+} from "./bind.ts";
 
 export const LIVE_CONTRACT = "lyx-preview/live-1";
 export const LIVE_PROJECTION = "live";
@@ -224,6 +231,8 @@ interface RenderCtx {
   biboptions: string;
   outline: OutlineEntry[];
   layoutHtml: Map<string, LayoutHtml> | null;
+  /** LFUN → key display strings from system cua.bind (Info shortcuts). */
+  shortcuts: ShortcutMap | null;
   nomencl: NomenclEntry[];
   index: IndexEntry[];
   nomenclSeq: number;
@@ -896,6 +905,7 @@ export async function renderLiveHtml(
     biboptions: "",
     outline: [],
     layoutHtml: await loadLayoutHtml(ast, searchPaths),
+    shortcuts: await loadShortcutMap(bindDirFromLayouts(systemLayoutsDir)),
     nomencl: [],
     index: [],
     nomenclSeq: 0,
@@ -1515,7 +1525,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return "";
   }
   if (kind === "Info" || kind.startsWith("Info ")) {
-    return renderInfo(block);
+    return renderInfo(block, ctx);
   }
   if (kind === "Tabular") return renderTabular(block, parentState, ctx);
   if (kind.startsWith("Float ")) return renderFloat(block, kind, parentState, ctx);
@@ -1977,7 +1987,7 @@ function renderBox(block: BlockNode, kind: string, parentState: TraversalState, 
   return `<div class="${escapeLiveHtml(variant)}"${style}>${inner}</div>`;
 }
 
-function renderInfo(block: BlockNode): string {
+function renderInfo(block: BlockNode, ctx?: RenderCtx): string {
   const type = (findProperty(block, "type") ?? "").toLowerCase();
   const arg = findProperty(block, "arg") ?? collectVisibleText(block);
   if (type === "icon") {
@@ -1987,9 +1997,11 @@ function renderInfo(block: BlockNode): string {
       : "";
   }
   if (type === "shortcut" || type === "shortcuts") {
-    return arg
-      ? `<kbd class="${type === "shortcuts" ? "shortcuts" : "shortcut"}" title="LFUN">${escapeLiveHtml(arg)}</kbd>`
-      : "";
+    if (!arg) return "";
+    const resolved = lookupShortcut(ctx?.shortcuts, arg, type === "shortcuts");
+    const body = resolved ?? arg;
+    const title = resolved ? arg : "LFUN";
+    return `<kbd class="${type === "shortcuts" ? "shortcuts" : "shortcut"}" title="${escapeLiveHtml(title)}">${escapeLiveHtml(body)}</kbd>`;
   }
   return arg ? `<span class="info">${escapeLiveHtml(arg)}</span>` : "";
 }
@@ -2077,8 +2089,8 @@ function renderFloatList(kind: string, ctx: RenderCtx): string {
 }
 
 /**
- * Remaining Flex insets: prefer a typed class over bare passthrough.
- * Multi-paragraph Flex → div; otherwise span. Specials for common modules.
+ * Remaining Flex insets: prefer layout HTMLTag/HTMLClass/Font, then typed
+ * specials, then a classed wrapper (no bare passthrough).
  */
 function renderFlexDefault(
   kind: string,
@@ -2088,6 +2100,7 @@ function renderFlexDefault(
 ): string {
   const name = kind.slice("Flex ".length).trim();
   const slug = layoutSlug(name) || "flex";
+  const multipar = block.children.some((c) => c.type === "block" && c.tag === "layout");
 
   // Beamer / Powerdot overlays & modes — keep text, mark role.
   if (
@@ -2096,18 +2109,6 @@ function renderFlexDefault(
   ) {
     const style = /^Invisible$/i.test(name) ? ' style="opacity:0.35"' : "";
     return `<span class="flex ${slug} overlay"${style}>${renderFlexInline(block, ctx)}</span>`;
-  }
-  if (/^Bold$/i.test(name)) {
-    return `<strong class="flex bold">${renderFlexInline(block, ctx)}</strong>`;
-  }
-  if (/^Highlight$/i.test(name)) {
-    return `<mark class="flex highlight">${renderFlexInline(block, ctx)}</mark>`;
-  }
-  if (/^Latin$/i.test(name)) {
-    return `<span class="flex latin" lang="la">${renderFlexInline(block, ctx)}</span>`;
-  }
-  if (/^Chemistry$/i.test(name)) {
-    return `<span class="flex chemistry">${renderFlexInline(block, ctx)}</span>`;
   }
   if (/^(Email)$/i.test(name)) {
     const text = collectVisibleText(block).trim();
@@ -2122,6 +2123,18 @@ function renderFlexDefault(
   }
   if (/^Ruby$/i.test(name)) {
     return `<ruby class="flex ruby">${renderInsetLayouts(block, parentState, ctx)}</ruby>`;
+  }
+  if (/^Bold$/i.test(name)) {
+    return `<strong class="flex bold">${renderFlexInline(block, ctx)}</strong>`;
+  }
+  if (/^Highlight$/i.test(name)) {
+    return `<mark class="flex highlight">${renderFlexInline(block, ctx)}</mark>`;
+  }
+  if (/^Latin$/i.test(name)) {
+    return `<span class="flex latin" lang="la">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (/^Chemistry$/i.test(name)) {
+    return `<span class="flex chemistry">${renderFlexInline(block, ctx)}</span>`;
   }
   if (/^Braillebox$/i.test(name)) {
     return `<span class="flex braillebox">${renderInsetLayouts(block, parentState, ctx)}</span>`;
@@ -2153,11 +2166,77 @@ function renderFlexDefault(
     return `<div class="flex gloss ${slug}">${renderInsetLayouts(block, parentState, ctx)}</div>`;
   }
 
-  const multipar = block.children.some((c) => c.type === "block" && c.tag === "layout");
+  // InsetLayout HTMLTag / HTMLClass / Font when class+modules provide them.
+  const fromLayout = renderFlexFromLayout(kind, name, slug, multipar, block, parentState, ctx);
+  if (fromLayout !== undefined) return fromLayout;
+
   if (multipar) {
     return `<div class="flex ${slug}">${renderInsetLayouts(block, parentState, ctx)}</div>`;
   }
   return `<span class="flex ${slug}">${renderFlexInline(block, ctx)}</span>`;
+}
+
+/** Lookup keys for `Flex Noun` → `Flex:Noun` / underscore variants in layout map. */
+function flexLayoutSpec(kind: string, name: string, html: Map<string, LayoutHtml> | null): LayoutHtml | undefined {
+  if (!html) return undefined;
+  const underscored = name.replace(/ /g, "_");
+  const spaced = name.replace(/_/g, " ");
+  const keys = [
+    `Flex:${name}`,
+    `Flex:${underscored}`,
+    `Flex:${spaced}`,
+    kind,
+    name,
+    underscored,
+    spaced,
+  ];
+  for (const k of keys) {
+    const spec = html.get(k);
+    if (spec && (spec.htmlTag || spec.htmlClass || spec.font)) return spec;
+  }
+  return undefined;
+}
+
+function layoutFontStyle(font: LayoutFont | undefined): string {
+  if (!font) return "";
+  const parts: string[] = [];
+  if (font.color) parts.push(`color:${cssLyxColor(font.color)}`);
+  const shape = (font.shape ?? "").toLowerCase();
+  if (shape === "italic") parts.push("font-style:italic");
+  else if (shape === "slanted") parts.push("font-style:oblique");
+  else if (shape === "smallcaps") parts.push("font-variant:small-caps");
+  const series = (font.series ?? "").toLowerCase();
+  if (series === "bold") parts.push("font-weight:bold");
+  const family = (font.family ?? "").toLowerCase();
+  if (family === "typewriter") parts.push('font-family:monospace');
+  else if (family === "sans") parts.push("font-family:sans-serif");
+  const size = (font.size ?? "").toLowerCase();
+  const sizeCss = FONT_SIZE_CSS[size];
+  if (sizeCss) parts.push(`font-size:${sizeCss}`);
+  return parts.length ? ` style="${escapeLiveHtml(parts.join(";"))}"` : "";
+}
+
+function renderFlexFromLayout(
+  kind: string,
+  name: string,
+  slug: string,
+  multipar: boolean,
+  block: BlockNode,
+  parentState: TraversalState,
+  ctx: RenderCtx,
+): string | undefined {
+  const spec = flexLayoutSpec(kind, name, ctx.layoutHtml);
+  if (!spec) return undefined;
+  const rawTag = (spec.htmlTag ?? (multipar ? "div" : "span")).toLowerCase();
+  if (!/^[a-z][a-z0-9]*$/.test(rawTag) || rawTag === "script" || rawTag === "iframe") {
+    return undefined;
+  }
+  const cls = spec.htmlClass?.trim() || `flex ${slug}`;
+  const style = layoutFontStyle(spec.font);
+  const inner = multipar
+    ? renderInsetLayouts(block, parentState, ctx)
+    : renderFlexInline(block, ctx);
+  return `<${rawTag} class="${escapeLiveHtml(cls)}"${style}>${inner}</${rawTag}>`;
 }
 
 /** Native InsetIPADeco::xhtml — combining mark between the two halves of child text. */

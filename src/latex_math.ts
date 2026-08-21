@@ -166,7 +166,7 @@ const SKIP_NEXT = new Set([
 
 const SKIP_GROUP = new Set([
   "tag", "label", "hspace", "vspace", "rule",
-  "leftroot", "uproot", "smashoperator", "adjustlimits",
+  "leftroot", "uproot", "adjustlimits",
 ]);
 
 const ENV = /\\begin\{(equation\*?|align\*?|alignat\*?|flalign\*?|displaymath|multline\*?|gather\*?|eqnarray\*?)\}(?:\{[^}]*\})?([\s\S]*)\\end\{\1\}/;
@@ -417,6 +417,114 @@ function parseCdArrow(line: string, i: number): { html: string; next: number } {
   return { html: "", next: i };
 }
 
+/** Light mhchem-ish expander for `\ce{…}` — subscripts, superscripts, arrows. */
+function expandChemExpr(tex: string): string {
+  const s = tex.trim();
+  const parts: string[] = [];
+  let i = 0;
+  const readBracket = (): string => {
+    if (s[i] !== "[") return "";
+    i++;
+    const start = i;
+    let depth = 1;
+    while (i < s.length && depth > 0) {
+      if (s[i] === "[") depth++;
+      else if (s[i] === "]") depth--;
+      if (depth > 0) i++;
+    }
+    const text = s.slice(start, i);
+    if (s[i] === "]") i++;
+    return text;
+  };
+  const readGroup = (): string => {
+    if (s[i] === "{") {
+      i++;
+      let depth = 1;
+      let out = "";
+      while (i < s.length && depth > 0) {
+        const ch = s[i++];
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 0) break;
+        }
+        out += ch;
+      }
+      return out;
+    }
+    return s[i] ? s[i++] : "";
+  };
+  while (i < s.length) {
+    if (s.startsWith("<=>", i) || s.startsWith("<->", i)) {
+      parts.push("<mo>⇌</mo>");
+      i += 3;
+      continue;
+    }
+    if (s.startsWith("->", i) || s.startsWith("<-", i)) {
+      const right = s.startsWith("->", i);
+      i += 2;
+      const over = readBracket();
+      const under = readBracket();
+      let arrow = `<mo>${right ? "→" : "←"}</mo>`;
+      const top = over ? latexToMathML(over) : "";
+      const bot = under ? latexToMathML(under) : "";
+      if (top && bot) arrow = `<munderover>${arrow}${bot}${top}</munderover>`;
+      else if (top) arrow = `<mover>${arrow}${top}</mover>`;
+      else if (bot) arrow = `<munder>${arrow}${bot}</munder>`;
+      parts.push(arrow);
+      continue;
+    }
+    if (s[i] === "^") {
+      i++;
+      const script = readGroup();
+      const prev = parts.pop() ?? "<mrow/>";
+      parts.push(`<msup>${prev}${latexToMathML(script)}</msup>`);
+      continue;
+    }
+    if (s[i] === "_") {
+      i++;
+      const script = readGroup();
+      const prev = parts.pop() ?? "<mrow/>";
+      parts.push(`<msub>${prev}${latexToMathML(script)}</msub>`);
+      continue;
+    }
+    if (/[0-9]/.test(s[i]!)) {
+      let n = "";
+      while (i < s.length && /[0-9]/.test(s[i]!)) n += s[i++];
+      const prev = parts[parts.length - 1];
+      if (prev && prev.startsWith("<mi")) {
+        parts.pop();
+        parts.push(`<msub>${prev}<mn>${n}</mn></msub>`);
+      } else {
+        parts.push(`<mn>${n}</mn>`);
+      }
+      continue;
+    }
+    if (/[A-Za-z]/.test(s[i]!)) {
+      let name = s[i++]!;
+      if (i < s.length && /[a-z]/.test(s[i]!)) name += s[i++]!;
+      parts.push(`<mi mathvariant="normal">${escapeLiveHtml(name)}</mi>`);
+      continue;
+    }
+    if (s[i] === "+" || s[i] === "-" || s[i] === "(" || s[i] === ")" || s[i] === "[" || s[i] === "]") {
+      parts.push(`<mo>${escapeLiveHtml(s[i++]!)}</mo>`);
+      continue;
+    }
+    if (/\s/.test(s[i]!)) {
+      i++;
+      continue;
+    }
+    if (s[i] === "\\") {
+      parts.push(latexToMathML(s.slice(i)));
+      break;
+    }
+    parts.push(`<mtext>${escapeLiveHtml(s[i++]!)}</mtext>`);
+  }
+  if (parts.length === 0) return "<mrow/>";
+  if (parts.length === 1) return parts[0]!;
+  return `<mrow>${parts.join("")}</mrow>`;
+}
+
 class Parser {
   constructor(private readonly s: string, private i = 0) {}
 
@@ -559,7 +667,8 @@ class Parser {
     }
     if (name === "frac" || name === "dfrac" || name === "tfrac" || name === "cfrac" ||
       name === "nicefrac" || name === "unitfrac") {
-      if (name === "unitfrac" && this.s[this.i] === "[") {
+      // Optional [l]/[r]/unit args — ignore for MathML shape.
+      if (this.s[this.i] === "[") {
         this.i++;
         this.parseExprUntil("]");
         if (this.s[this.i] === "]") this.i++;
@@ -702,9 +811,20 @@ class Parser {
       return `<msup><menclose notation="updiagonalstrike">${inner}</menclose>${to}</msup>`;
     }
     if (name === "sideset") {
-      this.parseGroupOrAtom();
-      this.parseGroupOrAtom();
-      return this.parseWithScripts();
+      const left = this.readGroupText();
+      const right = this.readGroupText();
+      const op = this.parseWithScripts();
+      const leftScripts = this.parseSideScripts(left);
+      const rightScripts = this.parseSideScripts(right);
+      return `<mmultiscripts>${op}${rightScripts.sub}${rightScripts.sup}<mprescripts/>${leftScripts.sub}${leftScripts.sup}</mmultiscripts>`;
+    }
+    if (name === "smashoperator") {
+      if (this.s[this.i] === "[") {
+        this.i++;
+        this.parseExprUntil("]");
+        if (this.s[this.i] === "]") this.i++;
+      }
+      return this.parseGroupOrAtom();
     }
     if (name === "splitfrac" || name === "splitdfrac") {
       const a = this.parseGroupOrAtom();
@@ -764,10 +884,16 @@ class Parser {
         : "italic";
       return `<mstyle mathvariant="${variant}">${inner}</mstyle>`;
     }
-    if (name === "ce" || name === "ensuremath") {
+    if (name === "ensuremath") {
       if (this.s[this.i] === "{") {
         const inner = this.readGroupText();
-        return `<mtext>${escapeLiveHtml(inner)}</mtext>`;
+        return latexToMathML(inner);
+      }
+      return this.parseWithScripts();
+    }
+    if (name === "ce") {
+      if (this.s[this.i] === "{") {
+        return expandChemExpr(this.readGroupText());
       }
       return this.parseWithScripts();
     }
@@ -785,8 +911,8 @@ class Parser {
     if (name === "qquad") return "<mspace width='2em'/>";
     if (name === "," || name === "thinspace") return "<mspace width='0.16em'/>";
     if (name === "phantom" || name === "hphantom" || name === "vphantom") {
-      this.parseGroupOrAtom();
-      return "<mspace width='0.4em'/>";
+      const inner = this.parseGroupOrAtom();
+      return `<mphantom>${inner}</mphantom>`;
     }
     if (name === "not") {
       const next = this.parseWithScripts();
@@ -824,11 +950,22 @@ class Parser {
       return `<munder>${inner}<mo>${escapeLiveHtml(ACCENT_UNDER[name])}</mo></munder>`;
     }
     if (name === "overbrace" || name === "underbrace" || name === "overbracket" || name === "underbracket") {
+      // Optional thickness [3pt] etc.
+      if (this.s[this.i] === "[") {
+        this.i++;
+        this.parseExprUntil("]");
+        if (this.s[this.i] === "]") this.i++;
+      }
       const inner = this.parseGroupOrAtom();
-      const bar = name.startsWith("over") ? "⏞" : "⏟";
-      return name.startsWith("over")
+      const over = name.startsWith("over");
+      const bar = over
+        ? (name.includes("bracket") ? "⎴" : "⏞")
+        : (name.includes("bracket") ? "⎵" : "⏟");
+      let brace = over
         ? `<mover>${inner}<mo>${bar}</mo></mover>`
         : `<munder>${inner}<mo>${bar}</mo></munder>`;
+      // Limits after the brace sit above/below (Op-style), not as msup/msub beside it.
+      return this.attachBraceLimits(brace);
     }
     if (/^(?:b|B)ig+[lrm]?$/.test(name) || name === "middle") {
       return `<mo>${escapeLiveHtml(this.readDelimiter())}</mo>`;
@@ -971,6 +1108,59 @@ class Parser {
     if (parts.length === 0) return "";
     if (parts.length === 1) return parts[0];
     return `<mrow>${parts.join("")}</mrow>`;
+  }
+
+  /** Limits on \overbrace/\underbrace sit above/below the brace (not msup/msub). */
+  private attachBraceLimits(brace: string): string {
+    let sub: string | undefined;
+    let sup: string | undefined;
+    while (this.i < this.s.length) {
+      this.skipSpace();
+      if (this.s[this.i] === "_") {
+        this.i++;
+        sub = this.parseGroupOrAtom();
+        continue;
+      }
+      if (this.s[this.i] === "^") {
+        this.i++;
+        sup = this.parseGroupOrAtom();
+        continue;
+      }
+      break;
+    }
+    if (sub && sup) return `<munderover>${brace}${sub}${sup}</munderover>`;
+    if (sub) return `<munder>${brace}${sub}</munder>`;
+    if (sup) return `<mover>${brace}${sup}</mover>`;
+    return brace;
+  }
+
+  /** Parse a `\sideset` left/right script group into MathML sub/sup (or `<none/>`). */
+  private parseSideScripts(tex: string): { sub: string; sup: string } {
+    const p = new Parser(tex);
+    let sub = "<none/>";
+    let sup = "<none/>";
+    while (p.i < p.s.length) {
+      p.skipSpace();
+      if (p.i >= p.s.length) break;
+      if (p.s[p.i] === "_") {
+        p.i++;
+        sub = p.parseGroupOrAtom() || "<none/>";
+        continue;
+      }
+      if (p.s[p.i] === "^") {
+        p.i++;
+        sup = p.parseGroupOrAtom() || "<none/>";
+        continue;
+      }
+      if (p.s[p.i] === "'") {
+        p.i++;
+        const primes = "<mo>′</mo>";
+        sup = sup !== "<none/>" ? `<mrow>${sup}${primes}</mrow>` : primes;
+        continue;
+      }
+      break;
+    }
+    return { sub, sup };
   }
 
   private readDelimiter(): string {

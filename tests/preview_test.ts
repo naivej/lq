@@ -307,6 +307,11 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assert(!html.includes("unknown-inset"), "Phantom must omit, not fall back");
   assertStringIncludes(html, "<kbd");
   assert(!html.includes('<span class="info">math-mode</span>'), "Info shortcuts must not dump the raw LFUN name as body text");
+  // When system bind files are present, resolve LFUN → key chord (keep LFUN in title).
+  if (html.includes('title="math-mode"')) {
+    assertStringIncludes(html, "Ctrl+M");
+    assert(!html.includes(">math-mode</kbd>"), "resolved shortcuts must show the key, not the LFUN body");
+  }
   assertStringIncludes(html, "class=\"typewriter\"");
   assertStringIncludes(html, "class=\"sans\"");
   assertStringIncludes(html, "\u2423");
@@ -316,6 +321,9 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assertStringIncludes(html, "<mi>A</mi>");
   assertStringIncludes(html, "<mo>≈</mo>");
   assertStringIncludes(html, "<mo>←</mo>");
+  assertStringIncludes(html, "<mphantom>");
+  assertStringIncludes(html, "mmultiscripts");
+  assertStringIncludes(html, "⏞");
   assert(!html.includes('encoding="application/x-tex">$\\begin{cases}'), "multi-line cases must include the body, not only the first line");
   assert(
     !html.includes('encoding="application/x-tex">\\newcommand{\\qG}'),
@@ -877,6 +885,16 @@ Deno.test("Live renderer - nameref uses heading and caption titles", async () =>
   assertStringIncludes(html, 'href="#sec_intro_name">Named Introduction</a>');
   assertStringIncludes(html, 'href="#sec_intro_name">1</a>');
   assertStringIncludes(html, 'href="#fig_demo_cap">A demo caption</a>');
+});
+
+Deno.test("Live renderer - Flex InsetLayout HTMLTag/HTMLClass/Font from LocalLayout", async () => {
+  const filePath = syntheticPath("flex_htmltag.lyx");
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET"), []);
+  assertStringIncludes(html, '<mark class="probe-mark"');
+  assertStringIncludes(html, "color:orange");
+  assertStringIncludes(html, "Tagged");
+  assert(!html.includes('class="flex probe"'), "layout HTMLClass must win over generic flex slug");
 });
 
 Deno.test("Live renderer - pageref uses target number not elsewhere", async () => {

@@ -25,9 +25,19 @@ export const INSET_LAYOUTS = ["Plain Layout"];
 
 export { INLINE_PROPERTIES, INSET_CATALOG };
 
-/** Renderer-private Style fields. Not part of `lq schema` JSON. */
+/** Renderer-private Style / InsetLayout Font fields for Live. */
+export interface LayoutFont {
+  color?: string;
+  shape?: string;
+  series?: string;
+  family?: string;
+  size?: string;
+}
+
+/** Renderer-private Style / InsetLayout fields. Not part of `lq schema` JSON. */
 export interface LayoutHtml {
   htmlTag?: string;
+  htmlClass?: string;
   htmlItem?: string;
   htmlTitle?: boolean;
   category?: string;
@@ -35,8 +45,8 @@ export interface LayoutHtml {
   labelType?: string;
   labelString?: string;
   labelCounter?: string;
+  font?: LayoutFont;
 }
-
 interface RawStyle extends LayoutHtml {
   copyStyle?: string;
 }
@@ -126,11 +136,12 @@ async function parseLayoutText(
 
     const matchInsetLayout = line.match(/^InsetLayout\s+(.+)$/);
     if (matchInsetLayout) {
-      customInsets.add(matchInsetLayout[1].trim().replace(/^"|"$/g, ""));
-      // Skip body of InsetLayout block
-      while (++i < lines.length) {
-        if (lines[i].trim() === "End") break;
-      }
+      const insetName = unquoteLayoutName(matchInsetLayout[1].trim());
+      customInsets.add(insetName);
+      // Parse HTMLTag/HTMLClass/Font like Style (renderer-private).
+      const raw = parseStyleBody(lines, i);
+      i = raw.endIndex;
+      styles.set(insetName, mergeStyle(styles.get(insetName), raw.style));
       continue;
     }
 
@@ -190,6 +201,7 @@ function mergeStyle(prev: RawStyle | undefined, next: RawStyle): RawStyle {
   if (!prev) return next;
   const out: RawStyle = { ...prev };
   if (next.htmlTag !== undefined) out.htmlTag = next.htmlTag;
+  if (next.htmlClass !== undefined) out.htmlClass = next.htmlClass;
   if (next.htmlItem !== undefined) out.htmlItem = next.htmlItem;
   if (next.htmlTitle !== undefined) out.htmlTitle = next.htmlTitle;
   if (next.category !== undefined) out.category = next.category;
@@ -198,7 +210,14 @@ function mergeStyle(prev: RawStyle | undefined, next: RawStyle): RawStyle {
   if (next.labelString !== undefined) out.labelString = next.labelString;
   if (next.labelCounter !== undefined) out.labelCounter = next.labelCounter;
   if (next.copyStyle !== undefined) out.copyStyle = next.copyStyle;
+  if (next.font !== undefined) out.font = mergeFont(prev.font, next.font);
   return out;
+}
+
+function mergeFont(prev: LayoutFont | undefined, next: LayoutFont | undefined): LayoutFont | undefined {
+  if (!next) return prev;
+  if (!prev) return next;
+  return { ...prev, ...next };
 }
 
 function parseStyleBody(lines: string[], start: number): { style: RawStyle; endIndex: number } {
@@ -208,7 +227,13 @@ function parseStyleBody(lines: string[], start: number): { style: RawStyle; endI
     let bodyLine = lines[i].trim();
     if (bodyLine === "End") break;
     if (bodyLine.startsWith("#") || bodyLine === "") continue;
-    if (bodyLine === "Font" || bodyLine === "LabelFont") {
+    if (bodyLine === "Font") {
+      const font = parseFontBody(lines, i);
+      i = font.endIndex;
+      style.font = mergeFont(style.font, font.font);
+      continue;
+    }
+    if (bodyLine === "LabelFont") {
       while (++i < lines.length && lines[i].trim() !== "EndFont") { /* skip */ }
       continue;
     }
@@ -229,6 +254,11 @@ function parseStyleBody(lines: string[], start: number): { style: RawStyle; endI
     const htmlTag = bodyLine.match(/^HTMLTag\s+(\S+)/i);
     if (htmlTag) {
       style.htmlTag = htmlTag[1];
+      continue;
+    }
+    const htmlClass = bodyLine.match(/^HTMLClass\s+(.+)$/i);
+    if (htmlClass) {
+      style.htmlClass = htmlClass[1].replace(/^"|"$/g, "").trim();
       continue;
     }
     const htmlItem = bodyLine.match(/^HTMLItem\s+(\S+)/i);
@@ -287,6 +317,7 @@ function resolveStyle(name: string, raw: Map<string, RawStyle>, seen: Set<string
   const { copyStyle: _c, ...rest } = own;
   const out: LayoutHtml = { ...base };
   if (rest.htmlTag !== undefined) out.htmlTag = rest.htmlTag;
+  if (rest.htmlClass !== undefined) out.htmlClass = rest.htmlClass;
   if (rest.htmlItem !== undefined) out.htmlItem = rest.htmlItem;
   if (rest.htmlTitle !== undefined) out.htmlTitle = rest.htmlTitle;
   if (rest.category !== undefined) out.category = rest.category;
@@ -294,7 +325,46 @@ function resolveStyle(name: string, raw: Map<string, RawStyle>, seen: Set<string
   if (rest.labelType !== undefined) out.labelType = rest.labelType;
   if (rest.labelString !== undefined) out.labelString = rest.labelString;
   if (rest.labelCounter !== undefined) out.labelCounter = rest.labelCounter;
+  if (rest.font !== undefined) out.font = mergeFont(base.font, rest.font);
   return out;
+}
+
+function parseFontBody(lines: string[], start: number): { font: LayoutFont; endIndex: number } {
+  const font: LayoutFont = {};
+  let i = start;
+  while (++i < lines.length) {
+    let bodyLine = lines[i].trim();
+    if (bodyLine === "EndFont") break;
+    if (bodyLine.startsWith("#") || bodyLine === "") continue;
+    const commentIdx = bodyLine.indexOf("#");
+    if (commentIdx !== -1) bodyLine = bodyLine.substring(0, commentIdx).trim();
+    const color = bodyLine.match(/^Color\s+(\S+)/i);
+    if (color) {
+      font.color = color[1];
+      continue;
+    }
+    const shape = bodyLine.match(/^Shape\s+(\S+)/i);
+    if (shape) {
+      font.shape = shape[1];
+      continue;
+    }
+    const series = bodyLine.match(/^Series\s+(\S+)/i);
+    if (series) {
+      font.series = series[1];
+      continue;
+    }
+    const family = bodyLine.match(/^Family\s+(\S+)/i);
+    if (family) {
+      font.family = family[1];
+      continue;
+    }
+    const size = bodyLine.match(/^Size\s+(\S+)/i);
+    if (size) {
+      font.size = size[1];
+      continue;
+    }
+  }
+  return { font, endIndex: i };
 }
 
 export interface LocalLayoutTexts {

@@ -148,3 +148,44 @@ Deno.test("latexToMathML - unknown commands stay escaped mtext-like mi", () => {
   if (html.includes("<script")) throw new Error("unknown command must not become a script");
   if (!html.includes("unknown")) throw new Error("unknown command name should remain visible");
 });
+
+Deno.test("latexToMathML - smashoperator, optional args, brace limits, phantom, sideset, ce", () => {
+  const smash = latexToMathML("\\smashoperator{\\sum^{n}_{i=1}}X");
+  assertStringIncludes(smash, "∑");
+  assertFalse(smash.includes("smashoperator"), "smashoperator must not drop the sum");
+
+  const cfrac = latexToMathML("\\cfrac[l]{A}{B+C}");
+  assertStringIncludes(cfrac, "<mfrac>");
+  assertStringIncludes(cfrac, "<mi>A</mi>");
+  assertFalse(cfrac.includes("<mo>[</mo>"), "cfrac optional [l] must not become atoms");
+
+  const over = latexToMathML("\\overbrace{A+B}^{3}");
+  assertStringIncludes(over, "<mover>");
+  assertStringIncludes(over, "⏞");
+  assertFalse(over.includes("<msup><mover>"), "overbrace limits must not use msup beside the brace");
+
+  const under = latexToMathML("\\underbrace{A+B}_{5}");
+  assertStringIncludes(under, "<munder>");
+  assertStringIncludes(under, "⏟");
+  assertFalse(under.includes("<msub><munder>"), "underbrace limits must not use msub beside the brace");
+
+  const bracket = latexToMathML("\\overbracket[3pt]{A+B}");
+  assertStringIncludes(bracket, "<mover>");
+  assertStringIncludes(bracket, "<mi>A</mi>");
+  assertFalse(bracket.includes("<mn>3</mn>"), "overbracket thickness must not become the body");
+
+  const phant = latexToMathML("^{19}_{\\phantom{1}9}");
+  assertStringIncludes(phant, "<mphantom>");
+  assertStringIncludes(phant, "<mn>1</mn>");
+
+  const side = latexToMathML("\\sideset{}{'}\\sum^{n}_{k=1}");
+  assertStringIncludes(side, "mmultiscripts");
+  assertStringIncludes(side, "′");
+
+  const ce = latexToMathML("\\ce{SO4^{2-}}");
+  assertStringIncludes(ce, "<msub>");
+  assertStringIncludes(ce, "<msup>");
+  assertFalse(ce.includes("SO4^{2-}"), "ce must expand scripts, not dump raw tex in one mtext");
+  const arrow = latexToMathML("\\ce{A -> B}");
+  assertStringIncludes(arrow, "<mo>→</mo>");
+});
