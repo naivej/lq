@@ -1603,7 +1603,10 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     kind.startsWith("Flex PDFAction") ||
     kind.startsWith("Flex TextField") ||
     kind.startsWith("Flex ChoiceMenu") ||
-    kind.startsWith("Flex PushButton")
+    kind.startsWith("Flex PushButton") ||
+    kind.startsWith("Flex CheckBox") ||
+    kind.startsWith("Flex SubmitButton") ||
+    kind.startsWith("Flex ResetButton")
   ) {
     const cls = layoutSlug(kind.slice("Flex ".length));
     return `<span class="pdf-form ${cls}">${renderInsetLayouts(block, parentState, ctx)}</span>`;
@@ -1634,7 +1637,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return renderInsetLayouts(block, parentState, ctx);
   }
   if (kind.startsWith("Flex ")) {
-    return renderInsetLayouts(block, parentState, ctx);
+    return renderFlexDefault(kind, block, parentState, ctx);
   }
   warnOnce(ctx, `Unknown inset '${kind}' rendered as an escaped fallback.`);
   diagnostic(ctx, "UNKNOWN_INSET", `Unknown inset '${kind}' rendered as an escaped fallback.`);
@@ -1997,6 +2000,90 @@ function renderFloatList(kind: string, ctx: RenderCtx): string {
   }
   html += "</ol></nav>";
   return html;
+}
+
+/**
+ * Remaining Flex insets: prefer a typed class over bare passthrough.
+ * Multi-paragraph Flex → div; otherwise span. Specials for common modules.
+ */
+function renderFlexDefault(
+  kind: string,
+  block: BlockNode,
+  parentState: TraversalState,
+  ctx: RenderCtx,
+): string {
+  const name = kind.slice("Flex ".length).trim();
+  const slug = layoutSlug(name) || "flex";
+
+  // Beamer / Powerdot overlays & modes — keep text, mark role.
+  if (
+    /^(Alternative|Uncover|Visible|Invisible|Onslide\+?|Onslide\*|ArticleMode|PresentationMode)$/i
+      .test(name) || name.startsWith("Onslide")
+  ) {
+    const style = /^Invisible$/i.test(name) ? ' style="opacity:0.35"' : "";
+    return `<span class="flex ${slug} overlay"${style}>${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (/^Bold$/i.test(name)) {
+    return `<strong class="flex bold">${renderFlexInline(block, ctx)}</strong>`;
+  }
+  if (/^Highlight$/i.test(name)) {
+    return `<mark class="flex highlight">${renderFlexInline(block, ctx)}</mark>`;
+  }
+  if (/^Latin$/i.test(name)) {
+    return `<span class="flex latin" lang="la">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (/^Chemistry$/i.test(name)) {
+    return `<span class="flex chemistry">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (/^(Email)$/i.test(name)) {
+    const text = collectVisibleText(block).trim();
+    const href = text.includes("@") ? `mailto:${text}` : text;
+    return `<a class="flex email" href="${escapeLiveHtml(href)}">${escapeLiveHtml(text)}</a>`;
+  }
+  if (/^institutemark$/i.test(name) || /^Bibnote$/i.test(name) || /^Table footnotemark$/i.test(name)) {
+    return `<sup class="flex ${slug}">${renderFlexInline(block, ctx)}</sup>`;
+  }
+  if (/^VerticalSpace$/i.test(name)) {
+    return `<div class="flex vertical-space" style="height:1em" aria-hidden="true"></div>`;
+  }
+  if (/^Ruby$/i.test(name)) {
+    return `<ruby class="flex ruby">${renderInsetLayouts(block, parentState, ctx)}</ruby>`;
+  }
+  if (/^Braillebox$/i.test(name)) {
+    return `<span class="flex braillebox">${renderInsetLayouts(block, parentState, ctx)}</span>`;
+  }
+  if (/^Column$/i.test(name)) {
+    return `<div class="flex column">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  }
+  if (/^Subtitle$/i.test(name)) {
+    return `<div class="flex subtitle">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  }
+  if (/^Variation$/i.test(name) || /^SetChessBoard$/i.test(name)) {
+    return `<div class="flex ${slug} chess-meta">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  }
+  if (/^S\/R expression$/i.test(name) || /^Sweave Options$/i.test(name)) {
+    return `<code class="flex ${slug}">${escapeLiveHtml(collectVisibleText(block))}</code>`;
+  }
+  // Europass / Springer author-address field insets.
+  if (
+    /^(First Name|Surname|Department|Organization|Org\. Address|Street|City|Post Code|State|Country|ItemInset)$/i
+      .test(name)
+  ) {
+    return `<span class="flex field ${slug}" data-field="${escapeLiveHtml(name)}">${renderInsetLayouts(block, parentState, ctx)}</span>`;
+  }
+  // Linguistics gloss / DRS family.
+  if (
+    /^(GroupGlossedWords|Interlinear Gloss|Concepts|Expression|Meaning|DRS|IfThen-DRS|Cond-DRS|QDRS|NegDRS|SDRS)/i
+      .test(name)
+  ) {
+    return `<div class="flex gloss ${slug}">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  }
+
+  const multipar = block.children.some((c) => c.type === "block" && c.tag === "layout");
+  if (multipar) {
+    return `<div class="flex ${slug}">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  }
+  return `<span class="flex ${slug}">${renderFlexInline(block, ctx)}</span>`;
 }
 
 /** Native InsetIPADeco::xhtml — combining mark between the two halves of child text. */

@@ -871,6 +871,24 @@ Deno.test("Live renderer - Chunk, Structure Tree, LilyPond, ChessBoard wrappers"
   assertStringIncludes(chess.html, 'class="chessboard"');
 });
 
+Deno.test("Live renderer - remaining Flex kinds get classed wrappers (no bare passthrough)", async () => {
+  const samples: [string, string[]][] = [
+    ["./fixtures/Presentations/Beamer.lyx", ["flex alternative", "flex bold", 'class="flex']],
+    ["./fixtures/Articles/Springer_Nature_Journals.lyx", ["data-field=", "flex field"]],
+    ["./fixtures/Modules/Linguistics.lyx", ["flex gloss", "groupglossedwords"]],
+    ["./fixtures/Modules/Braille.lyx", ["braillebox"]],
+    ["./fixtures/Modules/PDF_Form.lyx", ["pdf-form", "checkbox"]],
+    ["./fixtures/Curricula_Vitae/Modern_CV.lyx", ["flex column"]],
+  ];
+  for (const [rel, needles] of samples) {
+    const filePath = fromFileUrl(new URL(rel, import.meta.url));
+    const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+    for (const n of needles) {
+      assertStringIncludes(html.toLowerCase(), n.toLowerCase(), `${rel} missing ${n}`);
+    }
+  }
+});
+
 Deno.test("Live renderer - H-P, PDF comment/form, tablenotemark wrappers", async () => {
   const hpPath = fromFileUrl(new URL("./fixtures/Modules/Hazard_and_Precautionary_Statements.lyx", import.meta.url));
   const hp = await renderLiveHtml(parse(await Deno.readTextFile(hpPath)), { filePath: hpPath });

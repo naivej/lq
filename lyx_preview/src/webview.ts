@@ -169,6 +169,16 @@ span.pdf-form {
 span.hp-number { font-weight: 700; margin-right: 0.35em; }
 span.hp-statement { font-size: 0.95em; }
 sup.tablenotemark { font-size: 0.75em; }
+span.flex.field { display: inline-block; margin-right: 0.35em; }
+div.flex.gloss {
+  margin: 0.4em 0;
+  padding: 0.35em 0.5em;
+  border-left: 2px solid var(--vscode-panel-border);
+  font-size: 0.95em;
+}
+mark.flex.highlight { background: #fff3a0; color: inherit; }
+span.flex.overlay { }
+div.flex.column { display: inline-block; vertical-align: top; margin: 0 0.5em; }
 div.Boxed, div.Framed, div.Doublebox, div.Shadowbox, div.ovalbox, div.Ovalbox, div.Shaded {
   display: block;
   box-sizing: border-box;
