@@ -139,6 +139,36 @@ div.color-box {
 }
 span.alert { font-weight: 600; }
 span.smallcaps { font-variant: small-caps; }
+div.chunk, pre.structure-tree, pre.lilypond, div.chessboard, div.landscape-slide {
+  margin: 0.6em 0;
+  padding: 0.5em 0.7em;
+  border: 1px dashed var(--vscode-panel-border);
+  background: var(--vscode-textCodeBlock-background, var(--vscode-editorWidget-background));
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 0.9em;
+  white-space: pre-wrap;
+  overflow-x: auto;
+}
+div.chunk-title { font-weight: 600; margin-bottom: 0.35em; font-family: inherit; }
+pre.chunk-body { margin: 0; padding: 0; border: none; background: transparent; white-space: pre-wrap; }
+aside.pdf-comment {
+  margin: 0.5em 0;
+  padding: 0.45em 0.7em;
+  border-left: 3px solid var(--vscode-focusBorder);
+  background: var(--vscode-editorWidget-background);
+  font-size: 0.9em;
+}
+span.pdf-form {
+  display: inline-block;
+  margin: 0.15em 0.25em;
+  padding: 0.15em 0.4em;
+  border: 1px solid var(--vscode-input-border, var(--vscode-panel-border));
+  border-radius: 2px;
+  background: var(--vscode-input-background, transparent);
+}
+span.hp-number { font-weight: 700; margin-right: 0.35em; }
+span.hp-statement { font-size: 0.95em; }
+sup.tablenotemark { font-size: 0.75em; }
 div.Boxed, div.Framed, div.Doublebox, div.Shadowbox, div.ovalbox, div.Ovalbox, div.Shaded {
   display: block;
   box-sizing: border-box;

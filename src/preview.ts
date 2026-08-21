@@ -1560,6 +1560,54 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind.startsWith("Flex ") && kind.includes("Color Box")) {
     return `<div class="color-box">${renderInsetLayouts(block, parentState, ctx)}</div>`;
   }
+  // Literate / specialty Flex insets — semantic wrappers (not UNKNOWN; not bare passthrough).
+  if (kind.startsWith("Flex Chunk")) {
+    const title = argumentText(block, "1").trim();
+    const head = title ? `<div class="chunk-title">${escapeLiveHtml(title)}</div>` : "";
+    return `<div class="chunk">${head}<pre class="chunk-body">${renderInsetLayouts(block, parentState, ctx)}</pre></div>`;
+  }
+  if (kind.startsWith("Flex Structure Tree")) {
+    return `<pre class="structure-tree">${escapeLiveHtml(collectVisibleText(block))}</pre>`;
+  }
+  if (kind.startsWith("Flex LilyPond")) {
+    return `<pre class="lilypond">${escapeLiveHtml(collectVisibleText(block))}</pre>`;
+  }
+  if (kind.startsWith("Flex ChessBoard")) {
+    return `<div class="chessboard">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  }
+  if (kind.startsWith("Flex Mainline")) {
+    return `<span class="chess-mainline">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (kind.startsWith("Flex H-P number")) {
+    return `<span class="hp-number">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (kind.startsWith("Flex H-P statement")) {
+    return `<span class="hp-statement">${renderInsetLayouts(block, parentState, ctx)}</span>`;
+  }
+  if (kind.startsWith("Flex LandscapeSlide")) {
+    return `<div class="landscape-slide">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  }
+  if (kind.startsWith("Flex tablenotemark")) {
+    return `<sup class="tablenotemark">${renderFlexInline(block, ctx)}</sup>`;
+  }
+  if (
+    kind.startsWith("Flex PDF-Annotation") ||
+    kind.startsWith("Flex PDF-Markup") ||
+    kind.startsWith("Flex PDF-Comment") ||
+    kind.startsWith("Flex PDF-Margin")
+  ) {
+    const cls = layoutSlug(kind.slice("Flex ".length));
+    return `<aside class="pdf-comment ${cls}">${renderInsetLayouts(block, parentState, ctx)}</aside>`;
+  }
+  if (
+    kind.startsWith("Flex PDFAction") ||
+    kind.startsWith("Flex TextField") ||
+    kind.startsWith("Flex ChoiceMenu") ||
+    kind.startsWith("Flex PushButton")
+  ) {
+    const cls = layoutSlug(kind.slice("Flex ".length));
+    return `<span class="pdf-form ${cls}">${renderInsetLayouts(block, parentState, ctx)}</span>`;
+  }
   if (kind.startsWith("Box ")) {
     return renderBox(block, kind, parentState, ctx);
   }

@@ -852,6 +852,48 @@ Deno.test("Live renderer - Flex Color Box wraps content", async () => {
   assertStringIncludes(html, "A basic color box.");
 });
 
+Deno.test("Live renderer - Chunk, Structure Tree, LilyPond, ChessBoard wrappers", async () => {
+  const chunkPath = fromFileUrl(new URL("./fixtures/Modules/Noweb.lyx", import.meta.url));
+  const chunk = await renderLiveHtml(parse(await Deno.readTextFile(chunkPath)), { filePath: chunkPath });
+  assertStringIncludes(chunk.html, 'class="chunk"');
+  assertStringIncludes(chunk.html, "chunk-title");
+
+  const lingPath = fromFileUrl(new URL("./fixtures/Modules/Linguistics.lyx", import.meta.url));
+  const ling = await renderLiveHtml(parse(await Deno.readTextFile(lingPath)), { filePath: lingPath });
+  assertStringIncludes(ling.html, 'class="structure-tree"');
+
+  const lilyPath = fromFileUrl(new URL("./fixtures/Modules/LilyPond_Book.lyx", import.meta.url));
+  const lily = await renderLiveHtml(parse(await Deno.readTextFile(lilyPath)), { filePath: lilyPath });
+  assertStringIncludes(lily.html, 'class="lilypond"');
+
+  const chessPath = fromFileUrl(new URL("./fixtures/Modules/Chessboard.lyx", import.meta.url));
+  const chess = await renderLiveHtml(parse(await Deno.readTextFile(chessPath)), { filePath: chessPath });
+  assertStringIncludes(chess.html, 'class="chessboard"');
+});
+
+Deno.test("Live renderer - H-P, PDF comment/form, tablenotemark wrappers", async () => {
+  const hpPath = fromFileUrl(new URL("./fixtures/Modules/Hazard_and_Precautionary_Statements.lyx", import.meta.url));
+  const hp = await renderLiveHtml(parse(await Deno.readTextFile(hpPath)), { filePath: hpPath });
+  assertStringIncludes(hp.html, 'class="hp-number"');
+  assertStringIncludes(hp.html, 'class="hp-statement"');
+
+  const pdfPath = fromFileUrl(new URL("./fixtures/Modules/PDF_Comments.lyx", import.meta.url));
+  const pdf = await renderLiveHtml(parse(await Deno.readTextFile(pdfPath)), { filePath: pdfPath });
+  assertStringIncludes(pdf.html, "pdf-comment");
+
+  const formPath = fromFileUrl(new URL("./fixtures/Modules/PDF_Form.lyx", import.meta.url));
+  const form = await renderLiveHtml(parse(await Deno.readTextFile(formPath)), { filePath: formPath });
+  assertStringIncludes(form.html, "pdf-form");
+
+  // Filename on disk keeps %28/%29 literally (not decoded parentheses).
+  const aasPath = join(
+    fromFileUrl(new URL("./fixtures/Articles/", import.meta.url)),
+    "American_Astronomical_Society_%28AASTeX_v._6.3.1%29.lyx",
+  );
+  const aas = await renderLiveHtml(parse(await Deno.readTextFile(aasPath)), { filePath: aasPath });
+  assertStringIncludes(aas.html, 'class="tablenotemark"');
+});
+
 Deno.test("Live renderer - FloatList emits list of floats", async () => {
   // KOMA example has FloatList insets but no captioned floats → empty (like native).
   const koma = fromFileUrl(new URL("./fixtures/Books/KOMA-Script_Book.lyx", import.meta.url));
