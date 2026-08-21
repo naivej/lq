@@ -2063,6 +2063,9 @@ function renderInfo(block: BlockNode, ctx?: RenderCtx): string {
 /**
  * Resolve Info icon LFUN/name to a PNG `data:` URI from `{Resources}/images`.
  * Prefer classic/*.png (no magick); else SVGZ via ImageMagick when present.
+ *
+ * Info args often include LFUN arguments (`math-macro newmacroname_newcommand`);
+ * LyX icon files use underscores for those spaces.
  */
 function resolveInfoIconDataUri(
   name: string,
@@ -2070,30 +2073,40 @@ function resolveInfoIconDataUri(
   magickPath: string | undefined,
 ): string | undefined {
   if (!imagesDir || !name) return undefined;
-  const base = name.trim().split(/\s+/)[0]!;
-  const pngCandidates = [
-    path.join(imagesDir, "classic", `${base}.png`),
-    path.join(imagesDir, `${base}.png`),
+  const trimmed = name.trim();
+  const bases = [
+    trimmed.replace(/\s+/g, "_"), // full LFUN+args (native imageLibFileSearch)
+    trimmed.split(/\s+/)[0]!, // bare LFUN
   ];
-  for (const file of pngCandidates) {
-    if (!fileExists(file)) continue;
-    try {
-      const bytes = Deno.readFileSync(file);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
-      return `data:image/png;base64,${btoa(binary)}`;
-    } catch {
-      /* try next */
+  const unique = [...new Set(bases.filter(Boolean))];
+  for (const base of unique) {
+    const pngCandidates = [
+      path.join(imagesDir, "classic", `${base}.png`),
+      path.join(imagesDir, `${base}.png`),
+    ];
+    for (const file of pngCandidates) {
+      if (!fileExists(file)) continue;
+      try {
+        const bytes = Deno.readFileSync(file);
+        let binary = "";
+        for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+        return `data:image/png;base64,${btoa(binary)}`;
+      } catch {
+        /* try next */
+      }
     }
   }
-  const svgzCandidates = [
-    path.join(imagesDir, `${base}.svgz`),
-    path.join(imagesDir, "adwaita", `${base}.svgz`),
-    path.join(imagesDir, "oxygen", `${base}.svgz`),
-  ];
-  for (const file of svgzCandidates) {
-    const uri = rasterizeToPngDataUri(file, magickPath);
-    if (uri) return uri;
+  for (const base of unique) {
+    const svgzCandidates = [
+      path.join(imagesDir, `${base}.svgz`),
+      path.join(imagesDir, "adwaita", `${base}.svgz`),
+      path.join(imagesDir, "oxygen", `${base}.svgz`),
+      path.join(imagesDir, "classic", `${base}.svgz`),
+    ];
+    for (const file of svgzCandidates) {
+      const uri = rasterizeToPngDataUri(file, magickPath);
+      if (uri) return uri;
+    }
   }
   return undefined;
 }

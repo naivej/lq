@@ -340,6 +340,13 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
   assert(!html.includes("<mi>\\cb</mi>"));
   assert(!html.includes("<mi>\\fb</mi>"));
   assertStringIncludes(html, "⟹"); // \gr → \Longrightarrow via preamble newcommand
+  // Info icon with LFUN args: spaces → underscores in LyX images/classic/.
+  assertStringIncludes(html, 'data-info-icon="math-macro newmacroname_newcommand"');
+  assert(
+    html.includes('data-info-icon="math-macro newmacroname_newcommand"') &&
+      html.includes("data:image/png;base64,"),
+    "math-macro toolbar Info icon must resolve classic PNG (not missing/glyph-only)",
+  );
   assert(!html.includes('encoding="application/x-tex">$\\begin{cases}'), "multi-line cases must include the body, not only the first line");
   assert(
     !html.includes('encoding="application/x-tex">\\newcommand{\\qG}'),
