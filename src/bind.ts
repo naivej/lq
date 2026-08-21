@@ -52,10 +52,37 @@ export async function loadShortcutMap(bindDir: string | undefined): Promise<Shor
   return out;
 }
 
+/**
+ * System cua.bind first, then user-dir bind (DL130 J5).
+ * User keys are prepended so `shortcut` (singular) prefers the user binding.
+ */
+export async function loadShortcutMapMerged(
+  systemBindDir: string | undefined,
+  userBindDir: string | undefined,
+): Promise<ShortcutMap> {
+  const map = await loadShortcutMap(systemBindDir);
+  if (!userBindDir || userBindDir === systemBindDir) return map;
+  const user = await loadShortcutMap(userBindDir);
+  for (const [lfun, keys] of user) {
+    const existing = map.get(lfun) ?? [];
+    const merged: string[] = [];
+    for (const k of keys) if (!merged.includes(k)) merged.push(k);
+    for (const k of existing) if (!merged.includes(k)) merged.push(k);
+    map.set(lfun, merged);
+  }
+  return map;
+}
+
 /** Bind dir next to layouts: `…/Resources/layouts` → `…/Resources/bind`. */
 export function bindDirFromLayouts(layoutsDir: string | undefined): string | undefined {
   if (!layoutsDir) return undefined;
   return path.resolve(layoutsDir, "..", "bind");
+}
+
+/** Images dir next to layouts: `…/Resources/layouts` → `…/Resources/images`. */
+export function imagesDirFromLayouts(layoutsDir: string | undefined): string | undefined {
+  if (!layoutsDir) return undefined;
+  return path.resolve(layoutsDir, "..", "images");
 }
 
 async function loadBindFile(

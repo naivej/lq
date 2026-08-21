@@ -22,13 +22,15 @@ import {
   extractDocumentLayoutContext,
   findLayoutFile,
   getLayoutHtmlForClass,
+  getLyxUserLayoutsDir,
   resolveLayoutSearchPaths,
   type LayoutFont,
   type LayoutHtml,
 } from "./schema.ts";
 import {
   bindDirFromLayouts,
-  loadShortcutMap,
+  imagesDirFromLayouts,
+  loadShortcutMapMerged,
   lookupShortcut,
   type ShortcutMap,
 } from "./bind.ts";
@@ -220,6 +222,8 @@ interface RenderCtx {
   inWrap: boolean;
   filePath?: string;
   systemDocDir?: string;
+  /** `{Resources}/images` for Info icon PNG/SVGZ lookup. */
+  systemImagesDir?: string;
   magickPath?: string;
   labels: Map<string, string>;
   /** Plain title/caption text for `nameref` (heading or float caption). */
@@ -895,6 +899,7 @@ export async function renderLiveHtml(
     inWrap: false,
     filePath: options.filePath,
     systemDocDir: systemLayoutsDir ? path.resolve(systemLayoutsDir, "..", "doc") : undefined,
+    systemImagesDir: imagesDirFromLayouts(systemLayoutsDir),
     magickPath: findMagick(systemLayoutsDir),
     labels: new Map(),
     labelTitles: new Map(),
@@ -905,7 +910,10 @@ export async function renderLiveHtml(
     biboptions: "",
     outline: [],
     layoutHtml: await loadLayoutHtml(ast, searchPaths),
-    shortcuts: await loadShortcutMap(bindDirFromLayouts(systemLayoutsDir)),
+    shortcuts: await loadShortcutMapMerged(
+      bindDirFromLayouts(systemLayoutsDir),
+      bindDirFromLayouts(await getLyxUserLayoutsDir(systemLayoutsDir)),
+    ),
     nomencl: [],
     index: [],
     nomenclSeq: 0,
@@ -1991,10 +1999,13 @@ function renderInfo(block: BlockNode, ctx?: RenderCtx): string {
   const type = (findProperty(block, "type") ?? "").toLowerCase();
   const arg = findProperty(block, "arg") ?? collectVisibleText(block);
   if (type === "icon") {
-    // No LyX PNG export in Live — keep a titled glyph so icons stay visible.
-    return arg
-      ? `<span class="info-icon" title="${escapeLiveHtml(arg)}" role="img" aria-label="${escapeLiveHtml(arg)}">▣</span>`
-      : "";
+    if (!arg) return "";
+    const src = resolveInfoIconDataUri(arg, ctx?.systemImagesDir, ctx?.magickPath);
+    if (src) {
+      return `<img class="info-icon" src="${src}" alt="${escapeLiveHtml(arg)}" title="${escapeLiveHtml(arg)}" aria-label="${escapeLiveHtml(arg)}" data-info-icon="${escapeLiveHtml(arg)}"/>`;
+    }
+    // Glyph fallback when LyX images / magick are unavailable (DL130 J4).
+    return `<span class="info-icon" title="${escapeLiveHtml(arg)}" role="img" aria-label="${escapeLiveHtml(arg)}">▣</span>`;
   }
   if (type === "shortcut" || type === "shortcuts") {
     if (!arg) return "";
@@ -2004,6 +2015,44 @@ function renderInfo(block: BlockNode, ctx?: RenderCtx): string {
     return `<kbd class="${type === "shortcuts" ? "shortcuts" : "shortcut"}" title="${escapeLiveHtml(title)}">${escapeLiveHtml(body)}</kbd>`;
   }
   return arg ? `<span class="info">${escapeLiveHtml(arg)}</span>` : "";
+}
+
+/**
+ * Resolve Info icon LFUN/name to a PNG `data:` URI from `{Resources}/images`.
+ * Prefer classic/*.png (no magick); else SVGZ via ImageMagick when present.
+ */
+function resolveInfoIconDataUri(
+  name: string,
+  imagesDir: string | undefined,
+  magickPath: string | undefined,
+): string | undefined {
+  if (!imagesDir || !name) return undefined;
+  const base = name.trim().split(/\s+/)[0]!;
+  const pngCandidates = [
+    path.join(imagesDir, "classic", `${base}.png`),
+    path.join(imagesDir, `${base}.png`),
+  ];
+  for (const file of pngCandidates) {
+    if (!fileExists(file)) continue;
+    try {
+      const bytes = Deno.readFileSync(file);
+      let binary = "";
+      for (let i = 0; i < bytes.length; i++) binary += String.fromCharCode(bytes[i]!);
+      return `data:image/png;base64,${btoa(binary)}`;
+    } catch {
+      /* try next */
+    }
+  }
+  const svgzCandidates = [
+    path.join(imagesDir, `${base}.svgz`),
+    path.join(imagesDir, "adwaita", `${base}.svgz`),
+    path.join(imagesDir, "oxygen", `${base}.svgz`),
+  ];
+  for (const file of svgzCandidates) {
+    const uri = rasterizeToPngDataUri(file, magickPath);
+    if (uri) return uri;
+  }
+  return undefined;
 }
 
 function renderCaptionInline(block: BlockNode, ctx: RenderCtx): string {
@@ -3111,6 +3160,12 @@ function mapRole(node: SemNode): SemNode {
     return { role: "footnote", children };
   }
   if (tag === "img") {
+    const classes = cls.split(/\s+/).filter(Boolean);
+    const iconName = node.attrs?.["aria-label"] || node.attrs?.alt || node.attrs?.title;
+    // Info icons (glyph or PNG/`data:`) compare by LFUN/name, not markup shape (DL130 J4).
+    if (classes.includes("info-icon") || node.attrs?.["data-info-icon"] || (iconName && classes.includes("icon"))) {
+      return { role: "icon", attrs: iconName ? { name: iconName } : undefined, children: [] };
+    }
     const src = node.attrs?.["data-filename"] || basenameAttr(node.attrs?.src ?? "");
     return { role: "image", attrs: src ? { filename: src } : undefined, children: [] };
   }
@@ -3120,6 +3175,24 @@ function mapRole(node: SemNode): SemNode {
   if (tag === "u") return { role: "underline", children };
   if (tag === "s" || tag === "del") return { role: "strike", children };
   if (tag === "aside") return { role: "note", children };
+  if (tag === "kbd" || tag === "bdo") {
+    const classes = cls.split(/\s+/).filter(Boolean);
+    if (classes.includes("shortcut") || classes.includes("shortcuts") || classes.includes("info-shortcut")) {
+      const text = collapseWs(collectText({ role: tag, children, text: node.text }), false).trim();
+      return { role: "shortcut", text: text || undefined, children: [] };
+    }
+  }
+  if (tag === "a") {
+    const classes = cls.split(/\s+/).filter(Boolean);
+    if (classes.includes("ref") || classes.includes("reference")) {
+      return mapRefRole(node, children);
+    }
+    if (classes.includes("citation")) return { role: "citation", children };
+    if (classes.includes("href")) {
+      const href = node.attrs?.href ?? "";
+      return { role: "link", attrs: href ? { href } : undefined, children };
+    }
+  }
   if (tag === "p" || tag === "div") {
     const classes = cls.split(/\s+/).filter(Boolean);
     if (classes.includes("float-figure") || classes.includes("float-table")) {
@@ -3132,12 +3205,32 @@ function mapRole(node: SemNode): SemNode {
     return { role: "paragraph", children };
   }
   if (tag === "span") {
-    if (cls.split(/\s+/).includes("citation")) return { role: "citation", children };
-    if (cls.split(/\s+/).includes("ref")) return { role: "ref", children };
+    const classes = cls.split(/\s+/).filter(Boolean);
+    if (classes.includes("citation")) return { role: "citation", children };
+    if (classes.includes("ref")) return mapRefRole(node, children);
+    if (classes.includes("info-icon")) {
+      const name = node.attrs?.["aria-label"] || node.attrs?.title || collectText({ role: tag, children, text: node.text }).trim();
+      return { role: "icon", attrs: name ? { name } : undefined, children: [] };
+    }
     return { role: "wrap", children };
   }
   if (tag === "text") return { role: "text", text: node.text, children: [] };
   return { role: "wrap", children };
+}
+
+/** Cross-refs: pageref text is oracle-tolerant (DL130 J1); other refs keep link text. */
+function mapRefRole(node: SemNode, children: SemNode[]): SemNode {
+  const href = (node.attrs?.href ?? "").replace(/^#/, "");
+  const title = node.attrs?.title ?? "";
+  const pageTolerant = /page\s*reference/i.test(title) ||
+    (node.attrs?.class ?? "").split(/\s+/).includes("pageref");
+  const attrs: Record<string, string> = {};
+  if (href) attrs.target = href;
+  if (pageTolerant) {
+    attrs.page = "tolerant";
+    return { role: "ref", attrs, children: [] };
+  }
+  return { role: "ref", attrs: Object.keys(attrs).length ? attrs : undefined, children };
 }
 
 function collectText(node: SemNode): string {

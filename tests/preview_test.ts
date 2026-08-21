@@ -312,6 +312,13 @@ Deno.test("Live renderer - Help Math.lyx omits Phantom and does not dump math-mo
     assertStringIncludes(html, "Ctrl+M");
     assert(!html.includes(">math-mode</kbd>"), "resolved shortcuts must show the key, not the LFUN body");
   }
+  // DL130 J4: classic PNG when LyX images are on disk; else glyph fallback.
+  if (html.includes('data-info-icon="math-mode"')) {
+    assertStringIncludes(html, '<img class="info-icon"');
+    assertStringIncludes(html, "data:image/png;base64,");
+  } else {
+    assertStringIncludes(html, 'aria-label="math-mode"');
+  }
   assertStringIncludes(html, "class=\"typewriter\"");
   assertStringIncludes(html, "class=\"sans\"");
   assertStringIncludes(html, "\u2423");
@@ -757,6 +764,14 @@ Deno.test("Live renderer - Help Tutorial.lyx TOC, Info, LyX-Code, quotes", async
   assertStringIncludes(html, 'class="ref"');
   assertStringIncludes(html, "<table");
   assertStringIncludes(html, "<math");
+  // Toolbar Info icons (buffer-view) — PNG data URI when classic/ images exist.
+  assert(
+    html.includes('data-info-icon="buffer-view"') || html.includes('aria-label="buffer-view"'),
+    "Tutorial toolbar Info icons must render as img or glyph",
+  );
+  if (html.includes('data-info-icon="buffer-view"')) {
+    assertStringIncludes(html, "data:image/png;base64,");
+  }
 });
 
 Deno.test("Live renderer - Help Development.lyx multirow cells emit rowspan", async () => {
@@ -1015,6 +1030,36 @@ Deno.test("Live comparison - incidental ids and classes are ignored", () => {
   const a = normalizeReaderHtml(`<div class="standard" id="magicparlabel-9">Hello</div>`);
   const b = normalizeReaderHtml(`<div class="standard">Hello</div>`);
   assert(semanticEqual(a, b), formatSem(a) + "\n---\n" + formatSem(b));
+});
+
+Deno.test("Live comparison - DL130 tolerances (pageref text, icon markup, shortcut tag)", () => {
+  // J1: pageref link text (figure number vs PDF page) must not break equality when target matches.
+  const livePage = normalizeReaderHtml(
+    `<a class="ref" href="#fig_Two_images" title="page reference (Live shows target number/name, not a page)">4.2</a>`,
+  );
+  const nativePage = normalizeReaderHtml(
+    `<a class="ref pageref" href="#fig_Two_images">12</a>`,
+  );
+  assert(semanticEqual(livePage, nativePage), formatSem(livePage) + "\n---\n" + formatSem(nativePage));
+
+  // Non-pageref refs still compare visible text.
+  const liveRef = normalizeReaderHtml(`<a class="ref" href="#sec_a">1</a>`);
+  const nativeRef = normalizeReaderHtml(`<a class="ref" href="#sec_a">Introduction</a>`);
+  assert(!semanticEqual(liveRef, nativeRef), "ordinary ref text must still be compared");
+
+  // J4: glyph vs img — same icon name.
+  const glyph = normalizeReaderHtml(
+    `<span class="info-icon" title="buffer-view" role="img" aria-label="buffer-view">▣</span>`,
+  );
+  const png = normalizeReaderHtml(
+    `<img class="info-icon" src="data:image/png;base64,aa" alt="buffer-view" aria-label="buffer-view"/>`,
+  );
+  assert(semanticEqual(glyph, png), formatSem(glyph) + "\n---\n" + formatSem(png));
+
+  // J5: kbd vs native-ish bdo — same chord text.
+  const kbd = normalizeReaderHtml(`<kbd class="shortcuts" title="math-mode">Ctrl+M</kbd>`);
+  const bdo = normalizeReaderHtml(`<bdo class="shortcuts" dir="ltr">Ctrl+M</bdo>`);
+  assert(semanticEqual(kbd, bdo), formatSem(kbd) + "\n---\n" + formatSem(bdo));
 });
 
 Deno.test("Live CSP floor - restrictive policy string has no remote sources", () => {
