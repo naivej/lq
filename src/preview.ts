@@ -434,6 +434,49 @@ function cssLyxColor(name: string): string {
   return LYX_COLOR[name.toLowerCase()] ?? name;
 }
 
+/** Map common LyX `\lang` names to HTML BCP-47 tags; unknown names pass through. */
+function htmlLangFromLyx(name: string): string {
+  const key = name.trim().toLowerCase();
+  const map: Record<string, string> = {
+    english: "en",
+    american: "en-US",
+    british: "en-GB",
+    australian: "en-AU",
+    canadian: "en-CA",
+    german: "de",
+    ngerman: "de",
+    austrian: "de-AT",
+    naustrian: "de-AT",
+    french: "fr",
+    francais: "fr",
+    spanish: "es",
+    italian: "it",
+    dutch: "nl",
+    portuguese: "pt",
+    brazilian: "pt-BR",
+    russian: "ru",
+    polish: "pl",
+    czech: "cs",
+    slovak: "sk",
+    hungarian: "hu",
+    swedish: "sv",
+    danish: "da",
+    finnish: "fi",
+    norwegian: "no",
+    norsk: "no",
+    nynorsk: "nn",
+    greek: "el",
+    hebrew: "he",
+    arabic: "ar",
+    chinese: "zh",
+    japanese: "ja",
+    korean: "ko",
+    turkish: "tr",
+    latin: "la",
+  };
+  return map[key] ?? key;
+}
+
 /** Native `fontToHtmlAttribute` size map (LyX 2.5 `output_xhtml.cpp`). */
 const FONT_SIZE_CSS: Record<string, string> = {
   tiny: "x-small",
@@ -1311,6 +1354,20 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     setInline("typewriter", p.family === "typewriter");
     setInline("sans", p.family === "sans");
     setInline("noun", p.noun === "on");
+    const langRaw = (p.lang ?? "").trim();
+    const langCode = langRaw ? htmlLangFromLyx(langRaw) : "";
+    const langKey = langCode ? `lang:${langCode}` : "";
+    const langIdx = open.findIndex((k) => k.startsWith("lang:"));
+    if (langIdx !== -1 && open[langIdx] !== langKey) {
+      while (open.length > langIdx) {
+        const k = open.pop()!;
+        html += (INLINE[k] ?? { close: "</span>" }).close;
+      }
+    }
+    if (langCode && !open.includes(langKey)) {
+      html += `<span lang="${escapeLiveHtml(langCode)}">`;
+      open.push(langKey);
+    }
     const raw = (p.color ?? "").toLowerCase();
     const wantColor = raw !== "" && raw !== "none" && raw !== "inherit" && raw !== "default" && raw !== "ignore";
     const colorKey = wantColor ? `color:${raw}` : "";
@@ -1910,11 +1967,14 @@ function renderInfo(block: BlockNode): string {
   const type = (findProperty(block, "type") ?? "").toLowerCase();
   const arg = findProperty(block, "arg") ?? collectVisibleText(block);
   if (type === "icon") {
-    return arg ? `<span class="info-icon" title="${escapeLiveHtml(arg)}">${escapeLiveHtml(arg)}</span>` : "";
+    // No LyX PNG export in Live — keep a titled glyph so icons stay visible.
+    return arg
+      ? `<span class="info-icon" title="${escapeLiveHtml(arg)}" role="img" aria-label="${escapeLiveHtml(arg)}">▣</span>`
+      : "";
   }
   if (type === "shortcut" || type === "shortcuts") {
     return arg
-      ? `<kbd class="${type === "shortcuts" ? "shortcuts" : "shortcut"}">${escapeLiveHtml(arg)}</kbd>`
+      ? `<kbd class="${type === "shortcuts" ? "shortcuts" : "shortcut"}" title="LFUN">${escapeLiveHtml(arg)}</kbd>`
       : "";
   }
   return arg ? `<span class="info">${escapeLiveHtml(arg)}</span>` : "";
@@ -2625,12 +2685,20 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
   ) {
     const target = findProperty(block, "reference") ?? name;
     const id = xmlId(target);
-    let text = ctx.labels.get(target) || target;
+    const resolved = ctx.labels.get(target);
+    let text = resolved || target;
     if (command === "eqref" || subtype === "eqref") text = `(${text})`;
     else if (command === "pageref" || command === "vpageref" || subtype === "pageref" || subtype === "vpageref") {
-      text = "elsewhere";
+      // No printed page numbers in Live — prefer the numbered target (figure/section)
+      // when known; otherwise the reference name. Avoid the opaque "elsewhere".
+      text = resolved || target || "elsewhere";
+    } else if (command === "nameref" || subtype === "nameref") {
+      text = resolved || target;
     }
-    return `<a class="ref" href="#${escapeLiveHtml(id)}">${escapeLiveHtml(text)}</a>`;
+    const title = (command === "pageref" || command === "vpageref" || subtype === "pageref" || subtype === "vpageref")
+      ? ` title="page reference (Live shows target number/name, not a page)"`
+      : "";
+    return `<a class="ref" href="#${escapeLiveHtml(id)}"${title}>${escapeLiveHtml(text)}</a>`;
   }
   if (subtype === "bibtex") return renderBibliography(ctx);
   if (subtype === "toc") return renderToc(ctx);

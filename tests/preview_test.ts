@@ -871,6 +871,22 @@ Deno.test("Live renderer - Chunk, Structure Tree, LilyPond, ChessBoard wrappers"
   assertStringIncludes(chess.html, 'class="chessboard"');
 });
 
+Deno.test("Live renderer - pageref uses target number not elsewhere", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/UserGuide.lyx", import.meta.url));
+  const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assert(!html.includes(">elsewhere</a>"), "pageref/vpageref must not hardcode elsewhere when a target exists");
+  assertStringIncludes(html, 'href="#fig_Two_images"');
+  assertStringIncludes(html, 'title="page reference');
+  assertStringIncludes(html, ">4.2</a>");
+});
+
+Deno.test("Live renderer - lang property emits HTML lang spans", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Help/Additional.lyx", import.meta.url));
+  const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, 'lang="de"');
+  assertStringIncludes(html, 'lang="en"');
+});
+
 Deno.test("Live renderer - remaining Flex kinds get classed wrappers (no bare passthrough)", async () => {
   const samples: [string, string[]][] = [
     ["./fixtures/Presentations/Beamer.lyx", ["flex alternative", "flex bold", 'class="flex']],
