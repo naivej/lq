@@ -72,10 +72,60 @@ figure > .float-body { display: flex; justify-content: center; margin: 0.4em 0; 
 figure table { margin-left: auto; margin-right: auto; }
 table { border-collapse: collapse; margin: 0.75em 0; }
 td, th { border: 1px solid var(--vscode-panel-border); padding: 0.25em 0.5em; }
-.foot_label, .foot_intitle_label { font-size: 0.75em; vertical-align: super; cursor: default; }
-.foot_inner, .foot_intitle_inner { display: none; }
-.foot:hover .foot_inner, .foot:focus-within .foot_inner,
-.foot_intitle:hover .foot_intitle_inner, .foot_intitle:focus-within .foot_intitle_inner { display: inline; }
+/* DL131: click <details> to expand/collapse — no hover (so inner text is selectable). */
+details.disclose { display: inline; }
+details.disclose > summary {
+  cursor: pointer;
+  list-style: none;
+}
+details.disclose > summary::-webkit-details-marker { display: none; }
+details.disclose.foot > summary {
+  font-size: 0.75em;
+  vertical-align: super;
+  color: var(--vscode-textLink-foreground);
+}
+details.disclose .disclose-body,
+details.disclose .foot_inner {
+  display: inline;
+  margin-left: 0.15em;
+}
+/* Title footnotes: always visible inline (selectable). */
+.foot_intitle_label { font-size: 0.75em; vertical-align: super; }
+.foot_intitle_inner { display: inline; }
+details.disclose.note,
+details.disclose.box,
+details.disclose.float,
+details.disclose.wrap,
+details.disclose.marginal,
+details.disclose.branch,
+details.disclose.flex-container {
+  display: block;
+  margin: 0.5em 0;
+  border: 1px solid var(--vscode-panel-border);
+  border-radius: 4px;
+  padding: 0.25em 0.5em;
+}
+details.disclose.note > summary,
+details.disclose.box > summary,
+details.disclose.float > summary,
+details.disclose.wrap > summary,
+details.disclose.marginal > summary,
+details.disclose.branch > summary,
+details.disclose.flex-container > summary {
+  font-weight: 600;
+  font-size: 0.9em;
+  color: var(--vscode-descriptionForeground);
+}
+details.disclose.note .disclose-body,
+details.disclose.box .disclose-body,
+details.disclose.float .disclose-body,
+details.disclose.wrap .disclose-body,
+details.disclose.marginal .disclose-body,
+details.disclose.branch .disclose-body,
+details.disclose.flex-container .disclose-body {
+  display: block;
+  margin-top: 0.35em;
+}
 span.formula { }
 math { font-family: "Cambria Math", "Latin Modern Math", "STIX Two Math", serif; font-size: 1.05em; }
 span.formula:has(> math[display="block"]),

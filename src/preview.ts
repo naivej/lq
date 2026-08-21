@@ -1108,7 +1108,13 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
       i++;
       continue;
     }
-    if (/^<figure\b[\s\S]*<\/figure>$/.test(inner.trim())) {
+    // Promote bare figures (and DL131 disclosed floats) out of Standard wrappers.
+    const trimmedInner = inner.trim();
+    if (
+      /^<figure\b[\s\S]*<\/figure>$/.test(trimmedInner) ||
+      /^<details\b[^>]*\bfloat\b[^>]*>[\s\S]*<\/details>$/.test(trimmedInner) ||
+      /^<details\b[^>]*\bwrap\b[^>]*>[\s\S]*<\/details>$/.test(trimmedInner)
+    ) {
       html += inner;
     } else {
       const firstOfRun = i === 0 ||
@@ -1527,19 +1533,32 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     diagnostic(ctx, "ERT_OMITTED", "An ERT inset was omitted from the Live projection.");
     return "";
   }
+  // Live shows Note/Comment as click-disclosable private notes (DL131); query still uses isInvisibleInset.
+  if (kind === "Note Note" || kind === "Note Comment") {
+    const label = kind === "Note Comment" ? "Comment" : "Note";
+    const cls = kind === "Note Comment" ? "note-comment" : "note-note";
+    const inner = renderInsetLayouts(block, parentState, ctx);
+    return wrapDisclosure(`note ${cls}`, label, inner);
+  }
   if (isInvisibleInset(block)) return "";
   if (kind === "Note Greyedout" || kind.startsWith("Note Greyedout")) {
     return `<span class="note_greyedout" style="color:#A0A0A0">${renderInsetLayouts(block, parentState, ctx)}</span>`;
   }
   if (kind === "Foot" || kind.startsWith("Foot ")) {
     if (ctx.inTitle) {
+      // Title footnotes stay inline (match LyXHTML author/title shape); body feet use click disclosure.
       const mark = TITLE_MARKS[ctx.titleFoot] ?? "*".repeat(ctx.titleFoot + 1);
       ctx.titleFoot += 1;
       return `<span class="foot_intitle"><span class="foot_intitle_label">${mark}</span><span class="foot_intitle_inner">${renderFootInner(block, parentState, ctx)}</span></span>`;
     }
     ctx.footnote += 1;
     const n = ctx.footnote;
-    return `<span class="foot"><span class="foot_label">${n}</span><span class="foot_inner">${renderInsetLayouts(block, parentState, ctx)}</span></span>`;
+    return wrapDisclosure(
+      "foot",
+      String(n),
+      renderInsetLayouts(block, parentState, ctx),
+      { summaryClass: "foot_label", bodyClass: "foot_inner" },
+    );
   }
   if (kind === "FormulaMacro" || kind.startsWith("FormulaMacro")) {
     return "";
@@ -1563,7 +1582,11 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind === "Tabular") return renderTabular(block, parentState, ctx);
   if (kind.startsWith("Float ")) return renderFloat(block, kind, parentState, ctx);
   if (kind === "Marginal" || kind.startsWith("Marginal ")) {
-    return `<div class="marginal">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    return wrapDisclosure(
+      "marginal",
+      "Margin note",
+      renderInsetLayouts(block, parentState, ctx),
+    );
   }
   if (kind.startsWith("Wrap ")) return renderWrap(block, parentState, ctx);
   if (kind === "listings" || kind.startsWith("listings ")) {
@@ -1617,7 +1640,8 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const preface = argumentText(block, "2");
     const body = renderInsetLayouts(block, parentState, ctx);
     const head = preface ? `<div class="multicol-preface">${escapeLiveHtml(preface)}</div>` : "";
-    return `${head}<div class="${flexNativeClass(kind)}" style="column-count: ${escapeLiveHtml(n)}">${body}</div>`;
+    const box = `${head}<div class="${flexNativeClass(kind)}" style="column-count: ${escapeLiveHtml(n)}">${body}</div>`;
+    return wrapDisclosure("flex-container multicol", "Columns", box);
   }
   if (kind.startsWith("Flex Rotatebox")) {
     const angle = argumentText(block, "2") || "0";
@@ -1644,7 +1668,8 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const maxW = argumentText(block, "2").trim();
     const css = maxW && !maxW.startsWith("\\") ? widthToCss(maxW) : "";
     const style = css ? ` style="max-width: ${escapeLiveHtml(css)}"` : "";
-    return `<div class="${flexNativeClass(kind)}"${style}>${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    const box = `<div class="${flexNativeClass(kind)}"${style}>${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    return wrapDisclosure("flex-container minipage", "Minipage", box);
   }
   if (kind === "Flex URL" || kind.startsWith("Flex URL")) {
     // Native: outer span.flex_url + HTMLInnerTag a (stdinsets.inc).
@@ -1670,17 +1695,21 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind.startsWith("Flex Sidenote") || kind.startsWith("Flex Marginnote")) {
     const cls = kind.includes("Marginnote") ? "marginnote" : "sidenote";
-    return `<aside class="${cls} marginal">${renderInsetLayouts(block, parentState, ctx)}</aside>`;
+    const label = kind.includes("Marginnote") ? "Margin note" : "Sidenote";
+    const aside = `<aside class="${cls} marginal">${renderInsetLayouts(block, parentState, ctx)}</aside>`;
+    return wrapDisclosure(`flex-container ${cls}`, label, aside);
   }
   // tcolorbox.module — DocBook phrase role; Live uses a bordered box.
   if (kind.startsWith("Flex ") && kind.includes("Color Box")) {
-    return `<div class="color-box">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    const box = `<div class="color-box">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    return wrapDisclosure("flex-container color-box", "Color Box", box);
   }
   // Literate / specialty Flex insets — semantic wrappers (not UNKNOWN; not bare passthrough).
   if (kind.startsWith("Flex Chunk")) {
     const title = argumentText(block, "1").trim();
     const head = title ? `<div class="chunk-title">${escapeLiveHtml(title)}</div>` : "";
-    return `<div class="chunk">${head}<pre class="chunk-body">${renderInsetLayouts(block, parentState, ctx)}</pre></div>`;
+    const box = `<div class="chunk">${head}<pre class="chunk-body">${renderInsetLayouts(block, parentState, ctx)}</pre></div>`;
+    return wrapDisclosure("flex-container chunk", title || "Chunk", box);
   }
   if (kind.startsWith("Flex Structure Tree")) {
     return `<pre class="structure-tree">${escapeLiveHtml(collectVisibleText(block))}</pre>`;
@@ -1689,7 +1718,8 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return `<pre class="lilypond">${escapeLiveHtml(collectVisibleText(block))}</pre>`;
   }
   if (kind.startsWith("Flex ChessBoard")) {
-    return `<div class="chessboard">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    const box = `<div class="chessboard">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    return wrapDisclosure("flex-container chessboard", "Chess board", box);
   }
   if (kind.startsWith("Flex Mainline")) {
     return `<span class="chess-mainline">${renderFlexInline(block, ctx)}</span>`;
@@ -1701,7 +1731,8 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return `<span class="hp-statement">${renderInsetLayouts(block, parentState, ctx)}</span>`;
   }
   if (kind.startsWith("Flex LandscapeSlide")) {
-    return `<div class="landscape-slide">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    const box = `<div class="landscape-slide">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    return wrapDisclosure("flex-container landscape-slide", "Slide", box);
   }
   if (kind.startsWith("Flex tablenotemark")) {
     return `<sup class="tablenotemark">${renderFlexInline(block, ctx)}</sup>`;
@@ -1713,7 +1744,8 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     kind.startsWith("Flex PDF-Margin")
   ) {
     const cls = layoutSlug(kind.slice("Flex ".length));
-    return `<aside class="pdf-comment ${cls}">${renderInsetLayouts(block, parentState, ctx)}</aside>`;
+    const aside = `<aside class="pdf-comment ${cls}">${renderInsetLayouts(block, parentState, ctx)}</aside>`;
+    return wrapDisclosure(`flex-container pdf-comment ${cls}`, "PDF comment", aside);
   }
   if (
     kind.startsWith("Flex PDFAction") ||
@@ -1733,7 +1765,8 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind.startsWith("Flex Subequations")) {
     enterSubequations(ctx);
     try {
-      return `<div class="subequations">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+      const box = `<div class="subequations">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+      return wrapDisclosure("flex-container subequations", "Subequations", box);
     } finally {
       ctx.subeq = null;
     }
@@ -1750,7 +1783,12 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind.startsWith("Branch ")) {
     if (!branchProducesOutput(block, ctx)) return "";
-    return renderInsetLayouts(block, parentState, ctx);
+    const name = kind.slice("Branch ".length).trim() || "Branch";
+    return wrapDisclosure(
+      "branch",
+      `Branch ${name}`,
+      renderInsetLayouts(block, parentState, ctx),
+    );
   }
   if (kind.startsWith("Flex ")) {
     return renderFlexDefault(kind, block, parentState, ctx);
@@ -2035,7 +2073,23 @@ function renderBox(block: BlockNode, kind: string, parentState: TraversalState, 
   const inner = nested.length <= 1
     ? (nested[0] ? renderLayoutInline(nested[0].node, ctx) : "")
     : renderInsetLayouts(block, parentState, ctx);
-  return `<div class="${escapeLiveHtml(variant)}"${style}>${inner}</div>`;
+  const box = `<div class="${escapeLiveHtml(variant)}"${style}>${inner}</div>`;
+  return wrapDisclosure(`box ${layoutSlug(variant)}`, variant || "Box", box);
+}
+
+/**
+ * Click-to-toggle disclosure (DL131 J1): `<details>`/`<summary>`, no JS.
+ * Always starts collapsed (J5). Hover must not open.
+ */
+function wrapDisclosure(
+  className: string,
+  summaryLabel: string,
+  bodyHtml: string,
+  opts?: { summaryClass?: string; bodyClass?: string },
+): string {
+  const sumCls = opts?.summaryClass ?? "disclose-summary";
+  const bodyCls = opts?.bodyClass ?? "disclose-body";
+  return `<details class="disclose ${escapeLiveHtml(className)}"><summary class="${escapeLiveHtml(sumCls)}">${escapeLiveHtml(summaryLabel)}</summary><span class="${escapeLiveHtml(bodyCls)}">${bodyHtml}</span></details>`;
 }
 
 function renderInfo(block: BlockNode, ctx?: RenderCtx): string {
@@ -2273,10 +2327,15 @@ function renderFlexDefault(
 
   // InsetLayout HTMLTag / HTMLClass / Font when class+modules provide them.
   const fromLayout = renderFlexFromLayout(kind, name, slug, multipar, block, parentState, ctx);
-  if (fromLayout !== undefined) return fromLayout;
+  if (fromLayout !== undefined) {
+    return multipar
+      ? wrapDisclosure(`flex-container ${slug}`, name || "Flex", fromLayout)
+      : fromLayout;
+  }
 
   if (multipar) {
-    return `<div class="flex ${slug}">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    const box = `<div class="flex ${slug}">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    return wrapDisclosure(`flex-container ${slug}`, name || "Flex", box);
   }
   return `<span class="flex ${slug}">${renderFlexInline(block, ctx)}</span>`;
 }
@@ -2446,7 +2505,8 @@ function renderWrap(block: BlockNode, _parentState: TraversalState, ctx: RenderC
   } finally {
     ctx.inWrap = prev;
   }
-  return `<div class="wrap wrap-${side}" style="width: ${escapeLiveHtml(width)}">${inner}</div>`;
+  const wrap = `<div class="wrap wrap-${side}" style="width: ${escapeLiveHtml(width)}">${inner}</div>`;
+  return wrapDisclosure(`wrap wrap-${side}`, `Wrap ${variant}`, wrap);
 }
 
 function listingParam(params: string, key: string): string {
@@ -2508,7 +2568,9 @@ function renderListings(block: BlockNode, _parentState: TraversalState, ctx: Ren
 
 function renderFloat(block: BlockNode, kind: string, _parentState: TraversalState, ctx: RenderCtx): string {
   const variant = kind.slice("Float ".length).trim() || "figure";
-  return renderCaptionedFloat(block, variant, ctx);
+  const figure = renderCaptionedFloat(block, variant, ctx);
+  const label = variant ? variant.charAt(0).toUpperCase() + variant.slice(1) : "Float";
+  return wrapDisclosure(`float float-${layoutSlug(variant)}`, label, figure);
 }
 
 function renderInclude(block: BlockNode, ctx: RenderCtx): string {
@@ -3257,6 +3319,23 @@ function mapRole(node: SemNode): SemNode {
     return { role: "image", attrs: src ? { filename: src } : undefined, children: [] };
   }
   if (tag === "br") return { role: "break", children: [] };
+  // DL131 disclosure chrome vs footnote semantics for oracle compare.
+  if (tag === "details") {
+    const classes = cls.split(/\s+/).filter(Boolean);
+    if (classes.includes("foot") || classes.includes("foot_intitle")) {
+      return { role: "footnote", children };
+    }
+    // Other disclosed insets: compare body only (drop summary labels).
+    return { role: "wrap", children };
+  }
+  if (tag === "summary") {
+    const classes = cls.split(/\s+/).filter(Boolean);
+    // Footnote marker text compares as bare text under footnote (native LyXHTML shape).
+    if (classes.includes("foot_label") || classes.includes("foot_intitle_label")) {
+      return { role: "wrap", children };
+    }
+    return { role: "wrap", children: [] };
+  }
   if (tag === "em" || tag === "i") return { role: "emphasis", children };
   if (tag === "strong" || tag === "b") return { role: "strong", children };
   if (tag === "u") return { role: "underline", children };

@@ -175,7 +175,7 @@ Deno.test("Live renderer - table, figure, footnote, formula", async () => {
   assertStringIncludes(html, "<table>");
   assertStringIncludes(html, "<td");
   assertStringIncludes(html, ">A</");
-  assertStringIncludes(html, 'class="foot"');
+  assertStringIncludes(html, "disclose foot");
   assertStringIncludes(html, "Footnote body.");
   assertStringIncludes(html, "<math");
   assertStringIncludes(html, "E=mc^{2}");
@@ -198,15 +198,32 @@ Deno.test("Live renderer - hostile strings stay escaped", async () => {
   assertStringIncludes(html, "&quot;quotes&quot;");
 });
 
-Deno.test("Live renderer - tracked/ERT/notes follow XHTML omissions", async () => {
+Deno.test("Live renderer - tracked/ERT follow XHTML omissions", async () => {
   const { html, warnings, diagnostics } = await renderFile("tracked_ert_notes.lyx");
   assertStringIncludes(html, "Visible");
   assertStringIncludes(html, "inserted");
   assert(!html.includes("deleted"), "deleted tracked text must be omitted");
   assert(!html.includes("textbf"), "ERT must be omitted");
-  assert(!html.includes("private note"), "private notes must be omitted");
   assert(warnings.some((w) => w.includes("ERT")));
   assert(diagnostics.some((d) => d.code === "ERT_OMITTED"));
+});
+
+Deno.test("Live renderer - click disclosure and private Note/Comment (DL131)", async () => {
+  const { html } = await renderFile("disclosure_notes.lyx");
+  assertStringIncludes(html, "<details class=\"disclose foot\"");
+  assertStringIncludes(html, "<summary class=\"foot_label\">1</summary>");
+  assertStringIncludes(html, "Selectable footnote body");
+  assertStringIncludes(html, 'class="disclose note note-note"');
+  assertStringIncludes(html, "<summary class=\"disclose-summary\">Note</summary>");
+  assertStringIncludes(html, "private note body");
+  assertStringIncludes(html, 'class="disclose note note-comment"');
+  assertStringIncludes(html, "<summary class=\"disclose-summary\">Comment</summary>");
+  assertStringIncludes(html, "private comment body");
+  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, "greyed always visible");
+  // Must not use hover-only hide (collapsed by default via <details>).
+  assert(!html.includes(":hover"), "Live HTML must not embed hover CSS");
+  assert(!html.includes('class="foot"><span class="foot_label">'), "legacy hover foot markup removed");
 });
 
 Deno.test("Live renderer - title, author, abstract, and math", async () => {
@@ -556,7 +573,7 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   const prevAt = html.indexOf('class="preview"');
   assert(prevAt !== -1 && html.slice(prevAt, prevAt + 200).includes("This is a line"), "Preview wraps demo line");
   assertStringIncludes(html, 'class="Frameless"');
-  assertStringIncludes(html, 'class="marginal"');
+  assertStringIncludes(html, "disclose marginal");
   assertStringIncludes(html, 'class="flex_code"');
   assertStringIncludes(html, 'class="flex_url"');
   assertStringIncludes(html, 'class="noun"');
@@ -642,7 +659,7 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, '<article class="lyx-live">');
   const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
   assertEquals(unknown.map((d) => d.message), []);
-  assertStringIncludes(html, '<div class="marginal">');
+  assertStringIncludes(html, 'class="disclose marginal"');
   assertStringIncludes(html, "This is a margin note.");
   assertStringIncludes(html, 'class="wrap wrap-left"');
   assertStringIncludes(html, "width: 40%");
@@ -761,7 +778,7 @@ Deno.test("Live renderer - Help Intro.lyx TOC, href, quotes, table", async () =>
   assertStringIncludes(html, "“");
   assertStringIncludes(html, "”");
   assertStringIncludes(html, "<table");
-  assertStringIncludes(html, 'class="foot"');
+  assertStringIncludes(html, "disclose foot");
   assertStringIncludes(html, "<br>");
 });
 
@@ -776,7 +793,7 @@ Deno.test("Live renderer - Help Tutorial.lyx TOC, Info, LyX-Code, quotes", async
   assertStringIncludes(html, '<pre class="lyx_code">');
   assertStringIncludes(html, "This is an introduction");
   assertStringIncludes(html, "“");
-  assertStringIncludes(html, 'class="foot"');
+  assertStringIncludes(html, "disclose foot");
   assertStringIncludes(html, "<br>");
   assertStringIncludes(html, 'class="ref"');
   assertStringIncludes(html, "<table");
@@ -828,7 +845,7 @@ Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels",
   assertStringIncludes(html, '<pre class="lyx_code">');
   assertStringIncludes(html, '<blockquote class="quote">');
   assertStringIncludes(html, "“");
-  assertStringIncludes(html, 'class="foot"');
+  assertStringIncludes(html, "disclose foot");
   assertStringIncludes(html, "<br>");
 });
 
@@ -844,7 +861,7 @@ Deno.test("Live renderer - Help Development.lyx listings, Flex Code, Paragraph",
   assertStringIncludes(html, 'class="flex_url"');
   assertStringIncludes(html, '<code class="listings');
   assertStringIncludes(html, "“");
-  assertStringIncludes(html, 'class="foot"');
+  assertStringIncludes(html, "disclose foot");
   assertStringIncludes(html, "<br>");
   assertStringIncludes(html, "<h5>Suspended tests</h5>");
   assertStringIncludes(html, 'class="bibitemlabel"');

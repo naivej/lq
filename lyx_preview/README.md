@@ -24,7 +24,9 @@ So: Live is **inspired by and checked against** LyXHTML, but it is **not** “em
 | FormulaMacro uses like `\qG` still look like raw commands | Macro *insets* are omitted (like native); call sites are not expanded yet |
 | Math looks close but not identical to LyX’s MathML | lq owns a TeX→MathML subset; not LyX’s converter |
 | No fancy layout CSS / page header chrome | Semantic HTML only; page chrome omitted on purpose |
-| ERT / private notes missing | Same omit policy as native LyXHTML reader projection |
+| ERT missing | Same omit policy as native LyXHTML |
+| Footnotes / Notes / Boxes start collapsed | **Click** the label to expand/collapse (not hover) so you can select text inside |
+| `Note` / `Comment` appear in Live | Live-only: private notes are shown behind a click disclosure (not in LyXHTML/PDF) |
 | Info icon is ▣ instead of a toolbar PNG | LyX image tree missing or icon name unresolved; PNG used when found |
 
 Full tolerance list and fixture pointers: development log `130_live_native_xhtml_parity.md` §8 (in the lq_dev repo).
