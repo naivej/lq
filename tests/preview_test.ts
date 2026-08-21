@@ -810,6 +810,40 @@ Deno.test("Live renderer - Help Development.lyx listings, Flex Code, Paragraph",
   assertStringIncludes(html, 'class="bibitemlabel"');
 });
 
+Deno.test("Live renderer - IPA / IPADeco are not UNKNOWN_INSET", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Modules/Linguistics.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
+  assertEquals(
+    unknown.filter((d) => /IPA/.test(d.message)).map((d) => d.message),
+    [],
+    "IPA/IPADeco must be handled",
+  );
+  assertStringIncludes(html, 'class="ipa"');
+  assertStringIncludes(html, "ipa-deco");
+  assertStringIncludes(html, "\u035c"); // bottomtiebar combining mark
+});
+
+Deno.test("Live renderer - FloatList emits list of floats", async () => {
+  // KOMA example has FloatList insets but no captioned floats → empty (like native).
+  const koma = fromFileUrl(new URL("./fixtures/Books/KOMA-Script_Book.lyx", import.meta.url));
+  const komaRender = await renderLiveHtml(parse(await Deno.readTextFile(koma)), { filePath: koma });
+  assertEquals(
+    komaRender.diagnostics.filter((d) => d.code === "UNKNOWN_INSET" && /FloatList/.test(d.message)),
+    [],
+  );
+
+  const filePath = fromFileUrl(new URL("./fixtures/Modules/Multilingual_Captions.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertEquals(
+    diagnostics.filter((d) => d.code === "UNKNOWN_INSET" && /FloatList/.test(d.message)).map((d) => d.message),
+    [],
+  );
+  assertStringIncludes(html, 'class="toc toc-floats"');
+  assertStringIncludes(html, "List of ");
+  assertStringIncludes(html, 'href="#float-');
+});
+
 Deno.test("Live renderer - escape helper is applied to source-derived text", () => {
   assertEquals(escapeLiveHtml(`<a b="c">`), "&lt;a b=&quot;c&quot;&gt;");
 });

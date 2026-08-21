@@ -11,37 +11,48 @@ class LivePreviewPanel {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly session = new PreviewSession();
   private pending = false;
+  private diskTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Stable path identity for this preview (Windows-safe). */
+  private readonly filePath: string;
 
   private constructor(
     private readonly panel: vscode.WebviewPanel,
-    private readonly document: vscode.TextDocument,
+    private document: vscode.TextDocument,
   ) {
+    this.filePath = normalizeFsPath(document.uri.fsPath);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+
     this.disposables.push(vscode.workspace.onDidSaveTextDocument((saved) => {
-      if (saved.uri.toString() === this.document.uri.toString()) {
-        void this.refresh();
-      }
+      if (!sameFsPath(saved.uri.fsPath, this.filePath)) return;
+      this.document = saved;
+      void this.refresh();
     }));
+
     this.disposables.push(vscode.workspace.onDidChangeTextDocument((change) => {
-      if (change.document.uri.toString() !== this.document.uri.toString()) return;
+      if (!sameFsPath(change.document.uri.fsPath, this.filePath)) return;
+      this.document = change.document;
       if (change.contentChanges.length === 0) return;
       this.session.markStale();
       this.paint();
     }));
-    // External disk changes (e.g. lq): refresh only when the editor buffer is clean.
+
+    // Absolute Uri base — string bases are workspace-relative and miss many paths.
     const watcher = vscode.workspace.createFileSystemWatcher(
-      new vscode.RelativePattern(
-        dirname(this.document.uri.fsPath),
-        basename(this.document.uri.fsPath),
-      ),
+      new vscode.RelativePattern(vscode.Uri.file(dirname(this.filePath)), basename(this.filePath)),
     );
     this.disposables.push(watcher);
-    const onDisk = () => {
-      if (this.document.isDirty) return;
-      void this.refresh();
+    const scheduleDiskRefresh = () => {
+      if (this.diskTimer) clearTimeout(this.diskTimer);
+      this.diskTimer = setTimeout(() => {
+        this.diskTimer = undefined;
+        if (this.isOpenDocDirty()) return;
+        void this.refresh();
+      }, 150);
     };
-    watcher.onDidChange(onDisk, this, this.disposables);
-    watcher.onDidCreate(onDisk, this, this.disposables);
+    watcher.onDidChange(scheduleDiskRefresh, this, this.disposables);
+    watcher.onDidCreate(scheduleDiskRefresh, this, this.disposables);
+    watcher.onDidDelete(scheduleDiskRefresh, this, this.disposables);
+
     this.paint();
     void this.refresh();
   }
@@ -50,11 +61,12 @@ class LivePreviewPanel {
     const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.Beside;
     if (LivePreviewPanel.current) {
       LivePreviewPanel.current.panel.reveal(column);
-      if (LivePreviewPanel.current.document.uri.toString() !== document.uri.toString()) {
+      if (!sameFsPath(LivePreviewPanel.current.filePath, document.uri.fsPath)) {
         LivePreviewPanel.current.dispose();
         LivePreviewPanel.createOrShow(document);
         return;
       }
+      LivePreviewPanel.current.document = document;
       void LivePreviewPanel.current.refresh();
       return;
     }
@@ -77,6 +89,11 @@ class LivePreviewPanel {
     LivePreviewPanel.current = new LivePreviewPanel(panel, document);
   }
 
+  private isOpenDocDirty(): boolean {
+    const open = vscode.workspace.textDocuments.find((d) => sameFsPath(d.uri.fsPath, this.filePath));
+    return open?.isDirty ?? false;
+  }
+
   private async refresh(): Promise<void> {
     const generation = this.session.nextGeneration();
     this.pending = true;
@@ -84,11 +101,13 @@ class LivePreviewPanel {
     const timeoutMs = vscode.workspace.getConfiguration("lyx-preview", this.document.uri).get<number>("timeoutMs") ?? 30000;
     try {
       const lqPath = discoverLqBinary(this.document.uri);
-      const render = await runLivePreview(lqPath, this.document.uri.fsPath, timeoutMs);
+      const render = await runLivePreview(lqPath, this.filePath, timeoutMs);
+      if (generation !== this.session.generation) return;
       if (!this.session.applySuccess(generation, render)) return;
       this.pending = false;
       this.paint();
     } catch (error) {
+      if (generation !== this.session.generation) return;
       if (!this.session.applyFailure(generation)) return;
       this.pending = false;
       const message = error instanceof AdapterError
@@ -106,6 +125,8 @@ class LivePreviewPanel {
     const render = this.session.lastValid && html
       ? { ...this.session.lastValid, html }
       : this.session.lastValid;
+    // Bust webview cache when content hash changes (VS Code may skip identical html assigns).
+    const bust = render?.source.diskHash ?? `err-${Date.now()}`;
     this.panel.webview.html = renderWebviewHtml({
       title: this.panel.title,
       stale: this.session.stale,
@@ -113,13 +134,24 @@ class LivePreviewPanel {
       error,
       render,
       imgCsp: `${this.panel.webview.cspSource} data:`,
-    });
+    }).replace("<head>", `<head>\n<!-- lyx-live ${bust} -->`);
   }
 
   private dispose(): void {
+    if (this.diskTimer) clearTimeout(this.diskTimer);
     if (LivePreviewPanel.current === this) LivePreviewPanel.current = undefined;
     for (const d of this.disposables) d.dispose();
   }
+}
+
+function normalizeFsPath(p: string): string {
+  return p.replace(/\\/g, "/");
+}
+
+function sameFsPath(a: string, b: string): boolean {
+  const na = normalizeFsPath(a);
+  const nb = normalizeFsPath(b);
+  return process.platform === "win32" ? na.toLowerCase() === nb.toLowerCase() : na === nb;
 }
 
 function rewriteLocalImages(html: string, webview: vscode.Webview): string {

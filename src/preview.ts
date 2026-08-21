@@ -227,11 +227,22 @@ interface RenderCtx {
   nomenclSeq: number;
   indexSeq: number;
   layoutCounters: Map<string, number>;
+  /** Extra float-type counters (e.g. tableau) for FloatList / uncommon floats. */
+  floatTypeCounts: Map<string, number>;
+  /** Captioned floats collected during index for List of Figures/Tables. */
+  floatListEntries: FloatListEntry[];
   bibitem: number;
   includeStack: string[];
   subeq: { parent: number; child: number } | null;
   /** Header `\branch` name → selected (true when `\selected 1`). */
   branches: Map<string, boolean>;
+}
+
+interface FloatListEntry {
+  type: string;
+  number: string;
+  text: string;
+  id: string;
 }
 
 interface NomenclEntry {
@@ -607,7 +618,8 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         const variant = kind.startsWith("Float ")
           ? kind.slice("Float ".length).trim()
           : kind.slice("Wrap ".length).trim();
-        const taken = takeFloatNumber(ctx, variant);
+        const taken = takeFloatNumber(ctx, variant) ?? takeGenericFloatNumber(ctx, variant);
+        noteFloatListEntry(ctx, n, variant, taken);
         walk(n.children, taken ?? floatNo, false);
         continue;
       }
@@ -672,6 +684,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
   ctx.listing = 0;
   ctx.equation = 0;
   ctx.chapterLabel = "";
+  ctx.floatTypeCounts = new Map();
   ctx.nomenclSeq = 0;
   ctx.indexSeq = 0;
   ctx.subeq = null;
@@ -831,6 +844,8 @@ export async function renderLiveHtml(
     nomenclSeq: 0,
     indexSeq: 0,
     layoutCounters: new Map(),
+    floatTypeCounts: new Map(),
+    floatListEntries: [],
     subeq: null,
     bibitem: 0,
     includeStack: [],
@@ -1027,6 +1042,7 @@ function snapshotCounters(ctx: RenderCtx) {
     indexSeq: ctx.indexSeq,
     bibitem: ctx.bibitem,
     layoutCounters: new Map(ctx.layoutCounters),
+    floatTypeCounts: new Map(ctx.floatTypeCounts),
     subeq: ctx.subeq ? { ...ctx.subeq } : null,
   };
 }
@@ -1043,6 +1059,7 @@ function restoreCounters(ctx: RenderCtx, snap: ReturnType<typeof snapshotCounter
   ctx.indexSeq = snap.indexSeq;
   ctx.bibitem = snap.bibitem;
   ctx.layoutCounters = snap.layoutCounters;
+  ctx.floatTypeCounts = snap.floatTypeCounts;
   ctx.subeq = snap.subeq;
 }
 
@@ -1529,6 +1546,16 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
       ctx.subeq = null;
     }
   }
+  if (kind === "IPA" || kind.startsWith("IPA ")) {
+    // Native InsetIPA::xhtml → InsetText::xhtml (children only).
+    return `<span class="ipa">${renderInsetLayouts(block, parentState, ctx)}</span>`;
+  }
+  if (kind.startsWith("IPADeco")) {
+    return renderIpaDeco(block, parentState, ctx);
+  }
+  if (kind === "FloatList" || kind.startsWith("FloatList ")) {
+    return renderFloatList(kind, ctx);
+  }
   if (kind.startsWith("Branch ")) {
     if (!branchProducesOutput(block, ctx)) return "";
     return renderInsetLayouts(block, parentState, ctx);
@@ -1834,6 +1861,7 @@ function noteChapterHeading(ctx: RenderCtx, heading: LayoutRole, number: string)
   ctx.table = 0;
   ctx.algorithm = 0;
   ctx.listing = 0;
+  ctx.floatTypeCounts = new Map();
 }
 
 function takeFloatNumber(ctx: RenderCtx, variant: string): string | undefined {
@@ -1854,6 +1882,63 @@ function takeFloatNumber(ctx: RenderCtx, variant: string): string | undefined {
     return undefined;
   }
   return ctx.chapterLabel ? `${ctx.chapterLabel}.${n}` : String(n);
+}
+
+function takeGenericFloatNumber(ctx: RenderCtx, variant: string): string {
+  const n = (ctx.floatTypeCounts.get(variant) ?? 0) + 1;
+  ctx.floatTypeCounts.set(variant, n);
+  return ctx.chapterLabel ? `${ctx.chapterLabel}.${n}` : String(n);
+}
+
+function noteFloatListEntry(
+  ctx: RenderCtx,
+  floatBlock: BlockNode,
+  variant: string,
+  number: string | undefined,
+): void {
+  if (!number) return;
+  const captions = captionBlocks(floatBlock);
+  if (captionsAreUnnumbered(captions)) return;
+  const text = captions.map((c) => collectVisibleText(c)).join(" ").replace(/\s+/g, " ").trim();
+  const id = `float-${layoutSlug(variant)}-${number.replaceAll(".", "-")}`;
+  ctx.floatListEntries.push({ type: variant, number, text, id });
+}
+
+function floatListTitle(type: string): string {
+  if (type === "figure") return "List of Figures";
+  if (type === "table") return "List of Tables";
+  if (!type) return "List of Floats";
+  return `List of ${type.charAt(0).toUpperCase()}${type.slice(1)}`;
+}
+
+/** Native InsetFloatList::xhtml — TOC of captioned floats of one type. */
+function renderFloatList(kind: string, ctx: RenderCtx): string {
+  const type = kind.startsWith("FloatList ") ? kind.slice("FloatList ".length).trim() : "";
+  const entries = ctx.floatListEntries.filter((e) => e.type === type);
+  if (entries.length === 0) return "";
+  const title = floatListTitle(type);
+  let html = `<nav class="toc toc-floats"><h2 class="tochead toc-${escapeLiveHtml(layoutSlug(type) || "float")}">${escapeLiveHtml(title)}</h2><ol>`;
+  for (const e of entries) {
+    const label = e.text ? `${e.number} ${e.text}` : e.number;
+    html += `<li><a href="#${escapeLiveHtml(e.id)}">${escapeLiveHtml(label.trim())}</a></li>`;
+  }
+  html += "</ol></nav>";
+  return html;
+}
+
+/** Native InsetIPADeco::xhtml — combining mark between the two halves of child text. */
+function renderIpaDeco(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
+  const deco = insetKind(block).slice("IPADeco ".length).trim().toLowerCase();
+  const mark = deco === "toptiebar" ? "\u0361" : deco === "bottomtiebar" ? "\u035c" : "";
+  const inner = renderInsetLayouts(block, parentState, ctx);
+  if (!mark) return `<span class="ipa-deco">${inner}</span>`;
+  // Prefer plain text split when the deco wraps simple characters (native behavior).
+  const plain = collectVisibleText(block).replace(/\s+/g, "");
+  if (plain.length >= 2 && !inner.includes("<")) {
+    const mid = Math.floor(plain.length / 2);
+    return `<span class="ipa-deco">${escapeLiveHtml(plain.slice(0, mid))}${mark}${escapeLiveHtml(plain.slice(mid))}</span>`;
+  }
+  return `<span class="ipa-deco">${inner}${mark}</span>`;
 }
 
 function floatCaptionPrefix(variant: string, num: string | undefined): string {
@@ -1906,10 +1991,12 @@ function includeIsListings(block: BlockNode): boolean {
 function renderCaptionedFloat(block: BlockNode, variant: string, ctx: RenderCtx): string {
   const allCaptions = captionBlocks(block);
   const numbered = !captionsAreUnnumbered(allCaptions);
-  const prefix = numbered
-    ? floatCaptionPrefix(variant, takeFloatNumber(ctx, variant))
-    : "";
-  let html = `<figure class="float-${layoutSlug(variant)}">`;
+  const num = numbered
+    ? (takeFloatNumber(ctx, variant) ?? takeGenericFloatNumber(ctx, variant))
+    : undefined;
+  const prefix = numbered ? floatCaptionPrefix(variant, num) : "";
+  const id = num ? ` id="float-${layoutSlug(variant)}-${num.replaceAll(".", "-")}"` : "";
+  let html = `<figure class="float-${layoutSlug(variant)}"${id}>`;
   for (const item of flattenFlow(block.children, 0)) {
     const captions = collectBlocks(item.node, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
     if (captions.length > 0) {
