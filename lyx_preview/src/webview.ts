@@ -116,7 +116,7 @@ details.disclose[open] > .disclose-body {
   border-radius: 3px;
   background: var(--vscode-editor-background, #fff);
 }
-/* Footnotes: red chip for the number; body expands inline (no bracket-like box). */
+/* Footnotes: red number chip; open body uses a note-like content box (not parentheses). */
 details.disclose.foot,
 details.disclose.foot_intitle {
   vertical-align: super;
@@ -131,42 +131,26 @@ details.disclose.foot_intitle > summary {
 }
 details.disclose.foot[open],
 details.disclose.foot_intitle[open] {
-  display: inline;
+  display: inline-block;
   vertical-align: baseline;
-  margin: 0 0.1em;
+  margin: 0.15em 0.12em;
+  max-width: min(28em, 100%);
 }
 details.disclose.foot[open] > summary,
 details.disclose.foot_intitle[open] > summary {
-  margin-bottom: 0;
+  margin-bottom: 0.2em;
   vertical-align: super;
 }
 details.disclose.foot[open] > .foot_inner,
 details.disclose.foot_intitle[open] > .foot_intitle_inner {
-  display: inline;
+  display: block;
   margin: 0;
-  padding: 0;
-  border: none;
-  border-radius: 0;
-  background: transparent;
+  padding: 0.4em 0.5em;
+  border: 1px solid #c44;
+  border-radius: 3px;
+  background: #fff5f5;
+  font-size: 0.95em;
   color: inherit;
-  font-size: 0.92em;
-}
-details.disclose.foot[open] > .foot_inner::before,
-details.disclose.foot_intitle[open] > .foot_intitle_inner::before {
-  content: " (";
-  color: #800;
-}
-details.disclose.foot[open] > .foot_inner::after,
-details.disclose.foot_intitle[open] > .foot_intitle_inner::after {
-  content: ")";
-  color: #800;
-}
-/* Footnote body often wraps a block layout div — keep it inline when opened. */
-details.disclose.foot[open] > .foot_inner > div,
-details.disclose.foot_intitle[open] > .foot_intitle_inner > div {
-  display: inline;
-  margin: 0;
-  padding: 0;
 }
 /* LyX-ish inset label colors */
 details.disclose.note-note > summary {
