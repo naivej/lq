@@ -226,6 +226,39 @@ Deno.test("Live renderer - click disclosure and private Note/Comment (DL131)", a
   assert(!html.includes('class="foot"><span class="foot_label">'), "legacy hover foot markup removed");
 });
 
+Deno.test("Live renderer - disclosure_collapsibles covers foldable inset set (DL131)", async () => {
+  const { html } = await renderFile("disclosure_collapsibles.lyx");
+  const mustDisclose = [
+    'class="disclose foot foot_intitle"',
+    'class="disclose foot"',
+    'class="disclose note note-note"',
+    'class="disclose note note-comment"',
+    'class="disclose marginal"',
+    'class="disclose box boxed"',
+    'class="disclose float float-figure"',
+    'class="disclose float float-table"',
+    'class="disclose wrap',
+    'class="disclose branch"',
+  ];
+  for (const needle of mustDisclose) {
+    assertStringIncludes(html, needle);
+  }
+  assertStringIncludes(html, 'class="note_greyedout"');
+  assertStringIncludes(html, "Greyedout stays visible");
+  // Charstyle Flex Code must remain inline — not a disclosure chip.
+  assertStringIncludes(html, 'class="flex_code"');
+  assert(
+    !html.includes("<details") || !/details[^>]*flex_code/.test(html),
+    "Flex Code must not be wrapped in details",
+  );
+  const codeIdx = html.indexOf('class="flex_code"');
+  assert(codeIdx !== -1);
+  assert(
+    !html.slice(Math.max(0, codeIdx - 80), codeIdx).includes("<details"),
+    "Flex Code must not sit inside a preceding details opener",
+  );
+});
+
 Deno.test("Live renderer - title, author, abstract, and math", async () => {
   const { html } = await renderFile("front_matter_math.lyx");
   assertStringIncludes(html, '<h1 class="title">Title</h1>');
