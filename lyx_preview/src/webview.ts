@@ -108,9 +108,7 @@ details.disclose[open] {
 details.disclose[open] > summary {
   margin-bottom: 0.25em;
 }
-details.disclose[open] > .disclose-body,
-details.disclose[open] > .foot_inner,
-details.disclose[open] > .foot_intitle_inner {
+details.disclose[open] > .disclose-body {
   display: block;
   margin: 0.15em 0 0.25em;
   padding: 0.4em 0.5em;
@@ -118,8 +116,9 @@ details.disclose[open] > .foot_intitle_inner {
   border-radius: 3px;
   background: var(--vscode-editor-background, #fff);
 }
-/* Footnotes: keep marker superscript; body opens as a compact block under the line. */
-details.disclose.foot {
+/* Footnotes: red chip for the number; body expands inline (no bracket-like box). */
+details.disclose.foot,
+details.disclose.foot_intitle {
   vertical-align: super;
 }
 details.disclose.foot > summary,
@@ -132,17 +131,42 @@ details.disclose.foot_intitle > summary {
 }
 details.disclose.foot[open],
 details.disclose.foot_intitle[open] {
-  display: inline-block;
+  display: inline;
   vertical-align: baseline;
-  margin: 0 0.12em;
+  margin: 0 0.1em;
+}
+details.disclose.foot[open] > summary,
+details.disclose.foot_intitle[open] > summary {
+  margin-bottom: 0;
+  vertical-align: super;
 }
 details.disclose.foot[open] > .foot_inner,
 details.disclose.foot_intitle[open] > .foot_intitle_inner {
   display: inline;
-  margin: 0 0 0 0.2em;
-  padding: 0.1em 0.35em;
-  border-color: #c44;
-  background: #fff5f5;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  font-size: 0.92em;
+}
+details.disclose.foot[open] > .foot_inner::before,
+details.disclose.foot_intitle[open] > .foot_intitle_inner::before {
+  content: " (";
+  color: #800;
+}
+details.disclose.foot[open] > .foot_inner::after,
+details.disclose.foot_intitle[open] > .foot_intitle_inner::after {
+  content: ")";
+  color: #800;
+}
+/* Footnote body often wraps a block layout div — keep it inline when opened. */
+details.disclose.foot[open] > .foot_inner > div,
+details.disclose.foot_intitle[open] > .foot_intitle_inner > div {
+  display: inline;
+  margin: 0;
+  padding: 0;
 }
 /* LyX-ish inset label colors */
 details.disclose.note-note > summary {
