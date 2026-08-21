@@ -11,10 +11,23 @@ Live aims for the same **reader-facing** shape as LyX’s native **LyXHTML** exp
 | **Engine** | LyX C++ (`output_xhtml.cpp`) walks LyX’s in-memory document | **lq** parses the `.lyx` file into a **CST** (concrete syntax tree), then projects that tree to HTML |
 | **Needs LyX to render?** | Yes (export) | **No** — only the saved file + `lq` |
 | **Similarity** | Ground-truth reader markup for acceptance tests | Same *kind* of result: structural/semantic HTML a reader can scan |
-| **Differences** | Uses LyX layout HTML keys, native inset `xhtml()`, full MathML pipeline, page-oriented details (`magicparlabel-*`, real page refs when exported) | CST-driven; layout HTML keys from install/user-dir/LocalLayout when available; lq TeX→MathML subset; Info icons from LyX `images/` when present; shortcuts from system+user bind; deliberate omits (ERT, private notes, page chrome); `pageref` shows target number/name, not a PDF page |
+| **Differences** | Uses LyX layout HTML keys, native inset `xhtml()`, full MathML pipeline, page-oriented details (`magicparlabel-*`, real page refs when exported) | CST-driven; layout HTML keys from install/user-dir/LocalLayout when available; lq TeX→MathML subset (+ document preamble `\newcommand`); Info icons from LyX `images/` when present; shortcuts from system+user bind; deliberate omits (ERT, private notes, page chrome); `pageref` shows target number/name, not a PDF page |
 | **Role here** | Development **oracle** for parity checks | **Shipped** preview — never runs LyXHTML export in the extension |
 
 So: Live is **inspired by and checked against** LyXHTML, but it is **not** “embed LyXHTML in the webview.” It re-reads source through lq’s CST so preview stays fast, offline, and aligned with later source-aware features (outline, mapping, Review) that a one-shot export cannot own.
+
+### Deliberate differences (not bugs)
+
+| If you see… | Why |
+| --- | --- |
+| `pageref` text is a section/figure number, not a printed page | Live has no PDF pagination; tooltip notes this |
+| FormulaMacro uses like `\qG` still look like raw commands | Macro *insets* are omitted (like native); call sites are not expanded yet |
+| Math looks close but not identical to LyX’s MathML | lq owns a TeX→MathML subset; not LyX’s converter |
+| No fancy layout CSS / page header chrome | Semantic HTML only; page chrome omitted on purpose |
+| ERT / private notes missing | Same omit policy as native LyXHTML reader projection |
+| Info icon is ▣ instead of a toolbar PNG | LyX image tree missing or icon name unresolved; PNG used when found |
+
+Full tolerance list and fixture pointers: development log `130_live_native_xhtml_parity.md` §8 (in the lq_dev repo).
 
 ## Use
 
