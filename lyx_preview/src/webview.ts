@@ -119,7 +119,7 @@ div.wrap { float: right; margin: 0.4em 0 1em 1em; }
 div.wrap.wrap-left { float: left; margin: 0.4em 1em 1em 0; }
 div.wrap img { width: 100%; height: auto; display: block; }
 div.wrap .plain_layout { margin: 0 0 0.35em; text-align: center; font-size: 0.9em; }
-div.marginal {
+div.marginal, aside.marginal {
   float: right;
   clear: right;
   width: 12em;
@@ -130,7 +130,15 @@ div.marginal {
   background: var(--vscode-editorWidget-background);
   font-size: 0.85em;
 }
-div.marginal .plain_layout { margin: 0; }
+div.marginal .plain_layout, aside.marginal .plain_layout { margin: 0; }
+div.color-box {
+  margin: 0.6em 0;
+  padding: 0.6em 0.8em;
+  border: 1px solid var(--vscode-panel-border);
+  background: var(--vscode-textBlockQuote-background, var(--vscode-editorWidget-background));
+}
+span.alert { font-weight: 600; }
+span.smallcaps { font-variant: small-caps; }
 div.Boxed, div.Framed, div.Doublebox, div.Shadowbox, div.ovalbox, div.Ovalbox, div.Shaded {
   display: block;
   box-sizing: border-box;

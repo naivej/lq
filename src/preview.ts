@@ -1535,6 +1535,31 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const url = flattenFlow(block.children, 0).map((item) => collectVisibleText(item.node)).join("").trim();
     return `<a class="url" href="${escapeLiveHtml(url)}">${escapeLiveHtml(url)}</a>`;
   }
+  // Beamer charstyles (Font Color only in layout; no HTMLTag).
+  if (kind === "Flex Alert" || kind.startsWith("Flex Alert ")) {
+    return `<span class="alert" style="color: #cc0000">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (kind === "Flex Structure" || (kind.startsWith("Flex Structure ") && !kind.startsWith("Flex Structure Tree"))) {
+    return `<span class="structure" style="color: #0000aa">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (kind === "Flex Only" || kind.startsWith("Flex Only ")) {
+    return `<span class="only">${renderFlexInline(block, ctx)}</span>`;
+  }
+  // Tufte charstyles / notes.
+  if (kind.startsWith("Flex NewThought") || kind.startsWith("Flex SmallCaps")) {
+    return `<span class="smallcaps" style="font-variant: small-caps">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (kind.startsWith("Flex AllCaps")) {
+    return `<span class="noun allcaps" style="text-transform: uppercase">${renderFlexInline(block, ctx)}</span>`;
+  }
+  if (kind.startsWith("Flex Sidenote") || kind.startsWith("Flex Marginnote")) {
+    const cls = kind.includes("Marginnote") ? "marginnote" : "sidenote";
+    return `<aside class="${cls} marginal">${renderInsetLayouts(block, parentState, ctx)}</aside>`;
+  }
+  // tcolorbox.module — DocBook phrase role; Live uses a bordered box.
+  if (kind.startsWith("Flex ") && kind.includes("Color Box")) {
+    return `<div class="color-box">${renderInsetLayouts(block, parentState, ctx)}</div>`;
+  }
   if (kind.startsWith("Box ")) {
     return renderBox(block, kind, parentState, ctx);
   }

@@ -824,6 +824,34 @@ Deno.test("Live renderer - IPA / IPADeco are not UNKNOWN_INSET", async () => {
   assertStringIncludes(html, "\u035c"); // bottomtiebar combining mark
 });
 
+Deno.test("Live renderer - Tufte Flex sidenote and charstyles", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Handouts/Tufte_Handout.lyx", import.meta.url));
+  const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, 'class="sidenote marginal"');
+  assertStringIncludes(html, 'class="marginnote marginal"');
+  assertStringIncludes(html, 'class="smallcaps"');
+  assertStringIncludes(html, "font-variant: small-caps");
+  assertStringIncludes(html, "allcaps");
+  assertStringIncludes(html, "text-transform: uppercase");
+});
+
+Deno.test("Live renderer - Beamer Alert and Structure Flex", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Presentations/Beamer.lyx", import.meta.url));
+  const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertStringIncludes(html, 'class="alert"');
+  assertStringIncludes(html, "#cc0000");
+  assertStringIncludes(html, 'class="structure"');
+  assertStringIncludes(html, "#0000aa");
+});
+
+Deno.test("Live renderer - Flex Color Box wraps content", async () => {
+  const filePath = fromFileUrl(new URL("./fixtures/Modules/Fancy_Colored_Boxes.lyx", import.meta.url));
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET"), []);
+  assertStringIncludes(html, 'class="color-box"');
+  assertStringIncludes(html, "A basic color box.");
+});
+
 Deno.test("Live renderer - FloatList emits list of floats", async () => {
   // KOMA example has FloatList insets but no captioned floats → empty (like native).
   const koma = fromFileUrl(new URL("./fixtures/Books/KOMA-Script_Book.lyx", import.meta.url));
