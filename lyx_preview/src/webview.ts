@@ -72,59 +72,142 @@ figure > .float-body { display: flex; justify-content: center; margin: 0.4em 0; 
 figure table { margin-left: auto; margin-right: auto; }
 table { border-collapse: collapse; margin: 0.75em 0; }
 td, th { border: 1px solid var(--vscode-panel-border); padding: 0.25em 0.5em; }
-/* DL131: click <details> to expand/collapse — no hover (so inner text is selectable). */
-details.disclose { display: inline; }
+/*
+ * DL131 disclosure: click summary to expand/collapse (no hover).
+ * Closed = tight colored chip around the label only; open = body below.
+ * Do NOT force .disclose-body { display: … } when closed — that kept bodies visible.
+ */
+details.disclose {
+  display: inline-block;
+  vertical-align: baseline;
+  margin: 0 0.12em;
+  padding: 0;
+  border: none;
+  max-width: 100%;
+}
 details.disclose > summary {
   cursor: pointer;
   list-style: none;
+  display: inline-block;
+  vertical-align: baseline;
+  font-weight: 600;
+  font-size: 0.85em;
+  line-height: 1.25;
+  padding: 0.05em 0.4em;
+  margin: 0;
+  border: 1px solid #888;
+  border-radius: 3px;
+  background: #f0f0f0;
+  color: #222;
 }
 details.disclose > summary::-webkit-details-marker { display: none; }
-details.disclose.foot > summary {
+details.disclose[open] {
+  display: block;
+  margin: 0.4em 0;
+}
+details.disclose[open] > summary {
+  margin-bottom: 0.25em;
+}
+details.disclose[open] > .disclose-body,
+details.disclose[open] > .foot_inner,
+details.disclose[open] > .foot_intitle_inner {
+  display: block;
+  margin: 0.15em 0 0.25em;
+  padding: 0.4em 0.5em;
+  border: 1px solid #888;
+  border-radius: 3px;
+  background: var(--vscode-editor-background, #fff);
+}
+/* Footnotes: keep marker superscript; body opens as a compact block under the line. */
+details.disclose.foot {
+  vertical-align: super;
+}
+details.disclose.foot > summary,
+details.disclose.foot_intitle > summary {
   font-size: 0.75em;
   vertical-align: super;
-  color: var(--vscode-textLink-foreground);
+  background: #ffd0d0;
+  border-color: #c44;
+  color: #800;
 }
-details.disclose .disclose-body,
-details.disclose .foot_inner {
+details.disclose.foot[open],
+details.disclose.foot_intitle[open] {
+  display: inline-block;
+  vertical-align: baseline;
+  margin: 0 0.12em;
+}
+details.disclose.foot[open] > .foot_inner,
+details.disclose.foot_intitle[open] > .foot_intitle_inner {
   display: inline;
-  margin-left: 0.15em;
+  margin: 0 0 0 0.2em;
+  padding: 0.1em 0.35em;
+  border-color: #c44;
+  background: #fff5f5;
 }
-/* Title footnotes: always visible inline (selectable). */
-.foot_intitle_label { font-size: 0.75em; vertical-align: super; }
-.foot_intitle_inner { display: inline; }
-details.disclose.note,
-details.disclose.box,
-details.disclose.float,
-details.disclose.wrap,
-details.disclose.marginal,
-details.disclose.branch,
-details.disclose.flex-container {
-  display: block;
-  margin: 0.5em 0;
-  border: 1px solid var(--vscode-panel-border);
-  border-radius: 4px;
-  padding: 0.25em 0.5em;
+/* LyX-ish inset label colors */
+details.disclose.note-note > summary {
+  background: #fff3a0;
+  border-color: #c9a000;
+  color: #5a4800;
 }
-details.disclose.note > summary,
-details.disclose.box > summary,
-details.disclose.float > summary,
-details.disclose.wrap > summary,
-details.disclose.marginal > summary,
-details.disclose.branch > summary,
+details.disclose.note-comment > summary {
+  background: #e4e4ff;
+  border-color: #5555aa;
+  color: #303070;
+}
+details.disclose.note-note[open] > .disclose-body,
+details.disclose.note-comment[open] > .disclose-body {
+  border-color: #c9a000;
+  background: #fffceb;
+}
+details.disclose.note-comment[open] > .disclose-body {
+  border-color: #5555aa;
+  background: #f7f7ff;
+}
+details.disclose.float-figure > summary,
+details.disclose.wrap.wrap-figure > summary {
+  background: #d4efd4;
+  border-color: #2a8a2a;
+  color: #145214;
+}
+details.disclose.float-table > summary,
+details.disclose.wrap.wrap-table > summary {
+  background: #d6e4ff;
+  border-color: #2a5aaa;
+  color: #1a3560;
+}
+details.disclose.float-figure[open] > .disclose-body,
+details.disclose.wrap.wrap-figure[open] > .disclose-body {
+  border-color: #2a8a2a;
+}
+details.disclose.float-table[open] > .disclose-body,
+details.disclose.wrap.wrap-table[open] > .disclose-body {
+  border-color: #2a5aaa;
+}
+details.disclose.box > summary {
+  background: #ececec;
+  border-color: #666;
+}
+details.disclose.marginal > summary {
+  background: #f3e6ff;
+  border-color: #7a4aaa;
+  color: #402060;
+}
+details.disclose.branch > summary {
+  background: #ffe6cc;
+  border-color: #cc7700;
+}
 details.disclose.flex-container > summary {
-  font-weight: 600;
-  font-size: 0.9em;
-  color: var(--vscode-descriptionForeground);
+  background: #e8f4f8;
+  border-color: #3a7a8a;
 }
-details.disclose.note .disclose-body,
-details.disclose.box .disclose-body,
-details.disclose.float .disclose-body,
-details.disclose.wrap .disclose-body,
-details.disclose.marginal .disclose-body,
-details.disclose.branch .disclose-body,
-details.disclose.flex-container .disclose-body {
+/* Block-level floats/wraps (sole content of a layout, promoted out of Standard). */
+section > details.disclose.float,
+section > details.disclose.wrap,
+article > details.disclose.float,
+article > details.disclose.wrap {
   display: block;
-  margin-top: 0.35em;
+  margin: 0.6em 0;
 }
 span.formula { }
 math { font-family: "Cambria Math", "Latin Modern Math", "STIX Two Math", serif; font-size: 1.05em; }

@@ -1546,10 +1546,14 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Foot" || kind.startsWith("Foot ")) {
     if (ctx.inTitle) {
-      // Title footnotes stay inline (match LyXHTML author/title shape); body feet use click disclosure.
       const mark = TITLE_MARKS[ctx.titleFoot] ?? "*".repeat(ctx.titleFoot + 1);
       ctx.titleFoot += 1;
-      return `<span class="foot_intitle"><span class="foot_intitle_label">${mark}</span><span class="foot_intitle_inner">${renderFootInner(block, parentState, ctx)}</span></span>`;
+      return wrapDisclosure(
+        "foot foot_intitle",
+        mark,
+        renderFootInner(block, parentState, ctx),
+        { summaryClass: "foot_intitle_label", bodyClass: "foot_intitle_inner" },
+      );
     }
     ctx.footnote += 1;
     const n = ctx.footnote;
@@ -2506,7 +2510,11 @@ function renderWrap(block: BlockNode, _parentState: TraversalState, ctx: RenderC
     ctx.inWrap = prev;
   }
   const wrap = `<div class="wrap wrap-${side}" style="width: ${escapeLiveHtml(width)}">${inner}</div>`;
-  return wrapDisclosure(`wrap wrap-${side}`, `Wrap ${variant}`, wrap);
+  return wrapDisclosure(
+    `wrap wrap-${side} wrap-${layoutSlug(variant)}`,
+    `Wrap ${variant}`,
+    wrap,
+  );
 }
 
 function listingParam(params: string, key: string): string {
@@ -3171,6 +3179,10 @@ function collapse(node: SemNode): SemNode {
     }
     if ((node.role === "cell" || node.role === "figure") && c.role === "paragraph") return c.children;
     if (node.role === "caption" && c.role === "paragraph") return c.children;
+    // Title/author footnotes are inline in LyXHTML; Live uses <details> — flatten for compare.
+    if ((node.role === "author" || node.role === "title") && c.role === "footnote") {
+      return [{ role: "text", text: collectText(c), children: [] }];
+    }
     return [c];
   });
   if (node.role === "figure") {

@@ -230,8 +230,8 @@ Deno.test("Live renderer - title, author, abstract, and math", async () => {
   const { html } = await renderFile("front_matter_math.lyx");
   assertStringIncludes(html, '<h1 class="title">Title</h1>');
   assertStringIncludes(html, '<div class="author">My name');
-  assertStringIncludes(html, 'class="foot_intitle"');
-  assertStringIncludes(html, 'class="foot_intitle_label">*</span>');
+  assertStringIncludes(html, 'class="disclose foot foot_intitle"');
+  assertStringIncludes(html, 'class="foot_intitle_label">*</summary>');
   assertStringIncludes(html, "Details about me");
   assertStringIncludes(html, '<div class="abstract">');
   assertStringIncludes(html, '<span class="abstract_label">Abstract</span>');
