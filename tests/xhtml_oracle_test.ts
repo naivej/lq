@@ -1,15 +1,14 @@
 /**
- * Development-only XHTML oracle tests (dev log 129, minimal M3.2–M3.3).
+ * Development-only XHTML oracle tests (dev log 129 / 130).
  *
  * Missing LyX skips the export comparison; sanitizer tests always run.
+ * Prefer tiny Synthetic isolates — not full Help manuals (DL130 J2).
  */
 import { assert, assertThrows } from "@std/assert";
 import { fromFileUrl } from "@std/path";
-import { parse } from "../src/parser.ts";
-import { formatSem, normalizeReaderHtml, renderLiveHtml, semanticEqual } from "../src/preview.ts";
 import {
   assertSanitized,
-  exportSanitizedXhtml,
+  compareLiveToOracle,
   extractXhtmlBody,
   findLyxBinary,
   sanitizeXhtmlBody,
@@ -17,6 +16,8 @@ import {
 } from "../tools/xhtml_oracle.ts";
 
 const SYNTHETIC = fromFileUrl(new URL("./fixtures/Synthetic/", import.meta.url));
+
+/** Baseline M1 floor isolates (DL129). */
 const PARITY_FIXTURES = [
   "headings_paragraphs.lyx",
   "lists_quotes.lyx",
@@ -24,6 +25,13 @@ const PARITY_FIXTURES = [
   "hostile.lyx",
   "tracked_ert_notes.lyx",
   "front_matter_math.lyx",
+];
+
+/** DL130 construct slices — Help clones / feature isolates. */
+const SLICE_FIXTURES = [
+  "nameref_titles.lyx",
+  "logical_charstyles.lyx",
+  "info_icon_shortcut.lyx",
 ];
 
 Deno.test("oracle sanitizer - drops head material, scripts, handlers, javascript URLs", () => {
@@ -56,19 +64,28 @@ Deno.test({
     }
     for (const name of PARITY_FIXTURES) {
       const file = `${SYNTHETIC}${name}`;
-      let exported;
-      try {
-        exported = await exportSanitizedXhtml(binary, file, { timeoutMs: 30000 });
-      } catch (error) {
-        throw new Error(`${name}: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      assert(exported.sanitized.length > 0, name);
-      assertSanitized(exported.sanitized);
-      const live = normalizeReaderHtml((await renderLiveHtml(parse(await Deno.readTextFile(file)), { filePath: file })).html);
-      assert(
-        semanticEqual(live, exported.normalized),
-        `${name} Live vs oracle:\n${formatSem(live)}\n---\n${formatSem(exported.normalized)}`,
-      );
+      const result = await compareLiveToOracle(binary, file, { timeoutMs: 30000 });
+      assert(result.equal, `${name} Live vs oracle:\n${result.diff}`);
+    }
+  },
+});
+
+Deno.test({
+  name: "oracle export - DL130 Help-slice Synthetic isolates when LyX is available",
+  ignore: false,
+  sanitizeResources: false,
+  sanitizeOps: false,
+  timeout: 180000,
+  fn: async () => {
+    const binary = await findLyxBinary();
+    if (!binary) {
+      console.log("LyX binary not found; skipping DL130 slice oracle comparison.");
+      return;
+    }
+    for (const name of SLICE_FIXTURES) {
+      const file = `${SYNTHETIC}${name}`;
+      const result = await compareLiveToOracle(binary, file, { timeoutMs: 45000 });
+      assert(result.equal, `${name} Live vs oracle:\n${result.diff}`);
     }
   },
 });

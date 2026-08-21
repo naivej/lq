@@ -5,7 +5,14 @@
  * Tests and acceptance tooling invoke this helper when a LyX binary is present.
  */
 import * as path from "@std/path";
-import { normalizeReaderHtml, type SemNode } from "../src/preview.ts";
+import { parse } from "../src/parser.ts";
+import {
+  formatSem,
+  normalizeReaderHtml,
+  renderLiveHtml,
+  semanticEqual,
+  type SemNode,
+} from "../src/preview.ts";
 
 export interface XhtmlExportResult {
   body: string;
@@ -175,4 +182,37 @@ export async function exportSanitizedXhtml(
       await Deno.remove(outputPath);
     } catch { /* best-effort */ }
   }
+}
+
+export interface LiveOracleCompareResult {
+  equal: boolean;
+  live: SemNode;
+  oracle: SemNode;
+  diff?: string;
+  elapsedMs: number;
+}
+
+/**
+ * Compare Live HTML to sanitized LyXHTML for one `.lyx` path (DL130 Step 2).
+ * Prefer tiny Synthetic isolates — not full Help manuals.
+ */
+export async function compareLiveToOracle(
+  lyxBinary: string,
+  filePath: string,
+  options: { timeoutMs?: number } = {},
+): Promise<LiveOracleCompareResult> {
+  const started = Date.now();
+  const exported = await exportSanitizedXhtml(lyxBinary, filePath, options);
+  const liveHtml = (await renderLiveHtml(parse(await Deno.readTextFile(filePath)), {
+    filePath,
+  })).html;
+  const live = normalizeReaderHtml(liveHtml);
+  const equal = semanticEqual(live, exported.normalized);
+  return {
+    equal,
+    live,
+    oracle: exported.normalized,
+    diff: equal ? undefined : `${formatSem(live)}\n---\n${formatSem(exported.normalized)}`,
+    elapsedMs: Date.now() - started,
+  };
 }

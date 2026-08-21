@@ -419,8 +419,9 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
     `Labeling should use HTMLTag ol, got: …${labelingBefore.slice(-80)}`,
   );
   assert(!labelingBefore.includes('class="labeling"'), "Labeling must not fall back to a generic div");
-  assertStringIncludes(html, '<a class="url" href="https://www.ams.org/publications/authors/tex/amslatex">');
-  assertStringIncludes(html, "<code>");
+  assertStringIncludes(html, 'class="flex_url"');
+  assertStringIncludes(html, 'href="https://www.ams.org/publications/authors/tex/amslatex"');
+  assertStringIncludes(html, 'class="flex_code"');
   assert(!html.includes("<code><div"), "Flex Code must stay inline");
   assertStringIncludes(html, '<dl class="description">');
   assertStringIncludes(html, "<dt>Address</dt>");
@@ -446,10 +447,10 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, '<span class="dropcap">T</span>');
   assertStringIncludes(html, '<span class="dropcap-rest">his</span>');
   assertStringIncludes(html, "module adds a drop capitals paragraph style");
-  assertStringIncludes(html, 'class="rotatebox"');
+  assertStringIncludes(html, 'class="flex_rotatebox"');
   assertStringIncludes(html, "rotate(30deg)");
   assertStringIncludes(html, "Great Western Railway");
-  assertStringIncludes(html, 'class="multicol"');
+  assertStringIncludes(html, 'class="flex_multiple_columns"');
   assertStringIncludes(html, "column-count: 2");
   assertStringIncludes(html, "The Adventure of the Empty House");
   assert(!html.includes("{100.125}"), "non-LyX include (.tex) must be omitted like native XHTML");
@@ -483,8 +484,8 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, "<sup>a, b</sup>");
   assertStringIncludes(html, "<sub>3x</sub>");
   assertStringIncludes(html, "<hr>");
-  assertStringIncludes(html, "<em>Emph</em>");
-  assertStringIncludes(html, "<strong>Strong</strong>");
+  assertStringIncludes(html, '<em class="flex_emph">Emph</em>');
+  assertStringIncludes(html, '<strong class="flex_strong">Strong</strong>');
   assertStringIncludes(html, '<div class="nomencl">');
   assertStringIncludes(html, ">Tab</a></dt>");
   assertStringIncludes(html, "<dd>Tabulator key</dd>");
@@ -540,8 +541,8 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assert(prevAt !== -1 && html.slice(prevAt, prevAt + 200).includes("This is a line"), "Preview wraps demo line");
   assertStringIncludes(html, 'class="Frameless"');
   assertStringIncludes(html, 'class="marginal"');
-  assertStringIncludes(html, "<code>");
-  assertStringIncludes(html, 'class="url"');
+  assertStringIncludes(html, 'class="flex_code"');
+  assertStringIncludes(html, 'class="flex_url"');
   assertStringIncludes(html, 'class="noun"');
   // Quote-style table: multiple language marks (not only English eld/erd)
   assertStringIncludes(html, "«");
@@ -694,11 +695,11 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, "Oval box, thin");
   assertStringIncludes(html, "Double rectangular box");
   // Flex Minipage (Var. Width): wrap like native MultiPar Flex → div
-  assertStringIncludes(html, 'class="minipage"');
+  assertStringIncludes(html, "flex_minipage");
   const mpAt = html.indexOf("with line break");
   assert(mpAt !== -1, "Minipage body text missing");
-  const mpOpen = html.lastIndexOf('class="minipage"', mpAt);
-  assert(mpOpen !== -1 && mpOpen > mpAt - 200, "Minipage content must sit inside div.minipage");
+  const mpOpen = html.lastIndexOf("flex_minipage", mpAt);
+  assert(mpOpen !== -1 && mpOpen > mpAt - 200, "Minipage content must sit inside flex_minipage wrapper");
   assertStringIncludes(html.slice(mpOpen, mpAt + 20), "rotated cell");
   assertStringIncludes(html, 'class="href"');
   assertStringIncludes(html, '<nav class="toc">');
@@ -707,10 +708,10 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   assertStringIncludes(html, "“");
   assertStringIncludes(html, "<br>");
   assertStringIncludes(html, 'class="dropcap"');
-  assertStringIncludes(html, 'class="reflectbox"');
-  assertStringIncludes(html, 'class="rotatebox"');
-  assertStringIncludes(html, 'class="scalebox"');
-  assertStringIncludes(html, 'class="resizebox"');
+  assertStringIncludes(html, 'class="flex_reflectbox"');
+  assertStringIncludes(html, 'class="flex_rotatebox"');
+  assertStringIncludes(html, 'class="flex_scalebox"');
+  assertStringIncludes(html, 'class="flex_resizebox"');
   assertStringIncludes(html, 'class="bibitemlabel"');
   assertStringIncludes(html, 'class="citation"');
   assertStringIncludes(html, "<hr>");
@@ -791,7 +792,7 @@ Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels",
   const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
   assertStringIncludes(html, '<article class="lyx-live">');
   assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
-  assertStringIncludes(html, "<dt><code>Format</code></dt>");
+  assertStringIncludes(html, '<dt><code class="flex_code">Format</code></dt>');
   assert(!html.includes("status collapsedFormat"), "Flex Code status must not leak into Description labels");
   assert(
     !html.includes("International Keyboard Support"),
@@ -805,7 +806,7 @@ Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels",
   assertStringIncludes(html, '<nav class="toc">');
   assertStringIncludes(html, 'class="note_greyedout"');
   assertStringIncludes(html, 'class="noun"');
-  assertStringIncludes(html, 'class="url"');
+  assertStringIncludes(html, 'class="flex_url"');
   assertStringIncludes(html, 'class="Shadowbox"');
   assertStringIncludes(html, '<code class="listings');
   assertStringIncludes(html, '<pre class="lyx_code">');
@@ -823,8 +824,8 @@ Deno.test("Live renderer - Help Development.lyx listings, Flex Code, Paragraph",
   assertStringIncludes(html, 'class="href"');
   assertStringIncludes(html, '<nav class="toc">');
   assertStringIncludes(html, 'class="note_greyedout"');
-  assertStringIncludes(html, "<code>");
-  assertStringIncludes(html, 'class="url"');
+  assertStringIncludes(html, 'class="flex_code"');
+  assertStringIncludes(html, 'class="flex_url"');
   assertStringIncludes(html, '<code class="listings');
   assertStringIncludes(html, "“");
   assertStringIncludes(html, 'class="foot"');
@@ -899,7 +900,8 @@ Deno.test("Live renderer - nameref uses heading and caption titles", async () =>
   const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
   assertStringIncludes(html, 'href="#sec_intro_name">Named Introduction</a>');
   assertStringIncludes(html, 'href="#sec_intro_name">1</a>');
-  assertStringIncludes(html, 'href="#fig_demo_cap">A demo caption</a>');
+  // Native LyXHTML nameref for floats is "Figure N", not the caption prose.
+  assertStringIncludes(html, 'href="#fig_demo_cap">Figure 1</a>');
 });
 
 Deno.test("Live renderer - Flex InsetLayout HTMLTag/HTMLClass/Font from LocalLayout", async () => {

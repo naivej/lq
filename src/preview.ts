@@ -556,6 +556,20 @@ function layoutSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "standard";
 }
 
+/** Native InsetLayout defaultCSSClass: `Flex Emph` / `Flex:Emph` → `flex_emph`. */
+function flexNativeClass(kindOrName: string): string {
+  const name = kindOrName.startsWith("Flex ")
+    ? kindOrName.slice("Flex ".length).trim()
+    : kindOrName.replace(/^Flex:/, "").trim();
+  return `flex_${name
+    .replace(/[()]/g, "_")
+    .replace(/\./g, "_")
+    .replace(/\s+/g, "_")
+    .replace(/_+/g, "_")
+    .replace(/^_|_$/g, "")
+    .toLowerCase()}`;
+}
+
 /** LyX `xml::cleanAttr`: non-ASCII-alnum → `_` (`sec:Section_label` → `sec_Section_label`). */
 function xmlId(name: string): string {
   return name.replace(/[^A-Za-z0-9]/g, "_");
@@ -683,7 +697,10 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         noteFloatListEntry(ctx, n, variant, taken);
         const prevCap = currentFloatCaption;
         const caps = captionBlocks(n);
-        currentFloatCaption = caps.map((c) => collectVisibleText(c)).join(" ").replace(/\s+/g, " ").trim();
+        // nameref for floats matches native LyXHTML ("Figure 1"), not the caption prose.
+        currentFloatCaption = taken
+          ? `${floatNamerefPrefix(variant)} ${taken}`
+          : caps.map((c) => collectVisibleText(c)).join(" ").replace(/\s+/g, " ").trim();
         walk(n.children, taken ?? floatNo, false);
         currentFloatCaption = prevCap;
         continue;
@@ -1574,16 +1591,17 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Text") return renderInsetLayouts(block, parentState, ctx);
   if (kind === "Flex Noun" || kind.startsWith("Flex Noun")) {
+    // logicalmkup sets HTMLClass "noun" (not the default flex_noun).
     return `<span class="noun">${renderFlexInline(block, ctx)}</span>`;
   }
   if (kind === "Flex Code" || kind.startsWith("Flex Code")) {
-    return `<code>${renderFlexInline(block, ctx)}</code>`;
+    return `<code class="${flexNativeClass(kind)}">${renderFlexInline(block, ctx)}</code>`;
   }
   if (kind === "Flex Emph" || kind.startsWith("Flex Emph")) {
-    return `<em>${renderFlexInline(block, ctx)}</em>`;
+    return `<em class="${flexNativeClass(kind)}">${renderFlexInline(block, ctx)}</em>`;
   }
   if (kind === "Flex Strong" || kind.startsWith("Flex Strong")) {
-    return `<strong>${renderFlexInline(block, ctx)}</strong>`;
+    return `<strong class="${flexNativeClass(kind)}">${renderFlexInline(block, ctx)}</strong>`;
   }
   if (kind.startsWith("Flex Multiple")) {
     const cols = argumentText(block, "1") || "2";
@@ -1591,16 +1609,16 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const preface = argumentText(block, "2");
     const body = renderInsetLayouts(block, parentState, ctx);
     const head = preface ? `<div class="multicol-preface">${escapeLiveHtml(preface)}</div>` : "";
-    return `${head}<div class="multicol" style="column-count: ${escapeLiveHtml(n)}">${body}</div>`;
+    return `${head}<div class="${flexNativeClass(kind)}" style="column-count: ${escapeLiveHtml(n)}">${body}</div>`;
   }
   if (kind.startsWith("Flex Rotatebox")) {
     const angle = argumentText(block, "2") || "0";
-    return `<span class="rotatebox" style="display:inline-block;transform:rotate(${escapeLiveHtml(angle)}deg)">${renderFlexInline(block, ctx)}</span>`;
+    return `<span class="${flexNativeClass(kind)}" style="display:inline-block;transform:rotate(${escapeLiveHtml(angle)}deg)">${renderFlexInline(block, ctx)}</span>`;
   }
   if (kind.startsWith("Flex Scalebox")) {
     const h = argumentText(block, "1") || "1";
     const v = argumentText(block, "2") || h;
-    return `<span class="scalebox" style="display:inline-block;transform:scale(${escapeLiveHtml(h)}, ${escapeLiveHtml(v)})">${renderFlexInline(block, ctx)}</span>`;
+    return `<span class="${flexNativeClass(kind)}" style="display:inline-block;transform:scale(${escapeLiveHtml(h)}, ${escapeLiveHtml(v)})">${renderFlexInline(block, ctx)}</span>`;
   }
   if (kind.startsWith("Flex Resizebox")) {
     const w = argumentText(block, "1");
@@ -1608,21 +1626,22 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const styles: string[] = ["display:inline-block"];
     if (w) styles.push(`width:${w}`);
     if (h && h !== "!") styles.push(`height:${h}`);
-    return `<span class="resizebox" style="${escapeLiveHtml(styles.join(";"))}">${renderFlexInline(block, ctx)}</span>`;
+    return `<span class="${flexNativeClass(kind)}" style="${escapeLiveHtml(styles.join(";"))}">${renderFlexInline(block, ctx)}</span>`;
   }
   if (kind.startsWith("Flex Reflectbox")) {
-    return `<span class="reflectbox" style="display:inline-block;transform:scaleX(-1)">${renderFlexInline(block, ctx)}</span>`;
+    return `<span class="${flexNativeClass(kind)}" style="display:inline-block;transform:scaleX(-1)">${renderFlexInline(block, ctx)}</span>`;
   }
   if (kind.startsWith("Flex Minipage")) {
     // varwidth.module MultiPar Flex — native default HTMLTag is div; Argument 2 is max width.
     const maxW = argumentText(block, "2").trim();
     const css = maxW && !maxW.startsWith("\\") ? widthToCss(maxW) : "";
     const style = css ? ` style="max-width: ${escapeLiveHtml(css)}"` : "";
-    return `<div class="minipage"${style}>${renderInsetLayouts(block, parentState, ctx)}</div>`;
+    return `<div class="${flexNativeClass(kind)}"${style}>${renderInsetLayouts(block, parentState, ctx)}</div>`;
   }
   if (kind === "Flex URL" || kind.startsWith("Flex URL")) {
+    // Native: outer span.flex_url + HTMLInnerTag a (stdinsets.inc).
     const url = flattenFlow(block.children, 0).map((item) => collectVisibleText(item.node)).join("").trim();
-    return `<a class="url" href="${escapeLiveHtml(url)}">${escapeLiveHtml(url)}</a>`;
+    return `<span class="flex_url"><a href="${escapeLiveHtml(url)}">${escapeLiveHtml(url)}</a></span>`;
   }
   // Beamer charstyles (Font Color only in layout; no HTMLTag).
   if (kind === "Flex Alert" || kind.startsWith("Flex Alert ")) {
@@ -2280,7 +2299,7 @@ function renderFlexFromLayout(
   if (!/^[a-z][a-z0-9]*$/.test(rawTag) || rawTag === "script" || rawTag === "iframe") {
     return undefined;
   }
-  const cls = spec.htmlClass?.trim() || `flex ${slug}`;
+  const cls = spec.htmlClass?.trim() || flexNativeClass(name);
   const style = layoutFontStyle(spec.font);
   const inner = multipar
     ? renderInsetLayouts(block, parentState, ctx)
@@ -2305,14 +2324,17 @@ function renderIpaDeco(block: BlockNode, parentState: TraversalState, ctx: Rende
 
 function floatCaptionPrefix(variant: string, num: string | undefined): string {
   if (!num) return "";
-  const name = variant === "table"
-    ? "Table"
-    : variant === "algorithm"
-    ? "Algorithm"
-    : variant === "listing"
-    ? "Listing"
-    : "Figure";
-  return `${name} ${num}: `;
+  return `${floatNamerefPrefix(variant)} ${num}: `;
+}
+
+/** Native nameref text for a float label ("Figure", "Table", …). */
+function floatNamerefPrefix(variant: string): string {
+  const v = variant.toLowerCase();
+  if (v === "table") return "Table";
+  if (v === "algorithm") return "Algorithm";
+  if (v === "listing") return "Listing";
+  if (v === "figure" || !v) return "Figure";
+  return variant.charAt(0).toUpperCase() + variant.slice(1);
 }
 
 /** `Caption Below` → `Below`; bare `Caption` → `Standard` (native type_). */
@@ -3043,7 +3065,11 @@ function stripEmpty(node: SemNode): SemNode {
 function collapse(node: SemNode): SemNode {
   let children = node.children.map(collapse).flatMap((c) => {
     if (c.role === "wrap") return c.children;
-    if (c.role === "text" && !(c.text ?? "").trim() && node.role !== "pre") return [];
+    // Keep a single space between LyXHTML split runs ("1" + " Title" → "1 Title").
+    if (c.role === "text" && !(c.text ?? "").trim() && node.role !== "pre") {
+      if (/^[ \t]+$/.test(c.text ?? "")) return [{ role: "text", text: " ", children: [] }];
+      return [];
+    }
     if ((node.role === "cell" || node.role === "figure") && c.role === "paragraph") return c.children;
     if (node.role === "caption" && c.role === "paragraph") return c.children;
     return [c];
@@ -3076,7 +3102,23 @@ function collapse(node: SemNode): SemNode {
     for (const cur of merged) {
       if (cur.role === "text" && cur.text) cur.text = collapseWs(cur.text, false);
     }
-    const blocky = new Set(["list", "table", "figure", "section", "quote", "formula"]);
+    // Inter-block whitespace from LyXHTML (newlines between </h2> and <div>) is not content.
+    const blocky = new Set([
+      "list",
+      "table",
+      "figure",
+      "section",
+      "quote",
+      "formula",
+      "document",
+      "heading",
+      "paragraph",
+      "caption",
+      "title",
+      "abstract",
+      "author",
+      "note",
+    ]);
     if (merged[0]?.role === "text" && merged[0].text) merged[0].text = merged[0].text.trimStart();
     const last = merged[merged.length - 1];
     if (last?.role === "text" && last.text) last.text = last.text.trimEnd();
@@ -3085,6 +3127,11 @@ function collapse(node: SemNode): SemNode {
       if (cur.role !== "text" || !cur.text) continue;
       if (i > 0 && blocky.has(merged[i - 1].role)) cur.text = cur.text.trimStart();
       if (i + 1 < merged.length && blocky.has(merged[i + 1].role)) cur.text = cur.text.trimEnd();
+    }
+    // Drop text nodes that are only whitespace after block trimming.
+    for (let i = merged.length - 1; i >= 0; i--) {
+      const cur = merged[i]!;
+      if (cur.role === "text" && !(cur.text ?? "").trim()) merged.splice(i, 1);
     }
   }
   const next: SemNode = { role: node.role, children: merged };
@@ -3161,9 +3208,12 @@ function mapRole(node: SemNode): SemNode {
   }
   if (tag === "img") {
     const classes = cls.split(/\s+/).filter(Boolean);
-    const iconName = node.attrs?.["aria-label"] || node.attrs?.alt || node.attrs?.title;
-    // Info icons (glyph or PNG/`data:`) compare by LFUN/name, not markup shape (DL130 J4).
-    if (classes.includes("info-icon") || node.attrs?.["data-info-icon"] || (iconName && classes.includes("icon"))) {
+    const fromAttr = node.attrs?.["data-info-icon"] || node.attrs?.["aria-label"] ||
+      node.attrs?.title || "";
+    const fromFile = basenameAttr(node.attrs?.src ?? "").replace(/\.(svgz?|png|jpe?g|gif|webp)$/i, "");
+    const iconName = (fromAttr || fromFile).trim();
+    // Live Info icons only — native guiicon wrappers are remapped in span.guiicon below.
+    if (classes.includes("info-icon") || node.attrs?.["data-info-icon"]) {
       return { role: "icon", attrs: iconName ? { name: iconName } : undefined, children: [] };
     }
     const src = node.attrs?.["data-filename"] || basenameAttr(node.attrs?.src ?? "");
@@ -3184,13 +3234,21 @@ function mapRole(node: SemNode): SemNode {
   }
   if (tag === "a") {
     const classes = cls.split(/\s+/).filter(Boolean);
+    const href = node.attrs?.href ?? "";
     if (classes.includes("ref") || classes.includes("reference")) {
       return mapRefRole(node, children);
     }
+    // Native LyXHTML cross-refs are bare <a href="#…"> (no class="ref").
+    if (href.startsWith("#")) {
+      return mapRefRole(node, children);
+    }
     if (classes.includes("citation")) return { role: "citation", children };
-    if (classes.includes("href")) {
-      const href = node.attrs?.href ?? "";
+    if (classes.includes("href") || href) {
       return { role: "link", attrs: href ? { href } : undefined, children };
+    }
+    // Empty anchors used only as id targets (<a id="…"/>) — drop.
+    if (node.attrs?.id && !href && children.length === 0) {
+      return { role: "wrap", children: [] };
     }
   }
   if (tag === "p" || tag === "div") {
@@ -3209,8 +3267,18 @@ function mapRole(node: SemNode): SemNode {
     if (classes.includes("citation")) return { role: "citation", children };
     if (classes.includes("ref")) return mapRefRole(node, children);
     if (classes.includes("info-icon")) {
-      const name = node.attrs?.["aria-label"] || node.attrs?.title || collectText({ role: tag, children, text: node.text }).trim();
+      const name = node.attrs?.["aria-label"] || node.attrs?.title ||
+        collectText({ role: tag, children, text: node.text }).trim();
       return { role: "icon", attrs: name ? { name } : undefined, children: [] };
+    }
+    // Native Info icons wrap <img> in span.guiicon — promote to role icon by LFUN/name.
+    if (classes.includes("guiicon")) {
+      const promoted = children.map((c) => {
+        if (c.role !== "image" || !c.attrs?.filename) return c;
+        const name = c.attrs.filename.replace(/\.(svgz?|png|jpe?g|gif|webp)$/i, "");
+        return { role: "icon", attrs: name ? { name } : undefined, children: [] as SemNode[] };
+      });
+      return { role: "wrap", children: promoted };
     }
     return { role: "wrap", children };
   }
