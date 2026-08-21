@@ -102,19 +102,41 @@ details.disclose > summary {
 }
 details.disclose > summary::-webkit-details-marker { display: none; }
 details.disclose[open] {
-  display: block;
-  margin: 0.4em 0;
+  display: inline-block;
+  vertical-align: top;
+  width: fit-content;
+  max-width: min(36em, 100%);
+  margin: 0.35em 0.12em;
 }
 details.disclose[open] > summary {
   margin-bottom: 0.25em;
 }
 details.disclose[open] > .disclose-body {
   display: block;
+  width: fit-content;
+  max-width: min(36em, 100%);
+  box-sizing: border-box;
   margin: 0.15em 0 0.25em;
-  padding: 0.4em 0.5em;
+  padding: 0.35em 0.5em;
   border: 1px solid #888;
   border-radius: 3px;
   background: var(--vscode-editor-background, #fff);
+}
+/* Wide media (figures/tables) may need the full column when open. */
+section > details.disclose.float[open],
+section > details.disclose.wrap[open],
+article > details.disclose.float[open],
+article > details.disclose.wrap[open] {
+  display: block;
+  width: auto;
+  max-width: 100%;
+}
+section > details.disclose.float[open] > .disclose-body,
+section > details.disclose.wrap[open] > .disclose-body,
+article > details.disclose.float[open] > .disclose-body,
+article > details.disclose.wrap[open] > .disclose-body {
+  width: auto;
+  max-width: 100%;
 }
 /* Footnotes: red number chip; open body uses a note-like content box (not parentheses). */
 details.disclose.foot,
@@ -163,8 +185,14 @@ details.disclose.note-comment > summary {
   border-color: #5555aa;
   color: #303070;
 }
+details.disclose.note[open] {
+  width: fit-content;
+  max-width: min(28em, 100%);
+}
 details.disclose.note-note[open] > .disclose-body,
 details.disclose.note-comment[open] > .disclose-body {
+  width: fit-content;
+  max-width: min(28em, 100%);
   border-color: #c9a000;
   background: #fffceb;
 }
