@@ -340,8 +340,15 @@ Deno.test("Live renderer - disclosure_collapsibles covers foldable inset set (DL
   }
   assertStringIncludes(html, ">Float: Figure</summary>");
   assertStringIncludes(html, ">Float: Table</summary>");
+  assertStringIncludes(html, ">Wrap: Figure</summary>");
   assertStringIncludes(html, "Greyedout stays visible");
   assertStringIncludes(html, "ShortTitle");
+  assertStringIncludes(html, ">Short Title</summary>");
+  assertStringIncludes(html, ">NomSymbol</summary>");
+  assertStringIncludes(html, ">IndexTerm</summary>");
+  assertStringIncludes(html, ">Branch: Demo</summary>");
+  assertStringIncludes(html, ">Margin</summary>");
+  assertStringIncludes(html, ">Box</summary>");
   assertStringIncludes(html, "\\textbf{chip}");
   assertStringIncludes(html, "phantom body");
   assertStringIncludes(html, ">Argument</summary>");

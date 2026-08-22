@@ -9,7 +9,7 @@
 #   Charstyle Flex (inline, NOT chips): Code, Emph, Strong, Noun, URL
 #   Plain-text marker chips (Live-only): ERT, Phantom/HPhantom/VPhantom,
 #     Index (+ IndexMacro see), Nomenclature (symbol + Argument description disclosure),
-#     Argument 1 Short title
+#     Argument 1 Short Title
 #   Other Arguments (post:, 2, …): Live silent (parent-consumed)
 #   Content: Formula (inline+display), FormulaMacro, Graphics, Tabular,
 #     listings, Preview (non-click bordered box)

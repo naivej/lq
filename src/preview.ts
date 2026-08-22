@@ -1747,7 +1747,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     // Short-title slot (and other Arg-1 uses): Live chip; parents still read via argumentText.
     return wrapPlainTextMarker(
       "argument short-title",
-      "Short title",
+      "Short Title",
       nomenclText(block) || collectVisibleText(block),
     );
   }
@@ -1772,7 +1772,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind === "Marginal" || kind.startsWith("Marginal ")) {
     return wrapDisclosure(
       "marginal",
-      "Margin note",
+      "Margin",
       renderInsetLayouts(block, parentState, ctx),
     );
   }
@@ -1804,18 +1804,20 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const text = entry.see && entry.terms.length
       ? `${entry.terms.join(", ")} (see ${entry.see})`
       : entry.terms.join(", ") || entry.see;
-    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapPlainTextMarker("index-marker", "Index", text)}`;
+    const label = entry.terms.join(", ") || entry.see || "Index";
+    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapPlainTextMarker("index-marker", label, text)}`;
   }
   if (kind.startsWith("IndexMacro ") || kind === "IndexMacro") return "";
   if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) {
     const entry = collectNomenclEntry(block, ctx);
     // Expandable box whose body shows the symbol plus the Argument description
     // as its own nested expandable box (not a flat combined chip).
+    const label = entry.symbol || "Nomencl";
     const prev = ctx.inNomencl;
     ctx.inNomencl = true;
     const inner = renderInsetLayouts(block, parentState, ctx);
     ctx.inNomencl = prev;
-    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapDisclosure("nomencl", "Nomencl", inner)}`;
+    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapDisclosure("nomencl", label, inner)}`;
   }
   if (kind === "Preview" || kind.startsWith("Preview ")) {
     // Non-click chrome box (not <details>); no extra "Preview" label — body alone.
@@ -1991,7 +1993,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const name = kind.slice("Branch ".length).trim() || "Branch";
     return wrapDisclosure(
       "branch",
-      `Branch ${name}`,
+      `Branch: ${name}`,
       renderInsetLayouts(block, parentState, ctx),
     );
   }
@@ -2323,7 +2325,7 @@ function renderBox(block: BlockNode, kind: string, parentState: TraversalState, 
     ? (nested[0] ? renderLayoutInline(nested[0].node, ctx) : "")
     : renderInsetLayouts(block, parentState, ctx);
   const box = `<div class="${escapeLiveHtml(variant)}"${style}>${inner}</div>`;
-  return wrapDisclosure(`box ${layoutSlug(variant)}`, variant || "Box", box);
+  return wrapDisclosure(`box ${layoutSlug(variant)}`, "Box", box);
 }
 
 /**
@@ -2837,11 +2839,14 @@ function renderCaptionedFloat(block: BlockNode, variant: string, ctx: RenderCtx)
   return html;
 }
 
-function floatDisclosureLabel(variant: string): string {
+function floatTypeLabel(kind: "Float" | "Wrap", variant: string): string {
   const v = variant.trim() || "figure";
-  const pretty = v ? v.charAt(0).toUpperCase() + v.slice(1) : "Float";
-  // Distinguish Float/Wrap chrome from non-float Graphics/Tabular (no chip).
-  return `Float: ${pretty}`;
+  const pretty = v.charAt(0).toUpperCase() + v.slice(1);
+  return `${kind}: ${pretty}`;
+}
+
+function floatDisclosureLabel(variant: string): string {
+  return floatTypeLabel("Float", variant);
 }
 
 function renderWrap(block: BlockNode, _parentState: TraversalState, ctx: RenderCtx): string {
@@ -2860,7 +2865,7 @@ function renderWrap(block: BlockNode, _parentState: TraversalState, ctx: RenderC
   const wrap = `<div class="wrap wrap-${side}" style="width: ${escapeLiveHtml(width)}">${inner}</div>`;
   return wrapDisclosure(
     `wrap wrap-${side} wrap-${layoutSlug(variant)}`,
-    floatDisclosureLabel(variant),
+    floatTypeLabel("Wrap", variant),
     wrap,
   );
 }
