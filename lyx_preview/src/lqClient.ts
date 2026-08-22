@@ -42,9 +42,18 @@ function findOnPath(command: string): string | undefined {
   return undefined;
 }
 
-/** First `lq*` entry (not a .map) inside `dir`, if the directory exists. */
+/** Newest `lq*` entry (not a .map) inside `dir`, if the directory exists. */
 function findLqInDir(dir: string): string | undefined {
   if (!existsSync(dir)) return undefined;
-  const match = readdirSync(dir).find((name: string) => /^lq/i.test(name) && !name.endsWith(".map"));
-  return match ? join(dir, match) : undefined;
+  let newest: { full: string; mtimeMs: number } | undefined;
+  for (const name of readdirSync(dir)) {
+    if (!/^lq/i.test(name) || name.endsWith(".map")) continue;
+    const full = join(dir, name);
+    const stat = statSync(full, { throwIfNoEntry: false });
+    if (!stat?.isFile()) continue;
+    if (!newest || stat.mtimeMs > newest.mtimeMs) {
+      newest = { full, mtimeMs: stat.mtimeMs };
+    }
+  }
+  return newest?.full;
 }
