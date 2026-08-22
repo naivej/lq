@@ -667,17 +667,21 @@ export const HELP_PAGES: HelpPage[] = [
           "                 bytes (hashAlgorithm 'sha256', hashInput 'raw-file-bytes'),\n" +
           "                 diskHash, lineEnding (lf|crlf|mixed), lineCount, and\n" +
           "                 fresh=true (this command always reads the saved file).\n" +
-          "  capabilities   review, mapping, outline, editing, and sourceReveal are\n" +
-          "                 false. Those fields are omitted, not stubbed as empty arrays.\n" +
-          "  diagnostics    Structured notes such as omitted ERT or unknown insets.\n" +
+          "  capabilities   review, mapping, editing, and sourceReveal are false;\n" +
+          "                 outline is true (live outline headings). All five fields\n" +
+          "                 are present as booleans.\n" +
+          "  diagnostics    Structured notes such as unknown insets.\n" +
           "  warnings       Non-fatal messages from the CLI envelope.\n\n" +
           "A parse or file error is the usual {code, message} JSON object and a\n" +
-          "non-zero exit. The command does not mutate the file.",
+          "non-zero exit. A missing or unresolvable textclass layout is reported as\n" +
+          "LAYOUT_NOT_FOUND or NO_TEXTCLASS. The command does not mutate the file.",
       ),
       sec(
         "Constraints",
         "- Deleted tracked text is omitted; inserted text is rendered as current text.\n" +
-          "- ERT and private notes (Note, Comment) are omitted, matching native XHTML.\n" +
+          "- ERT appears as an escaped 'ERT' chip; Note/Comment appear as click-disclosable\n" +
+          "  private notes; Greyedout is a collapsed chip. These are Live-only (native\n" +
+          "  XHTML omits them).\n" +
           "- Formulas use a TeX→MathML subset with escaped fallback; they are not executed.\n" +
           "- Unknown insets become an escaped, marked fallback plus a diagnostic.\n" +
           "- No source tokens, selection references, or edit commands are emitted.",
@@ -686,7 +690,7 @@ export const HELP_PAGES: HelpPage[] = [
     furtherReading: [
       fr("commands/init", "layoutSearch / layoutRoots and --layouts-dir overlay"),
       fr("model/cst", "the tree this projection is built from"),
-      fr("concepts/private-notes", "notes omitted from the reader projection"),
+      fr("concepts/private-notes", "private notes shown as Live disclosures"),
       fr("concepts/tracked-changes", "deleted regions omitted like native XHTML"),
     ],
   },
