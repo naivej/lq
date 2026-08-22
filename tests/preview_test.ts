@@ -331,7 +331,8 @@ Deno.test("Live renderer - disclosure_collapsibles covers foldable inset set (DL
     'class="disclose ert"',
     'class="disclose phantom"',
     'class="disclose index-marker"',
-    'class="disclose nomencl-marker"',
+    'class="disclose nomencl"',
+    'class="disclose argument"',
     'class="disclose argument short-title"',
   ];
   for (const needle of mustDisclose) {
@@ -343,6 +344,9 @@ Deno.test("Live renderer - disclosure_collapsibles covers foldable inset set (DL
   assertStringIncludes(html, "ShortTitle");
   assertStringIncludes(html, "\\textbf{chip}");
   assertStringIncludes(html, "phantom body");
+  assertStringIncludes(html, ">Argument</summary>");
+  assertStringIncludes(html, "Nom description");
+  assert(!html.includes("NomSymbol — Nom description"), "Nomenclature must not flatten symbol+description into one marker body");
   assertStringIncludes(html, "IndexTerm");
   assertStringIncludes(html, "NomSymbol");
   assertStringIncludes(html, "Nom description");

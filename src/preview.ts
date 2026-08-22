@@ -288,6 +288,8 @@ interface RenderCtx {
   chapterLabel: string;
   inTitle: boolean;
   inWrap: boolean;
+  /** True while rendering a Nomenclature body — its Argument carries the description. */
+  inNomencl: boolean;
   filePath?: string;
   systemDocDir?: string;
   /** `{Resources}/images` for Info icon PNG/SVGZ lookup. */
@@ -1007,6 +1009,7 @@ export async function renderLiveHtml(
     chapterLabel: "",
     inTitle: false,
     inWrap: false,
+    inNomencl: false,
     filePath: options.filePath,
     systemDocDir: systemLayoutsDir ? path.resolve(systemLayoutsDir, "..", "doc") : undefined,
     systemImagesDir: imagesDirFromLayouts(systemLayoutsDir),
@@ -1750,6 +1753,11 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Argument" || kind.startsWith("Argument ")) {
     // Other Arguments (post:, 2, 3, …) stay omitted — parent-consumed slots.
+    // Inside a Nomenclature they carry the description and render as a nested
+    // expandable box (disclosure_collapsibles corpus).
+    if (ctx.inNomencl) {
+      return wrapDisclosure("argument", "Argument", renderInsetLayouts(block, parentState, ctx));
+    }
     return "";
   }
   if (kind === "Phantom" || kind.startsWith("Phantom ")) {
@@ -1801,8 +1809,13 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind.startsWith("IndexMacro ") || kind === "IndexMacro") return "";
   if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) {
     const entry = collectNomenclEntry(block, ctx);
-    const text = [entry.symbol, entry.desc].filter(Boolean).join(" — ");
-    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapPlainTextMarker("nomencl-marker", "Nomencl", text)}`;
+    // Expandable box whose body shows the symbol plus the Argument description
+    // as its own nested expandable box (not a flat combined chip).
+    const prev = ctx.inNomencl;
+    ctx.inNomencl = true;
+    const inner = renderInsetLayouts(block, parentState, ctx);
+    ctx.inNomencl = prev;
+    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapDisclosure("nomencl", "Nomencl", inner)}`;
   }
   if (kind === "Preview" || kind.startsWith("Preview ")) {
     // Non-click chrome box (not <details>); no extra "Preview" label — body alone.
