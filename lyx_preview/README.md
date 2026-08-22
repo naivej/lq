@@ -75,4 +75,4 @@ If a toggle is missing, that is a VS Code/webview limitation for that version �
 
 1. `lyx-preview.lqPath`
 2. `lq` on `PATH`
-3. `~\Github\lq_dev\lq\bin` — development-only fallback for the lq repo's own build output
+3. `~\Github\lq_dev\lq\bin` — development-only fallback: the first `lq*` entry there (e.g. `lq_<version>_win64.exe`, case-insensitive, `.map` excluded)
