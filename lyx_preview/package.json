@@ -84,7 +84,7 @@
         "lyx-preview.lqPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the compiled lq binary. When empty, the extension uses LQ_PATH, a workspace lq/bin binary, or lq on PATH."
+          "description": "Path to the compiled lq binary. When empty, the extension falls back to lq on PATH, then the lq repo dev build directory."
         },
         "lyx-preview.timeoutMs": {
           "type": "number",

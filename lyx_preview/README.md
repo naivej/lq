@@ -74,6 +74,5 @@ If a toggle is missing, that is a VS Code/webview limitation for that version â€
 **How the extension finds `lq`** (first match wins):
 
 1. `lyx-preview.lqPath`
-2. Env var `LQ_PATH`
-3. A binary named like `lq*` under workspace `lq/bin` or `bin`
-4. Else `lq` on `PATH`
+2. `lq` on `PATH`
+3. `~\Github\lq_dev\lq\bin` â€” development-only fallback for the lq repo's own build output
