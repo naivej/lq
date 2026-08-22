@@ -8,6 +8,11 @@ import {
   outlineIdForLine,
   scanLyxHeadingLines,
 } from "./outlineNest";
+import {
+  forgetOutline,
+  getCachedOutline,
+  rememberOutline,
+} from "./outlineProvider";
 
 
 describe("nestOutlineEntries", () => {
@@ -145,5 +150,41 @@ describe("attachNavigateLines", () => {
     assert.equal(nav.tables[0]!.line, 3);
     assert.equal(nav.equations[0]!.line, 7);
     assert.equal(nav.labels[0]!.line, 4);
+  });
+});
+
+describe("outline cache bounds", () => {
+  it("keeps only the most recent paths", () => {
+    for (let i = 0; i < 40; i++) {
+      rememberOutline(`C:/tmp/doc-${i}.lyx`, [
+        { level: 1, number: String(i), text: `Doc ${i}`, id: `sec-${i}` },
+      ]);
+    }
+    assert.equal(getCachedOutline("C:/tmp/doc-0.lyx"), undefined);
+    assert.equal(getCachedOutline("C:/tmp/doc-7.lyx"), undefined);
+    assert.ok(getCachedOutline("C:/tmp/doc-8.lyx"));
+    assert.ok(getCachedOutline("C:/tmp/doc-39.lyx"));
+  });
+
+  it("touching a path protects it from eviction", () => {
+    for (let i = 0; i < 32; i++) {
+      rememberOutline(`C:/tmp/touch-${i}.lyx`, [
+        { level: 1, number: String(i), text: `Doc ${i}`, id: `sec-${i}` },
+      ]);
+    }
+    getCachedOutline("C:/tmp/touch-0.lyx"); // LRU touch
+    rememberOutline("C:/tmp/touch-new.lyx", [
+      { level: 1, number: "x", text: "New", id: "sec-new" },
+    ]);
+    assert.ok(getCachedOutline("C:/tmp/touch-0.lyx"));
+    assert.equal(getCachedOutline("C:/tmp/touch-1.lyx"), undefined);
+  });
+
+  it("forgetOutline removes a path and its case variants", () => {
+    rememberOutline("C:/Docs/A.LYX", [
+      { level: 1, number: "1", text: "A", id: "sec-a" },
+    ]);
+    forgetOutline("c:/docs/a.lyx");
+    assert.equal(getCachedOutline("C:/Docs/A.LYX"), undefined);
   });
 });

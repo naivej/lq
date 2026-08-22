@@ -27,11 +27,11 @@ export function renderWebviewHtml(options: {
   scriptNonce?: string;
 }): string {
   const status = options.error
-    ? `<div class="banner error">${escapeHostText(options.error)}</div>`
+    ? `<div id="lyx-banner" class="banner error">${escapeHostText(options.error)}</div>`
     : options.pending
-      ? `<div class="banner pending">Rendering…</div>`
+      ? `<div id="lyx-banner" class="banner pending">Rendering…</div>`
       : options.stale
-        ? `<div class="banner stale">Unsaved edits — save to refresh the Live preview.</div>`
+        ? `<div id="lyx-banner" class="banner stale">Unsaved edits — save to refresh the Live preview.</div>`
         : "";
   const diagnostics = (options.render?.diagnostics ?? [])
     .map((d) => `<li><code>${escapeHostText(d.code)}</code> ${escapeHostText(d.message)}</li>`)
@@ -48,6 +48,22 @@ export function renderWebviewHtml(options: {
   const scrollScript = nonce
     ? `<script nonce="${escapeHostText(nonce)}">
 (function () {
+  var vscode = acquireVsCodeApi();
+  vscode.postMessage({ type: "ready" });
+  function setStaleBanner() {
+    var b = document.getElementById("lyx-banner");
+    var text = "Unsaved edits — save to refresh the Live preview.";
+    if (b) {
+      b.className = "banner stale";
+      b.textContent = text;
+    } else {
+      b = document.createElement("div");
+      b.id = "lyx-banner";
+      b.className = "banner stale";
+      b.textContent = text;
+      document.body.prepend(b);
+    }
+  }
   function openAncestorDetails(el) {
     var n = el;
     while (n) {
@@ -68,7 +84,12 @@ export function renderWebviewHtml(options: {
   }
   window.addEventListener("message", function (e) {
     var msg = e.data;
-    if (!msg || msg.type !== "scrollToId" || !msg.id) return;
+    if (!msg) return;
+    if (msg.type === "stale") {
+      setStaleBanner();
+      return;
+    }
+    if (msg.type !== "scrollToId" || !msg.id) return;
     scrollToId(msg.id);
   });
 })();

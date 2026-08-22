@@ -78,6 +78,8 @@ export function emptyNavigate(): LiveNavigate {
 export type AdapterFailureCode =
   | "MISSING_BINARY"
   | "TIMEOUT"
+  | "CANCELLED"
+  | "OUTPUT_LIMIT"
   | "MALFORMED_JSON"
   | "PARSE_ERROR"
   | "PROCESS_ERROR"

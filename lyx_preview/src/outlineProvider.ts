@@ -10,6 +10,9 @@ interface CachedNav {
 
 const cacheByPath = new Map<string, CachedNav>();
 
+/** Bound on the module-level outline cache (DL132 P7). */
+const MAX_CACHE_ENTRIES = 32;
+
 function normalizeFsPath(p: string): string {
   return p.replace(/\\/g, "/");
 }
@@ -23,9 +26,18 @@ function sameFsPath(a: string, b: string): boolean {
 function lookup(filePath: string): CachedNav | undefined {
   const key = normalizeFsPath(filePath);
   const direct = cacheByPath.get(key);
-  if (direct) return direct;
+  if (direct) {
+    // LRU touch: re-insert so eviction drops the least recently used path.
+    cacheByPath.delete(key);
+    cacheByPath.set(key, direct);
+    return direct;
+  }
   for (const [p, entries] of cacheByPath) {
-    if (sameFsPath(p, filePath)) return entries;
+    if (sameFsPath(p, filePath)) {
+      cacheByPath.delete(p);
+      cacheByPath.set(p, entries);
+      return entries;
+    }
   }
   return undefined;
 }
@@ -40,6 +52,11 @@ export function rememberOutline(
     outline,
     navigate: navigate ?? prev?.navigate ?? emptyNavigate(),
   });
+  while (cacheByPath.size > MAX_CACHE_ENTRIES) {
+    const oldest = cacheByPath.keys().next().value;
+    if (oldest === undefined) break;
+    cacheByPath.delete(oldest);
+  }
 }
 
 export function getCachedOutline(filePath: string): LiveOutlineEntry[] | undefined {
@@ -51,5 +68,9 @@ export function getCachedNavigate(filePath: string): LiveNavigate | undefined {
 }
 
 export function forgetOutline(filePath: string): void {
-  cacheByPath.delete(normalizeFsPath(filePath));
+  const stale: string[] = [];
+  for (const [p] of cacheByPath) {
+    if (sameFsPath(p, filePath)) stale.push(p);
+  }
+  for (const p of stale) cacheByPath.delete(p);
 }

@@ -98,7 +98,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint .",
-    "test": "npm run compile && node --test out/previewSession.test.js out/outlineProvider.test.js",
+    "test": "npm run compile && node --test out/previewSession.test.js out/outlineProvider.test.js out/lqRunner.test.js",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

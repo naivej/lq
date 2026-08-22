@@ -2,8 +2,14 @@ import { basename, dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import { AdapterError, PreviewSession } from "./previewSession";
-import { discoverLqBinary, runLivePreview } from "./lqClient";
-import { getCachedNavigate, getCachedOutline, rememberOutline } from "./outlineProvider";
+import { discoverLqBinary } from "./lqClient";
+import { runLivePreview } from "./lqRunner";
+import {
+  forgetOutline,
+  getCachedNavigate,
+  getCachedOutline,
+  rememberOutline,
+} from "./outlineProvider";
 import {
   attachApproxLines,
   attachNavigateLines,
@@ -20,6 +26,8 @@ class LivePreviewPanel {
   private readonly disposables: vscode.Disposable[] = [];
   private readonly session = new PreviewSession();
   private pending = false;
+  private webviewReady = false;
+  private abort: AbortController | undefined;
   private diskTimer: ReturnType<typeof setTimeout> | undefined;
   /** Stable path identity for this preview (Windows-safe). */
   private readonly filePath: string;
@@ -31,6 +39,11 @@ class LivePreviewPanel {
   ) {
     this.filePath = normalizeFsPath(document.uri.fsPath);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
+    this.panel.webview.onDidReceiveMessage((msg: unknown) => {
+      if (msg !== null && typeof msg === "object" && (msg as { type?: unknown }).type === "ready") {
+        this.webviewReady = true;
+      }
+    }, null, this.disposables);
 
     this.disposables.push(vscode.workspace.onDidSaveTextDocument((saved) => {
       if (!sameFsPath(saved.uri.fsPath, this.filePath)) return;
@@ -43,7 +56,12 @@ class LivePreviewPanel {
       this.document = change.document;
       if (change.contentChanges.length === 0) return;
       this.session.markStale();
-      this.paint();
+      // DL132 P2: update the stale banner without rebuilding the whole webview.
+      if (this.webviewReady) {
+        void this.panel.webview.postMessage({ type: "stale" });
+      } else {
+        this.paint();
+      }
     }));
 
     const watcher = vscode.workspace.createFileSystemWatcher(
@@ -149,19 +167,25 @@ class LivePreviewPanel {
 
   private async refresh(): Promise<void> {
     const generation = this.session.nextGeneration();
+    this.abort?.abort();
+    const abort = new AbortController();
+    this.abort = abort;
     this.pending = true;
     this.paint();
     const timeoutMs = vscode.workspace.getConfiguration("lyx-preview", this.document.uri).get<number>("timeoutMs") ?? 30000;
     try {
       const lqPath = discoverLqBinary(this.document.uri);
-      const render = await runLivePreview(lqPath, this.filePath, timeoutMs);
-      if (generation !== this.session.generation) return;
+      const render = await runLivePreview(lqPath, this.filePath, timeoutMs, abort.signal);
+      if (abort.signal.aborted || generation !== this.session.generation) return;
       if (!this.session.applySuccess(generation, render)) return;
+      // A successful render reflects the saved file; keep the banner when the
+      // editor buffer still differs (edits during the render) — DL132 P2.
+      this.session.stale = this.document.isDirty;
       this.publishOutline(render.outline, render.navigate);
       this.pending = false;
       this.paint();
     } catch (error) {
-      if (generation !== this.session.generation) return;
+      if (abort.signal.aborted || generation !== this.session.generation) return;
       if (!this.session.applyFailure(generation)) return;
       this.pending = false;
       // Still populate Explorer outline from the buffer when lq fails.
@@ -174,6 +198,7 @@ class LivePreviewPanel {
   }
 
   private paint(error?: string): void {
+    this.webviewReady = false;
     this.panel.title = titleFor(this.document);
     const html = this.session.lastValid
       ? rewriteLocalImages(this.session.lastValid.html, this.panel.webview)
@@ -197,8 +222,11 @@ class LivePreviewPanel {
 
   private dispose(): void {
     if (this.diskTimer) clearTimeout(this.diskTimer);
+    this.abort?.abort();
+    this.abort = undefined;
     if (LivePreviewPanel.current === this) LivePreviewPanel.current = undefined;
     this.outlineTree.clear();
+    forgetOutline(this.filePath);
     for (const d of this.disposables) d.dispose();
   }
 }
