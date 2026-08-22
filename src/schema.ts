@@ -197,21 +197,26 @@ function unquoteLayoutName(name: string): string {
   return t;
 }
 
+const HTML_OVERLAY_KEYS = [
+  "htmlTag", "htmlClass", "htmlItem", "htmlTitle", "category", "tocLevel",
+  "labelType", "labelString", "labelCounter",
+] as const;
+
+/** Copy defined layout-HTML fields from `next` onto `out` (DL132 F3). */
+function overlayHtmlFields<T extends object>(out: T, next: object): T {
+  for (const key of HTML_OVERLAY_KEYS) {
+    const value = (next as Record<string, unknown>)[key];
+    if (value !== undefined) (out as Record<string, unknown>)[key] = value;
+  }
+  return out;
+}
+
 function mergeStyle(prev: RawStyle | undefined, next: RawStyle): RawStyle {
   if (!prev) return next;
   const out: RawStyle = { ...prev };
-  if (next.htmlTag !== undefined) out.htmlTag = next.htmlTag;
-  if (next.htmlClass !== undefined) out.htmlClass = next.htmlClass;
-  if (next.htmlItem !== undefined) out.htmlItem = next.htmlItem;
-  if (next.htmlTitle !== undefined) out.htmlTitle = next.htmlTitle;
-  if (next.category !== undefined) out.category = next.category;
-  if (next.tocLevel !== undefined) out.tocLevel = next.tocLevel;
-  if (next.labelType !== undefined) out.labelType = next.labelType;
-  if (next.labelString !== undefined) out.labelString = next.labelString;
-  if (next.labelCounter !== undefined) out.labelCounter = next.labelCounter;
   if (next.copyStyle !== undefined) out.copyStyle = next.copyStyle;
   if (next.font !== undefined) out.font = mergeFont(prev.font, next.font);
-  return out;
+  return overlayHtmlFields(out, next) as RawStyle;
 }
 
 function mergeFont(prev: LayoutFont | undefined, next: LayoutFont | undefined): LayoutFont | undefined {
@@ -316,17 +321,8 @@ function resolveStyle(name: string, raw: Map<string, RawStyle>, seen: Set<string
   const base = resolveStyle(own.copyStyle, raw, seen);
   const { copyStyle: _c, ...rest } = own;
   const out: LayoutHtml = { ...base };
-  if (rest.htmlTag !== undefined) out.htmlTag = rest.htmlTag;
-  if (rest.htmlClass !== undefined) out.htmlClass = rest.htmlClass;
-  if (rest.htmlItem !== undefined) out.htmlItem = rest.htmlItem;
-  if (rest.htmlTitle !== undefined) out.htmlTitle = rest.htmlTitle;
-  if (rest.category !== undefined) out.category = rest.category;
-  if (rest.tocLevel !== undefined) out.tocLevel = rest.tocLevel;
-  if (rest.labelType !== undefined) out.labelType = rest.labelType;
-  if (rest.labelString !== undefined) out.labelString = rest.labelString;
-  if (rest.labelCounter !== undefined) out.labelCounter = rest.labelCounter;
   if (rest.font !== undefined) out.font = mergeFont(base.font, rest.font);
-  return out;
+  return overlayHtmlFields(out, rest) as LayoutHtml;
 }
 
 function parseFontBody(lines: string[], start: number): { font: LayoutFont; endIndex: number } {

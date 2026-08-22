@@ -32,13 +32,17 @@ function getCachePath(hash: string, statePaths: StatePaths): string {
 }
 
 /** Try to load a cached CST for the given file. Returns null on miss, error, or cache disabled. */
-export async function getCachedAst(filePath: string, statePaths: StatePaths): Promise<DocumentNode | null> {
+export async function getCachedAst(
+  filePath: string,
+  statePaths: StatePaths,
+  contentHash?: string,
+): Promise<DocumentNode | null> {
   if (maxCacheEntries === 0) return null;
   try {
     // The cache key is the file-content hash, so a real external modification
     // always misses (different hash → different file). Staleness guards are
     // unnecessary by construction (dev log 81).
-    const hash = await hashFile(filePath);
+    const hash = contentHash ?? await hashFile(filePath);
     const cachePath = getCachePath(hash, statePaths);
     const json = await Deno.readTextFile(cachePath);
     const ast = JSON.parse(json) as DocumentNode;

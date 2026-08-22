@@ -8,6 +8,7 @@
 import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { parse } from "../src/parser.ts";
+import { hashText } from "../src/cache.ts";
 import {
   LIVE_CAPABILITIES,
   LIVE_CONTRACT,
@@ -148,6 +149,23 @@ Deno.test("Live contract - CLI envelope distinguishes disk identity", async () =
   assertEquals(validated.capabilities.outline, true);
   assertEquals(validated.capabilities.sourceReveal, false);
   assert(validated.outline.some((e) => e.text.includes("Introduction")));
+});
+
+Deno.test("Live contract - buildLiveResponse honors the passed diskHash (DL132 P4)", async () => {
+  const tmp = await Deno.makeTempFile({ suffix: ".lyx" });
+  try {
+    const original = await Deno.readTextFile(syntheticPath("headings_paragraphs.lyx"));
+    await Deno.writeTextFile(tmp, original);
+    const ast = parse(original);
+    const expected = await hashText(original);
+    // Simulate a mid-run disk change: the response must identify the bytes it
+    // rendered (the passed hash), not the newer disk state.
+    await Deno.writeTextFile(tmp, original + "\n% changed on disk after read\n");
+    const { response } = await buildLiveResponse(tmp, ast, original, {}, expected);
+    assertEquals(response.source.diskHash, expected);
+  } finally {
+    await Deno.remove(tmp);
+  }
 });
 
 Deno.test("Live navigate - Labels lists only leftover anchors (DL131 B)", async () => {
@@ -1092,6 +1110,28 @@ Deno.test("Live renderer - Flex InsetLayout HTMLTag/HTMLClass/Font from LocalLay
   assertStringIncludes(html, "color:orange");
   assertStringIncludes(html, "Tagged");
   assert(!html.includes('class="flex probe"'), "layout HTMLClass must win over generic flex slug");
+});
+
+Deno.test("Live renderer - hostile layout HTMLTags fall back to classed wrappers (DL132 F2)", async () => {
+  const filePath = syntheticPath("flex_hostile_htmltag.lyx");
+  const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET"), []);
+  for (const slug of ["hstyle", "hsvg", "hobject", "hlink"]) {
+    assertStringIncludes(html, `class="flex ${slug}"`);
+  }
+  assert(!html.includes("<style"), "layout HTMLTag 'style' must not be emitted");
+  assert(!html.includes("<svg"), "layout HTMLTag 'svg' must not be emitted");
+  assert(!html.includes("<object"), "layout HTMLTag 'object' must not be emitted");
+  assert(!html.includes("<link"), "layout HTMLTag 'link' must not be emitted");
+});
+
+Deno.test("Live renderer - duplicate citation keys render once (DL132 P6)", async () => {
+  const filePath = syntheticPath("cite_dedup.lyx");
+  const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
+  const entries = html.match(/class="bibtexentry"/g) ?? [];
+  assertEquals(entries.length, 2, "duplicate citation keys must render a single bibliography entry each");
+  assertStringIncludes(html, "Author, Alpha");
+  assertStringIncludes(html, "Author, Beta");
 });
 
 Deno.test("Live renderer - pageref uses target number not elsewhere", async () => {

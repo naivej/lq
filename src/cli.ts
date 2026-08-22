@@ -1181,17 +1181,21 @@ export async function runCli(args: string[]) {
   }
 
   let ast: DocumentNode;
+  let textHash: string | undefined;
   try {
     // Try cache first — deserializing JSON is orders of magnitude faster
     // than line-by-line parsing for large files.
-    const cached = await getCachedAst(filePath, statePaths);
+    // Hash the already-loaded text once and pass it through (DL132 P4): the
+    // cache key, the write-through hash, and the Live diskHash all reuse it.
+    textHash = await hashText(text);
+    const cached = await getCachedAst(filePath, statePaths, textHash);
     if (cached) {
       ast = cached;
     } else {
       ast = parse(text);
       // Populate cache on miss (non-fatal)
       try {
-        await setCachedAst(await hashText(text), ast, statePaths);
+        await setCachedAst(textHash, ast, statePaths);
       } catch { /* cache failures are non-fatal */ }
     }
   } catch (e: Error | unknown) {
@@ -1427,9 +1431,15 @@ function foldNegativeDepth(args: string[]): string[] {
     assertNoUnknownFlags(previewFlags, [], "preview");
     const previewConfig = (await loadUserConfig(statePaths)).config;
     try {
-      const result = await buildLiveResponse(path.resolve(filePath), ast, text, {
-        overlayLayoutsDir: previewConfig.layoutsDir,
-      });
+      const result = await buildLiveResponse(
+        path.resolve(filePath),
+        ast,
+        text,
+        {
+          overlayLayoutsDir: previewConfig.layoutsDir,
+        },
+        textHash,
+      );
       for (const warning of result.warnings) pushWarning(warning);
       printJson(result.response);
     } catch (e: Error | unknown) {

@@ -227,3 +227,34 @@ Deno.test("latexToMathML - preamble newcommand macros (Math.lyx aliases)", () =>
   assertStringIncludes(fb, "∫");
   assertStringIncludes(latexToMathML("\\underline{ABcd}"), 'notation="bottom"');
 });
+
+Deno.test("latexToMathML - cyclic preamble macros fall back instead of recursing (DL132 P5)", () => {
+  const macros = new Map<string, { nargs: number; body: string }>([
+    ["a", { nargs: 0, body: "\\b" }],
+    ["b", { nargs: 0, body: "\\a" }],
+  ]);
+  const out = latexToMathML("\\a", macros);
+  assert(out.length < 2000, "cyclic expansion must terminate and stay small");
+  assertStringIncludes(out, "\\a");
+});
+
+Deno.test("latexToMathML - deep macro chains cap expansion depth (DL132 P5)", () => {
+  const macros = new Map<string, { nargs: number; body: string }>();
+  // The parser reads macro names as [A-Za-z]+, so use base-26 letter names.
+  const name = (i: number): string => {
+    let n = i;
+    let out = "";
+    do {
+      out = String.fromCharCode(97 + (n % 26)) + out;
+      n = Math.floor(n / 26) - 1;
+    } while (n >= 0);
+    return out;
+  };
+  for (let i = 0; i < 80; i++) {
+    macros.set(name(i), { nargs: 0, body: `\\${name(i + 1)}` });
+  }
+  macros.set(name(80), { nargs: 0, body: "x" });
+  const out = latexToMathML(`\\${name(0)}`, macros);
+  assertStringIncludes(out, `\\${name(64)}`);
+  assert(!out.includes(`\\${name(80)}`), "the chain must stop at the depth cap");
+});

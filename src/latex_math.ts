@@ -29,6 +29,9 @@ const MATH_COLOR: Record<string, string> = {
   darkblue: "#00008b",
 };
 
+/** Max nested `\newcommand` expansions (DL132 F5) — cycles fall back instead of exhausting the stack. */
+const MAX_MACRO_EXPANSION_DEPTH = 64;
+
 function mathColor(name: string): string {
   return MATH_COLOR[name.toLowerCase()] ?? name;
 }
@@ -358,8 +361,8 @@ export function renderFormulaHtml(
   return `<span class="formula">${mathHtml(inner, body, plan.display)}${lineEqnoHtml(line, nos[0])}</span>`;
 }
 
-export function latexToMathML(source: string, macros?: MathMacroMap): string {
-  const p = new Parser(source, 0, macros);
+export function latexToMathML(source: string, macros?: MathMacroMap, macroDepth = 0): string {
+  const p = new Parser(source, 0, macros, macroDepth);
   const body = p.parseExpr();
   return body || `<mtext>${escapeLiveHtml(source)}</mtext>`;
 }
@@ -575,6 +578,7 @@ class Parser {
     private readonly s: string,
     private i = 0,
     private readonly macros: MathMacroMap | undefined = undefined,
+    private readonly macroDepth = 0,
   ) {}
 
   parseExpr(): string {
@@ -695,7 +699,7 @@ class Parser {
     while (this.i < this.s.length && /[A-Za-z]/.test(this.s[this.i])) name += this.s[this.i++];
     this.skipSpace();
     const macro = this.macros?.get(name);
-    if (macro) return this.expandMacro(macro);
+    if (macro) return this.expandMacro(name, macro);
     if (name === "left") {
       const open = this.readDelimiter();
       const parts: string[] = [];
@@ -1019,7 +1023,7 @@ class Parser {
       const bar = over
         ? (name.includes("bracket") ? "⎴" : "⏞")
         : (name.includes("bracket") ? "⎵" : "⏟");
-      let brace = over
+      const brace = over
         ? `<mover>${inner}<mo>${bar}</mo></mover>`
         : `<munder>${inner}<mo>${bar}</mo></munder>`;
       // Limits after the brace sit above/below (Op-style), not as msup/msub beside it.
@@ -1168,7 +1172,10 @@ class Parser {
     return `<mrow>${parts.join("")}</mrow>`;
   }
 
-  private expandMacro(macro: MathMacro): string {
+  private expandMacro(name: string, macro: MathMacro): string {
+    if (this.macroDepth >= MAX_MACRO_EXPANSION_DEPTH) {
+      return `<mtext>\\${name}</mtext>`;
+    }
     const args: string[] = [];
     let mandatory = macro.nargs;
     if (macro.optionalDefault !== undefined && mandatory > 0) {
@@ -1193,7 +1200,7 @@ class Parser {
     }
     // Macros often wrap math in `$…$` for `\framebox` / `\fcolorbox`.
     body = body.replace(/\$([^$]*)\$/g, "$1");
-    return latexToMathML(body, this.macros);
+    return latexToMathML(body, this.macros, this.macroDepth + 1);
   }
 
   /** Limits on \overbrace/\underbrace sit above/below the brace (not msup/msub). */

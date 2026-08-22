@@ -299,7 +299,7 @@ interface RenderCtx {
   /** Plain title/caption text for `nameref` (heading or float caption). */
   labelTitles: Map<string, string>;
   bib: Map<string, Citation>;
-  citedKeys: string[];
+  citedKeys: Set<string>;
   bibfiles: string;
   btprint: string;
   biboptions: string;
@@ -829,7 +829,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       if (kind.startsWith("CommandInset citation")) {
         const key = findProperty(n, "key") ?? "";
         for (const k of key.split(",").map((s) => s.trim()).filter(Boolean)) {
-          if (!ctx.citedKeys.includes(k)) ctx.citedKeys.push(k);
+          ctx.citedKeys.add(k);
         }
       }
       if (kind.startsWith("CommandInset bibtex")) {
@@ -1015,7 +1015,7 @@ export async function renderLiveHtml(
     labelKinds: new Map(),
     labelTitles: new Map(),
     bib: new Map(),
-    citedKeys: [],
+    citedKeys: new Set(),
     bibfiles: "",
     btprint: "",
     biboptions: "",
@@ -1056,6 +1056,7 @@ export async function buildLiveResponse(
   ast: DocumentNode,
   text: string,
   options: { overlayLayoutsDir?: string; systemLayoutsDir?: string } = {},
+  diskHash?: string,
 ): Promise<LiveRenderResult> {
   const rendered = await renderLiveHtml(ast, {
     filePath: path.resolve(filePath),
@@ -1071,7 +1072,7 @@ export async function buildLiveResponse(
       path: resolved,
       hashAlgorithm: LIVE_HASH_ALGORITHM,
       hashInput: LIVE_HASH_INPUT,
-      diskHash: await hashFile(resolved),
+      diskHash: diskHash ?? await hashFile(resolved),
       lineEnding: detectLineEnding(text),
       lineCount: countLines(text),
       fresh: true,
@@ -2646,7 +2647,7 @@ function renderFlexDefault(
   }
 
   // InsetLayout HTMLTag / HTMLClass / Font when class+modules provide them.
-  const fromLayout = renderFlexFromLayout(kind, name, slug, multipar, block, parentState, ctx);
+  const fromLayout = renderFlexFromLayout(kind, name, multipar, block, parentState, ctx);
   if (fromLayout !== undefined) {
     return multipar
       ? wrapDisclosure(`flex-container ${slug}`, name || "Flex", fromLayout)
@@ -2681,6 +2682,20 @@ function flexLayoutSpec(kind: string, name: string, html: Map<string, LayoutHtml
   return undefined;
 }
 
+/**
+ * Tags a layout file may select via HTMLTag for Flex insets (DL132 F2).
+ * Everything else falls back to the native class wrapper; layout files are the
+ * only source of unvalidated tag names, and the old shape regex admitted
+ * `style`, `svg`, `math`, `object`, `link`, `base`, and `meta`.
+ */
+const SAFE_FLEX_TAGS = new Set([
+  "a", "abbr", "b", "blockquote", "br", "cite", "code", "dd", "del", "details",
+  "div", "dl", "dt", "em", "figcaption", "figure", "h1", "h2", "h3", "h4",
+  "h5", "h6", "i", "ins", "kbd", "li", "mark", "ol", "p", "pre", "q", "s",
+  "samp", "small", "span", "strong", "sub", "summary", "sup", "time", "u",
+  "ul", "var",
+]);
+
 function layoutFontStyle(font: LayoutFont | undefined): string {
   if (!font) return "";
   const parts: string[] = [];
@@ -2703,7 +2718,6 @@ function layoutFontStyle(font: LayoutFont | undefined): string {
 function renderFlexFromLayout(
   kind: string,
   name: string,
-  slug: string,
   multipar: boolean,
   block: BlockNode,
   parentState: TraversalState,
@@ -2712,9 +2726,7 @@ function renderFlexFromLayout(
   const spec = flexLayoutSpec(kind, name, ctx.layoutHtml);
   if (!spec) return undefined;
   const rawTag = (spec.htmlTag ?? (multipar ? "div" : "span")).toLowerCase();
-  if (!/^[a-z][a-z0-9]*$/.test(rawTag) || rawTag === "script" || rawTag === "iframe") {
-    return undefined;
-  }
+  if (!SAFE_FLEX_TAGS.has(rawTag)) return undefined;
   const cls = spec.htmlClass?.trim() || flexNativeClass(name);
   const style = layoutFontStyle(spec.font);
   const inner = multipar
@@ -3088,8 +3100,8 @@ function renderBibEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string
 
 function renderBibliography(ctx: RenderCtx): string {
   const citedOnly = ctx.btprint === "btPrintCited";
-  const raw = citedOnly ? ctx.citedKeys : [...ctx.bib.keys()];
-  const items = raw.filter((k, i, a) => a.indexOf(k) === i && ctx.bib.has(k));
+  const raw = citedOnly ? [...ctx.citedKeys] : [...ctx.bib.keys()];
+  const items = raw.filter((k) => ctx.bib.has(k));
   if (items.length === 0) return "";
   const title = ctx.layoutHtml?.get("Bibliography")?.labelString || "References";
   let html = `<div class="bibtex"><h2 class="bibtex">${escapeLiveHtml(title)}</h2>`;
@@ -3861,4 +3873,3 @@ export function decodeEntities(text: string): string {
     .replaceAll("&nbsp;", "\u00a0")
     .replaceAll("&amp;", "&");
 }
-
