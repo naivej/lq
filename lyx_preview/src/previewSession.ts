@@ -43,6 +43,16 @@ export interface LiveNavEntry {
   line?: number;
 }
 
+/** One rendered tracked-change region (DL133). */
+export interface LiveChangeEntry {
+  ordinal: number;
+  type: "inserted" | "deleted";
+  author: string;
+  ts: string;
+  anchorId: string;
+  snippet: string;
+}
+
 export interface LiveNavigate {
   figures: LiveNavEntry[];
   tables: LiveNavEntry[];
@@ -61,6 +71,7 @@ export interface LiveRender {
   diagnostics: LiveDiagnostic[];
   outline: LiveOutlineEntry[];
   navigate: LiveNavigate;
+  changes: LiveChangeEntry[];
   warnings?: string[];
 }
 
@@ -95,7 +106,7 @@ export class AdapterError extends Error {
   }
 }
 
-const DEFERRED = ["tokens", "changes", "mapping", "editTargets", "reviewRegions", "mode"];
+const DEFERRED = ["tokens", "mapping", "editTargets", "reviewRegions", "mode"];
 
 export function parseLiveStdout(stdout: string): LiveRender {
   let parsed: unknown;
@@ -159,7 +170,35 @@ export function parseLiveStdout(stdout: string): LiveRender {
       throw new AdapterError("CONTRACT", `navigate.${key} must be an array.`);
     }
   }
+  if (!Array.isArray(obj.changes)) {
+    throw new AdapterError("CONTRACT", "lq preview omitted changes.");
+  }
+  for (const entry of obj.changes) {
+    if (entry === null || typeof entry !== "object") {
+      throw new AdapterError("CONTRACT", "change entries must be objects.");
+    }
+    const e = entry as Record<string, unknown>;
+    if (
+      typeof e.ordinal !== "number" ||
+      (e.type !== "inserted" && e.type !== "deleted") ||
+      typeof e.author !== "string" ||
+      typeof e.ts !== "string" ||
+      typeof e.anchorId !== "string" ||
+      typeof e.snippet !== "string"
+    ) {
+      throw new AdapterError("CONTRACT", "change entry needs ordinal/type/author/ts/anchorId/snippet.");
+    }
+  }
   return obj as unknown as LiveRender;
+}
+
+/** Format a LyX change timestamp (unix seconds) as local `YYYY-MM-DD HH:MM`. */
+export function formatChangeTime(ts: string): string {
+  const n = Number.parseInt(ts, 10);
+  if (!Number.isFinite(n) || n <= 0) return "";
+  const d = new Date(n * 1000);
+  const pad = (x: number): string => String(x).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
 export class PreviewSession {

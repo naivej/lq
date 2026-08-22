@@ -23,8 +23,11 @@ const PARITY_FIXTURES = [
   "lists_quotes.lyx",
   "table_figure_foot_math.lyx",
   "hostile.lyx",
-  "tracked_ert_notes.lyx",
   "front_matter_math.lyx",
+  // DL133: tracked_ert_notes keeps the DL131 Live-only ERT chip, so it is not
+  // a LyXHTML-parity isolate; review_changes covers Clean parity for change
+  // wrappers (insert/delete, emphasis crossing, whole-deleted paragraph).
+  "review_changes.lyx",
 ];
 
 /** DL130 construct slices — Help clones / feature isolates. */

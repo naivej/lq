@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   attachApproxLines,
   attachNavigateLines,
+  buildNavigateRoots,
   dedupeNavigateLabels,
   nestOutlineEntries,
   outlineIdForLine,
@@ -10,6 +11,7 @@ import {
 } from "./outlineNest";
 import {
   forgetOutline,
+  getCachedChanges,
   getCachedOutline,
   rememberOutline,
 } from "./outlineProvider";
@@ -153,6 +155,39 @@ describe("attachNavigateLines", () => {
   });
 });
 
+describe("buildNavigateRoots List of Changes", () => {
+  const changes = [
+    { ordinal: 1, type: "inserted" as const, author: "Alice", ts: "1724000000", anchorId: "change-1", snippet: "added" },
+    { ordinal: 2, type: "deleted" as const, author: "Bob", ts: "0", anchorId: "change-2", snippet: "removed" },
+  ];
+
+  it("puts List of Changes right after Outline with ordered rows", () => {
+    const roots = buildNavigateRoots(
+      [{ level: 1, number: "1", text: "Intro", id: "sec-1" }],
+      { figures: [], tables: [], equations: [], labels: [], listings: [], algorithms: [] },
+      changes,
+    );
+    assert.equal(roots[0]!.type, "group");
+    assert.equal(roots[0]!.label, "Outline");
+    assert.equal(roots[1]!.type, "group");
+    assert.equal(roots[1]!.label, "List of Changes");
+    const rows = roots[1]!.type === "group" ? roots[1]!.children : [];
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]!.type, "change");
+    assert.equal(rows[0]!.type === "change" ? rows[0]!.entry.anchorId : "", "change-1");
+    assert.equal(rows[1]!.type === "change" ? rows[1]!.entry.anchorId : "", "change-2");
+  });
+
+  it("omits the group when there are no changes", () => {
+    const roots = buildNavigateRoots(
+      [{ level: 1, number: "1", text: "Intro", id: "sec-1" }],
+      { figures: [], tables: [], equations: [], labels: [], listings: [], algorithms: [] },
+      [],
+    );
+    assert(roots.every((r) => r.type !== "group" || r.key !== "changes"));
+  });
+});
+
 describe("outline cache bounds", () => {
   it("keeps only the most recent paths", () => {
     for (let i = 0; i < 40; i++) {
@@ -186,5 +221,14 @@ describe("outline cache bounds", () => {
     ]);
     forgetOutline("c:/docs/a.lyx");
     assert.equal(getCachedOutline("C:/Docs/A.LYX"), undefined);
+  });
+
+  it("carries changes alongside outline/navigate", () => {
+    rememberOutline("C:/tmp/changes.lyx", [
+      { level: 1, number: "1", text: "A", id: "sec-a" },
+    ], undefined, [
+      { ordinal: 1, type: "inserted", author: "Alice", ts: "1724000000", anchorId: "change-1", snippet: "added" },
+    ]);
+    assert.equal(getCachedChanges("C:/tmp/changes.lyx")?.[0]?.anchorId, "change-1");
   });
 });

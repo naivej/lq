@@ -19,6 +19,8 @@ export function renderWebviewHtml(options: {
   title: string;
   stale: boolean;
   pending: boolean;
+  /** DL133 view mode (Original/Tracked/Clean); default Tracked. */
+  mode?: "original" | "tracked" | "clean";
   error?: string;
   render?: LiveRender;
   imgCsp?: string;
@@ -41,6 +43,7 @@ export function renderWebviewHtml(options: {
     : "";
   const body = options.render?.html
     ?? (options.pending ? "" : "<p class=\"empty\">No Live render yet.</p>");
+  const mode = options.mode ?? "tracked";
   const scriptSrc = options.scriptCsp ?? "'none'";
   const nonce = options.scriptNonce;
   // Host posts { type: "scrollToId", id } from Explorer "LyX Navigate".
@@ -85,12 +88,35 @@ export function renderWebviewHtml(options: {
   window.addEventListener("message", function (e) {
     var msg = e.data;
     if (!msg) return;
+    if (
+      msg.type === "setMode" &&
+      (msg.mode === "original" || msg.mode === "tracked" || msg.mode === "clean")
+    ) {
+      document.body.setAttribute("data-mode", msg.mode);
+      return;
+    }
     if (msg.type === "stale") {
       setStaleBanner();
       return;
     }
     if (msg.type !== "scrollToId" || !msg.id) return;
     scrollToId(msg.id);
+  });
+  function postChangeFocus(id) {
+    vscode.postMessage({ type: "changeFocus", id: id || null });
+  }
+  document.addEventListener("selectionchange", function () {
+    var sel = window.getSelection();
+    if (!sel || !sel.anchorNode) {
+      postChangeFocus(null);
+      return;
+    }
+    var node = sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement;
+    var el = node && node.closest ? node.closest("ins.change-inserted, del.change-deleted") : null;
+    postChangeFocus(el && el.id ? el.id : null);
+  });
+  window.addEventListener("blur", function () {
+    postChangeFocus(null);
   });
 })();
 </script>`
@@ -608,10 +634,55 @@ div.lyx-vspace {
 div.lyx-vspace > .lyx-break-label {
   opacity: 0.85;
 }
+/* DL133 tracked-change views over one change-aware render (default: Tracked). */
+ins.change-inserted {
+  text-decoration: underline;
+}
+del.change-deleted {
+  text-decoration: line-through;
+}
+/* <details> chips are atomic inline boxes and disclosure bodies are block
+ * boxes, so a parent <del> line-through cannot reach inside them; strike
+ * deleted disclosures (e.g. footnote 1) explicitly. */
+del.change-deleted details.disclose > * {
+  text-decoration: line-through;
+}
+/* Author-distinct palette: color = who, underline/strike = what happened. */
+ins.change-author-0, del.change-author-0 { color: #1a7f37; }
+ins.change-author-1, del.change-author-1 { color: #0969da; }
+ins.change-author-2, del.change-author-2 { color: #bc4c00; }
+ins.change-author-3, del.change-author-3 { color: #8250df; }
+ins.change-author-4, del.change-author-4 { color: #087e8b; }
+ins.change-author-5, del.change-author-5 { color: #a40e4c; }
+ins.change-author-6, del.change-author-6 { color: #8b6914; }
+ins.change-author-7, del.change-author-7 { color: #cf222e; }
+/* Original: reject all — show deletions unstruck, hide insertions. */
+body[data-mode="original"] ins.change-inserted {
+  display: none;
+}
+body[data-mode="original"] del.change-deleted {
+  text-decoration: none;
+  color: inherit;
+}
+body[data-mode="original"] del.change-deleted details.disclose > * {
+  text-decoration: none;
+}
+/* Clean: accept all — show insertions plain, hide deletions and whole-deleted
+ * containers (J3: no empty-shell gap). */
+body[data-mode="clean"] ins.change-inserted {
+  text-decoration: none;
+  color: inherit;
+}
+body[data-mode="clean"] del.change-deleted {
+  display: none;
+}
+body[data-mode="clean"] div.change-deleted {
+  display: none;
+}
 .diagnostics { font-size: 0.85em; opacity: 0.85; }
 </style>
 </head>
-<body>
+<body data-mode="${escapeHostText(mode)}">
 ${status}
 ${diagBlock}
 ${body}

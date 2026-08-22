@@ -206,7 +206,9 @@ export async function compareLiveToOracle(
   const liveHtml = (await renderLiveHtml(parse(await Deno.readTextFile(filePath)), {
     filePath,
   })).html;
-  const live = normalizeReaderHtml(liveHtml);
+  // DL133: LyXHTML is the accepted-view projection — compare the Clean view
+  // (drop <del>, promote <ins>). Original/Tracked have no LyXHTML oracle.
+  const live = normalizeReaderHtml(liveHtml, { changeView: "accepted" });
   const equal = semanticEqual(live, exported.normalized);
   return {
     equal,

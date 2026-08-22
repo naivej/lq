@@ -47,6 +47,32 @@ If empty: **Developer: Reload Window**; open a `.lyx` / Live Preview; set `lyx-p
 
 Full tolerance list: development log `130_live_native_xhtml_parity.md` §8; disclosure/outline work in `131_live_disclosure_outline_mapping.md` (in the lq_dev repo).
 
+## Tracked-change views
+
+`lq preview` renders **every** tracked insertion and deletion in one change-aware
+HTML (`<ins class="change-inserted" id="change-N">` /
+`<del class="change-deleted" id="change-N">`). The extension shows that one render
+through three views — pick from the **View** dropdown in the top-right corner of
+the Live panel title bar (it replaces the Open LyX Preview button while Live is
+focused):
+
+| View | Shows |
+| --- | --- |
+| **Original** | The document before the changes (insertions hidden, deletions shown unstruck) |
+| **Tracked** (default) | Both directions: insertions underlined, deletions struck, each author in their own color |
+| **Clean** | The document after accepting (deletions hidden, insertions plain) |
+
+Switching views never re-runs `lq`; the webview only flips a `data-mode` attribute.
+
+Two supporting surfaces share the same change index:
+
+- **Explorer → LyX Navigate → List of Changes** — one row per change region
+  (`N Insert — snippet` / `N Delete — snippet`, described by author and local
+  time). Clicking a row scrolls Live to that region.
+- **Status bar** — while the webview caret/selection sits inside a change region,
+  the bar shows `Changed by <author> on <local time>`; it clears when the
+  selection leaves the region, when Live loses focus, or when the panel closes.
+
 ## Use
 
 1. Open a `.lyx` file.

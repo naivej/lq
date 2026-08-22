@@ -47,6 +47,28 @@
         "command": "lyx-preview.revealOutline",
         "title": "Reveal Outline Heading",
         "category": "LyX Preview"
+      },
+      {
+        "command": "lyx-preview.viewOriginal",
+        "title": "Original",
+        "category": "LyX Preview"
+      },
+      {
+        "command": "lyx-preview.viewTracked",
+        "title": "Tracked",
+        "category": "LyX Preview"
+      },
+      {
+        "command": "lyx-preview.viewClean",
+        "title": "Clean",
+        "category": "LyX Preview"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "lyxPreview.changeView",
+        "label": "View",
+        "icon": "media/lyx-l-yellow.svg"
       }
     ],
     "views": {
@@ -65,6 +87,25 @@
           "command": "lyx-preview.open",
           "when": "resourceExtname == .lyx",
           "group": "navigation"
+        },
+        {
+          "submenu": "lyxPreview.changeView",
+          "when": "activeWebviewPanelId == 'lyxPreview.live'",
+          "group": "navigation"
+        }
+      ],
+      "lyxPreview.changeView": [
+        {
+          "command": "lyx-preview.viewOriginal",
+          "group": "1_views@1"
+        },
+        {
+          "command": "lyx-preview.viewTracked",
+          "group": "1_views@2"
+        },
+        {
+          "command": "lyx-preview.viewClean",
+          "group": "1_views@3"
         }
       ],
       "commandPalette": [
@@ -74,6 +115,18 @@
         },
         {
           "command": "lyx-preview.revealOutline",
+          "when": "false"
+        },
+        {
+          "command": "lyx-preview.viewOriginal",
+          "when": "false"
+        },
+        {
+          "command": "lyx-preview.viewTracked",
+          "when": "false"
+        },
+        {
+          "command": "lyx-preview.viewClean",
           "when": "false"
         }
       ]
@@ -98,7 +151,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint .",
-    "test": "npm run compile && node --test out/previewSession.test.js out/outlineProvider.test.js out/lqRunner.test.js",
+    "test": "npm run compile && node --test out/previewSession.test.js out/outlineProvider.test.js out/lqRunner.test.js out/webview.test.js",
     "vscode:prepublish": "npm run compile"
   },
   "devDependencies": {

@@ -95,6 +95,7 @@ Deno.test("Live contract - rejects malformed required fields", () => {
     diagnostics: [],
     outline: [],
     navigate: emptyNavigate(),
+    changes: [],
   };
   assertThrows(() => validateLiveResponse({ ...base, contract: "nope" }), Error, "contract");
   assertThrows(() => validateLiveResponse({ ...base, projection: "review" }), Error, "projection");
@@ -130,12 +131,26 @@ Deno.test("Live contract - deferred fields are rejected", () => {
     diagnostics: [],
     outline: [],
     navigate: emptyNavigate(),
+    changes: [],
   };
   for (const field of LIVE_DEFERRED_FIELDS) {
     assertThrows(() => validateLiveResponse({ ...base, [field]: [] }), Error, field);
   }
-  // outline is no longer deferred — must be accepted.
+  // outline and changes are no longer deferred — must be accepted.
   validateLiveResponse(base);
+  validateLiveResponse({
+    ...base,
+    changes: [
+      {
+        ordinal: 1,
+        type: "inserted",
+        author: "Alice",
+        ts: "1720000000",
+        anchorId: "change-1",
+        snippet: "added",
+      },
+    ],
+  });
 });
 
 Deno.test("Live contract - CLI envelope distinguishes disk identity", async () => {
@@ -284,15 +299,54 @@ Deno.test("Live renderer - hostile strings stay escaped", async () => {
   assertStringIncludes(html, "&quot;quotes&quot;");
 });
 
-Deno.test("Live renderer - tracked changes omit deleted; ERT is a Live disclosure chip", async () => {
-  const { html, diagnostics } = await renderFile("tracked_ert_notes.lyx");
+Deno.test("Live renderer - tracked changes render as ins/del wrappers; ERT is a Live chip", async () => {
+  const { html, diagnostics, changes } = await renderFile("tracked_ert_notes.lyx");
   assertStringIncludes(html, "Visible");
-  assertStringIncludes(html, "inserted");
-  assert(!html.includes("deleted"), "deleted tracked text must be omitted");
+  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-1"> inserted</ins>');
+  assertStringIncludes(html, '<del class="change-deleted change-author-0" id="change-2"> deleted</del>');
+  assertEquals(changes, [
+    { ordinal: 1, type: "inserted", author: "Tester", ts: "0", anchorId: "change-1", snippet: "inserted" },
+    { ordinal: 2, type: "deleted", author: "Tester", ts: "0", anchorId: "change-2", snippet: "deleted" },
+  ]);
   // DL131: ERT is Live-only plain-text disclosure (native XHTML still omits).
   assertStringIncludes(html, 'class="disclose ert"');
   assertStringIncludes(html, "\\textbf{nope}");
   assert(!diagnostics.some((d) => d.code === "ERT_OMITTED"), "ERT_OMITTED retired for Live chips");
+});
+
+Deno.test("Live renderer - review_changes covers index, nesting, foot chip, whole-deleted", async () => {
+  const { html, changes } = await renderFile("review_changes.lyx");
+  assertEquals(changes.map((c) => `${c.ordinal}:${c.type}:${c.author}:${c.ts}`), [
+    "1:inserted:Alice:1724000000",
+    "2:inserted:Alice:1724000000",
+    "3:inserted:Bob:1724000100",
+    "4:inserted:Alice:1724000200",
+    "5:inserted:Alice:1724000300",
+    "6:deleted:Bob:1724000400",
+    "7:deleted:Alice:1724000500",
+  ]);
+  // Adjacent same/different-author runs reopen wrappers in document order.
+  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-2">one</ins>');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-1" id="change-3">two</ins>');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-4">three</ins>');
+  // Different authors get different color slots (Alice=0, Bob=1).
+  assert(html.includes("change-author-0"), "Alice's slot must be present");
+  assert(html.includes("change-author-1"), "Bob's slot must be present");
+  // Emphasis crossing a change boundary nests validly (wrapper outermost).
+  assertStringIncludes(
+    html,
+    '<em>base</em><ins class="change-inserted change-author-0" id="change-5"><em>ins</em></ins><em>tail</em>',
+  );
+  // A deleted footnote is wrapped at the chip level; its body stays plain.
+  assertStringIncludes(html, '<del class="change-deleted change-author-1" id="change-6"><details class="disclose foot"');
+  assertStringIncludes(html, "Deleted footnote body.");
+  assertEquals(changes[5].snippet, "[Foot]");
+  // Whole-deleted paragraph keeps the del wrapper and marks its container.
+  assertStringIncludes(
+    html,
+    '<div class="standard change-deleted"><del class="change-deleted change-author-0" id="change-7">This whole paragraph was deleted.</del></div>',
+  );
+  assertEquals(changes[6].snippet, "This whole paragraph was deleted.");
 });
 
 Deno.test("Live renderer - click disclosure and private Note/Comment (DL131)", async () => {
@@ -475,11 +529,14 @@ Deno.test({
 
 Deno.test("Live renderer - dialog-toggle Info icons use icon.aliases (dialog-show_*)", async () => {
   const { html } = await renderFile("info_icon_shortcut.lyx");
-  // data-info-icon is only set on resolved <img> (glyph fallback has aria-label only).
-  assertStringIncludes(html, 'data-info-icon="dialog-toggle findreplace"');
-  assertStringIncludes(html, 'data-info-icon="dialog-toggle toc"');
-  assert(
-    /<img\b[^>]*data-info-icon="dialog-toggle findreplace"/.test(html),
+    // data-info-icon is only set on resolved <img> (glyph fallback has aria-label only).
+    assertStringIncludes(html, 'data-info-icon="dialog-toggle findreplace"');
+    assertStringIncludes(html, 'data-info-icon="dialog-toggle toc"');
+    // The resolved (post icon.aliases) file name rides alongside for oracle parity.
+    assertStringIncludes(html, 'data-info-file="dialog-show_findreplace"');
+    assertStringIncludes(html, 'data-info-file="dialog-show_toc"');
+    assert(
+      /<img\b[^>]*data-info-icon="dialog-toggle findreplace"/.test(html),
     "dialog-toggle findreplace must resolve via icon.aliases → dialog-show_findreplace",
   );
   assert(
@@ -1263,6 +1320,31 @@ Deno.test("Live comparison - incidental ids and classes are ignored", () => {
   const a = normalizeReaderHtml(`<div class="standard" id="magicparlabel-9">Hello</div>`);
   const b = normalizeReaderHtml(`<div class="standard">Hello</div>`);
   assert(semanticEqual(a, b), formatSem(a) + "\n---\n" + formatSem(b));
+});
+
+Deno.test("Live comparison - accepted view drops del and promotes ins (DL133 J4)", () => {
+  const html = `<div class="standard">Visible<ins class="change-inserted" id="change-1"> added</ins> and<del class="change-deleted" id="change-2"> removed</del> text.</div>`;
+  // Default: wrappers are transparent — all content survives normalization.
+  const defaultView = normalizeReaderHtml(html);
+  const defaultDump = formatSem(defaultView);
+  assertStringIncludes(defaultDump, "added");
+  assertStringIncludes(defaultDump, "removed");
+  // Accepted: Clean projection — del subtree dropped, ins promoted to plain text.
+  const accepted = normalizeReaderHtml(html, { changeView: "accepted" });
+  const dump = formatSem(accepted);
+  assertStringIncludes(dump, "added");
+  assert(!dump.includes("removed"), "accepted view must drop deleted text");
+  assert(!dump.includes("change-deleted") && !dump.includes("change-inserted"), "accepted view has no change wrappers");
+});
+
+Deno.test("Live comparison - resolved icon file name wins over the LFUN arg", () => {
+  const live = normalizeReaderHtml(
+    `<img class="info-icon" src="data:image/png;base64,aa" data-info-icon="dialog-toggle findreplace" data-info-file="dialog-show_findreplace"/>`,
+  );
+  const native = normalizeReaderHtml(
+    `<img class="info-icon" src="e_44f05612a5aa_dialog-show_findreplace.svg" alt="image: e_44f05612a5aa_dialog-show_findreplace.svg"/>`,
+  );
+  assert(semanticEqual(live, native), formatSem(live) + "\n---\n" + formatSem(native));
 });
 
 Deno.test("Live comparison - DL130 tolerances (pageref text, icon markup, shortcut tag)", () => {

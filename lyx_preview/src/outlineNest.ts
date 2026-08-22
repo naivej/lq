@@ -1,5 +1,12 @@
 /** Pure outline nesting + LyX-source heading scan (no vscode import — unit-testable). */
 
+import {
+  emptyNavigate,
+  type LiveChangeEntry,
+  type LiveNavEntry,
+  type LiveNavigate,
+} from "./previewSession";
+
 export interface OutlineEntryLike {
   level: number;
   number: string;
@@ -289,4 +296,80 @@ export function attachNavigateLines(
   });
 
   return { figures, tables, equations, labels, listings, algorithms };
+}
+
+/** Explorer "LyX Navigate" tree node union (pure part — no vscode import). */
+export type NavNode =
+  | { type: "group"; key: string; label: string; children: NavNode[] }
+  | { type: "heading"; entry: OutlineEntryLike; nested: NestedOutline }
+  | { type: "item"; entry: LiveNavEntry }
+  | { type: "change"; entry: LiveChangeEntry };
+
+function group(key: string, label: string, children: NavNode[]): NavNode | undefined {
+  if (children.length === 0) return undefined;
+  return { type: "group", key, label, children };
+}
+
+function asNavArray(v: LiveNavEntry[] | undefined): LiveNavEntry[] {
+  return Array.isArray(v) ? v.filter((e) => e && typeof e.id === "string") : [];
+}
+
+function normalizeNavigate(navigate: LiveNavigate | undefined): LiveNavigate {
+  if (!navigate) return emptyNavigate();
+  return {
+    figures: asNavArray(navigate.figures),
+    tables: asNavArray(navigate.tables),
+    equations: asNavArray(navigate.equations),
+    labels: asNavArray(navigate.labels),
+    listings: asNavArray(navigate.listings),
+    algorithms: asNavArray(navigate.algorithms),
+  };
+}
+
+function normalizeChanges(changes: LiveChangeEntry[] | undefined): LiveChangeEntry[] {
+  return Array.isArray(changes)
+    ? changes.filter((e) => e && typeof e.anchorId === "string" && e.anchorId.length > 0)
+    : [];
+}
+
+/**
+ * Explorer root groups: Outline, List of Changes (DL133), then Figures/Tables/
+ * Equations/Listings/Algorithms/Labels. Rows carry their reveal command data
+ * through the tree item in outlineTree.ts.
+ */
+export function buildNavigateRoots(
+  outline: OutlineEntryLike[] | undefined,
+  navigate: LiveNavigate | undefined,
+  changes?: LiveChangeEntry[],
+): NavNode[] {
+  const headings = Array.isArray(outline) ? outline.filter(Boolean) : [];
+  const headingRoots = nestOutlineEntries(headings).map((n): NavNode => ({
+    type: "heading",
+    entry: n.entry,
+    nested: n,
+  }));
+  const item = (e: LiveNavEntry): NavNode => ({ type: "item", entry: e });
+  const roots: NavNode[] = [];
+  const outlineGroup = group("outline", "Outline", headingRoots);
+  if (outlineGroup) roots.push(outlineGroup);
+  const changeGroup = group(
+    "changes",
+    "List of Changes",
+    normalizeChanges(changes).map((e): NavNode => ({ type: "change", entry: e })),
+  );
+  if (changeGroup) roots.push(changeGroup);
+  const nav = normalizeNavigate(navigate);
+  for (
+    const g of [
+      group("figures", "List of Figures", nav.figures.map(item)),
+      group("tables", "List of Tables", nav.tables.map(item)),
+      group("equations", "List of Equations", nav.equations.map(item)),
+      group("listings", "List of Listings", nav.listings.map(item)),
+      group("algorithms", "List of Algorithms", nav.algorithms.map(item)),
+      group("labels", "Labels", nav.labels.map(item)),
+    ]
+  ) {
+    if (g) roots.push(g);
+  }
+  return roots;
 }

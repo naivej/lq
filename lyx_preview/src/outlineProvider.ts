@@ -1,11 +1,12 @@
 /** Outline + navigate cache shared by Live preview and Explorer LyX Navigate tree. */
 
-import type { LiveNavigate, LiveOutlineEntry } from "./previewSession";
+import type { LiveChangeEntry, LiveNavigate, LiveOutlineEntry } from "./previewSession";
 import { emptyNavigate } from "./previewSession";
 
 interface CachedNav {
   outline: LiveOutlineEntry[];
   navigate: LiveNavigate;
+  changes: LiveChangeEntry[];
 }
 
 const cacheByPath = new Map<string, CachedNav>();
@@ -46,11 +47,13 @@ export function rememberOutline(
   filePath: string,
   outline: LiveOutlineEntry[],
   navigate?: LiveNavigate,
+  changes?: LiveChangeEntry[],
 ): void {
   const prev = lookup(filePath);
   cacheByPath.set(normalizeFsPath(filePath), {
     outline,
     navigate: navigate ?? prev?.navigate ?? emptyNavigate(),
+    changes: changes ?? prev?.changes ?? [],
   });
   while (cacheByPath.size > MAX_CACHE_ENTRIES) {
     const oldest = cacheByPath.keys().next().value;
@@ -65,6 +68,10 @@ export function getCachedOutline(filePath: string): LiveOutlineEntry[] | undefin
 
 export function getCachedNavigate(filePath: string): LiveNavigate | undefined {
   return lookup(filePath)?.navigate;
+}
+
+export function getCachedChanges(filePath: string): LiveChangeEntry[] | undefined {
+  return lookup(filePath)?.changes;
 }
 
 export function forgetOutline(filePath: string): void {

@@ -671,6 +671,10 @@ export const HELP_PAGES: HelpPage[] = [
           "                 outline is true (live outline headings). All five fields\n" +
           "                 are present as booleans.\n" +
           "  diagnostics    Structured notes such as unknown insets.\n" +
+          "  changes        Ordered tracked-change regions in document order: each\n" +
+          "                 entry carries ordinal, type (inserted|deleted), resolved\n" +
+          "                 author, raw timestamp ts, anchorId (change-N on the\n" +
+          "                 <ins>/<del> wrapper), and a collapsed text snippet.\n" +
           "  warnings       Non-fatal messages from the CLI envelope.\n\n" +
           "A parse or file error is the usual {code, message} JSON object and a\n" +
           "non-zero exit. A missing or unresolvable textclass layout is reported as\n" +
@@ -678,7 +682,10 @@ export const HELP_PAGES: HelpPage[] = [
       ),
       sec(
         "Constraints",
-        "- Deleted tracked text is omitted; inserted text is rendered as current text.\n" +
+        "- Tracked changes are all rendered in place: insertions as\n" +
+          "  <ins class=\"change-inserted\" id=\"change-N\"> and deletions as\n" +
+          "  <del class=\"change-deleted\" id=\"change-N\">, with the changes[] index\n" +
+          "  describing each region. The reader decides which view to show.\n" +
           "- ERT appears as an escaped 'ERT' chip; Note/Comment appear as click-disclosable\n" +
           "  private notes; Greyedout is a collapsed chip. These are Live-only (native\n" +
           "  XHTML omits them).\n" +
@@ -691,7 +698,7 @@ export const HELP_PAGES: HelpPage[] = [
       fr("commands/init", "layoutSearch / layoutRoots and --layouts-dir overlay"),
       fr("model/cst", "the tree this projection is built from"),
       fr("concepts/private-notes", "private notes shown as Live disclosures"),
-      fr("concepts/tracked-changes", "deleted regions omitted like native XHTML"),
+      fr("concepts/tracked-changes", "change wrappers plus the ordered changes index"),
     ],
   },
   {

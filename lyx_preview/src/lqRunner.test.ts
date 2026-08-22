@@ -30,6 +30,7 @@ const VALID_PAYLOAD = JSON.stringify({
   diagnostics: [],
   outline: [{ level: 1, number: "1", text: "Intro", id: "sec-1" }],
   navigate: emptyNavigate(),
+  changes: [],
 });
 
 function isAdapterError(code: string): (err: unknown) => boolean {

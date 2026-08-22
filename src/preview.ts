@@ -60,7 +60,6 @@ export const LIVE_UNAVAILABLE_CAPABILITIES = LIVE_CAPABILITIES;
 /** Fields later milestones may add. Must not appear on the wire yet. */
 export const LIVE_DEFERRED_FIELDS = [
   "tokens",
-  "changes",
   "mapping",
   "editTargets",
   "reviewRegions",
@@ -86,6 +85,24 @@ export interface LiveNavEntry {
   /** Optional 0-based source line (filled by the extension when known). */
   line?: number;
 }
+
+/** One rendered tracked-change region (DL133): document order, resolved author. */
+export interface LiveChangeEntry {
+  /** 1-based document order of rendered change regions. */
+  ordinal: number;
+  type: "inserted" | "deleted";
+  /** Resolved header `\author` name, or `Author <id>` when the id is unknown. */
+  author: string;
+  /** Raw LyX timestamp string from the change marker (`0` when absent). */
+  ts: string;
+  /** HTML anchor id (`change-N`) on the `<ins>`/`<del>` wrapper. */
+  anchorId: string;
+  /** Collapsed direct text with `[InsetKind]` placeholders, capped to 80 chars. */
+  snippet: string;
+}
+
+/** Number of author color slots; authors beyond this cycle back through the palette. */
+const AUTHOR_COLOR_COUNT = 8;
 
 /** Explorer “LyX Navigate” payload (outline + list-of-* + labels). */
 export interface LiveNavigate {
@@ -127,6 +144,8 @@ export interface LivePreviewResponse {
   outline: LiveOutlineEntry[];
   /** List-of-figures/tables/equations + label browser (LyX Navigate). */
   navigate: LiveNavigate;
+  /** Ordered tracked-change regions rendered as `<ins>`/`<del>` wrappers. */
+  changes: LiveChangeEntry[];
 }
 
 export interface LiveRenderResult {
@@ -244,6 +263,30 @@ export function validateLiveResponse(value: unknown): LivePreviewResponse {
       throw new LiveContractError(`navigate.${key} must be an array.`);
     }
   }
+  if (!Array.isArray(obj.changes)) {
+    throw new LiveContractError("changes must be an array.");
+  }
+  for (const entry of obj.changes) {
+    if (entry === null || typeof entry !== "object") {
+      throw new LiveContractError("each change entry must be an object.");
+    }
+    const e = entry as Record<string, unknown>;
+    if (typeof e.ordinal !== "number" || !Number.isInteger(e.ordinal) || e.ordinal < 1) {
+      throw new LiveContractError("change entry.ordinal must be a positive integer.");
+    }
+    if (e.type !== "inserted" && e.type !== "deleted") {
+      throw new LiveContractError("change entry.type must be 'inserted' or 'deleted'.");
+    }
+    if (typeof e.author !== "string" || typeof e.ts !== "string") {
+      throw new LiveContractError("change entry needs string author and ts.");
+    }
+    if (typeof e.anchorId !== "string" || e.anchorId.length === 0) {
+      throw new LiveContractError("change entry.anchorId must be a non-empty string.");
+    }
+    if (typeof e.snippet !== "string") {
+      throw new LiveContractError("change entry.snippet must be a string.");
+    }
+  }
   if (!Array.isArray(obj.diagnostics)) {
     throw new LiveContractError("diagnostics must be an array.");
   }
@@ -322,6 +365,14 @@ interface RenderCtx {
   floatListEntries: FloatListEntry[];
   /** Numbered equations collected during render (for LyX Navigate). */
   navEquations: LiveNavEntry[];
+  /** Header `\author` id → name for tracked-change readouts. */
+  authors: Map<number, string>;
+  /** Ordered tracked-change regions collected during render (DL133). */
+  changes: LiveChangeEntry[];
+  /** Next 1-based change ordinal. */
+  changeSeq: number;
+  /** Author id → color slot, assigned in order of first appearance. */
+  authorSlots: Map<number, number>;
   bibitem: number;
   includeStack: string[];
   subeq: { parent: number; child: number } | null;
@@ -909,6 +960,27 @@ function documentBranches(ast: DocumentNode): Map<string, boolean> {
   return out;
 }
 
+/** Header `\author <id> "<name>" [<email>]` records → id/name map (DL133). */
+function documentAuthors(ast: DocumentNode): Map<number, string> {
+  const out = new Map<number, string>();
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type !== "block") continue;
+      if (n.tag === "header") {
+        for (const c of n.children) {
+          if (c.type !== "property" || c.key !== "author" || !c.value) continue;
+          const m = c.value.match(/^(-?\d+)\s+"([^"]+)"(?:\s+.*)?$/);
+          if (m) out.set(parseInt(m[1], 10), m[2]);
+        }
+        continue;
+      }
+      if (n.tag === "document") walk(n.children);
+    }
+  };
+  walk(ast.children);
+  return out;
+}
+
 /** Native `InsetBranch::producesOutput`: selected XOR inverted. */
 function branchProducesOutput(block: BlockNode, ctx: RenderCtx): boolean {
   const kind = insetKind(block);
@@ -976,6 +1048,7 @@ export async function renderLiveHtml(
   diagnostics: LiveDiagnostic[];
   outline: LiveOutlineEntry[];
   navigate: LiveNavigate;
+  changes: LiveChangeEntry[];
 }> {
   let searchPaths: string[];
   let systemLayoutsDir: string | undefined;
@@ -1037,6 +1110,10 @@ export async function renderLiveHtml(
     floatTypeCounts: new Map(),
     floatListEntries: [],
     navEquations: [],
+    authors: documentAuthors(ast),
+    changes: [],
+    changeSeq: 0,
+    authorSlots: new Map(),
     subeq: null,
     bibitem: 0,
     includeStack: [],
@@ -1051,6 +1128,7 @@ export async function renderLiveHtml(
     diagnostics: ctx.diagnostics,
     outline: ctx.outline.map((e) => ({ ...e })),
     navigate: buildNavigate(ctx),
+    changes: ctx.changes.map((e) => ({ ...e })),
   };
 }
 
@@ -1084,6 +1162,7 @@ export async function buildLiveResponse(
     diagnostics: rendered.diagnostics,
     outline: rendered.outline,
     navigate: rendered.navigate,
+    changes: rendered.changes,
   };
   return { response, warnings: rendered.warnings };
 }
@@ -1261,7 +1340,12 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
         items[i - 1].layout !== item.layout ||
         items[i - 1].depth !== item.depth;
       const label = firstOfRun ? staticLayoutLabel(item.layout, ctx) : "";
-      html += `<div class="${layoutSlug(item.layout)}"${alignAttr(item.node)}>${label}${inner}</div>`;
+      // DL133 J3: a fully deleted paragraph keeps its del wrapper but must not
+      // leave an empty-shell gap in the Clean view — mark the container.
+      const deletedOnly = /class="change-deleted(?:\s|")/.test(inner) &&
+        !layoutContentKinds(item.node).nonDeleted;
+      const deletedClass = deletedOnly ? " change-deleted" : "";
+      html += `<div class="${layoutSlug(item.layout)}${deletedClass}"${alignAttr(item.node)}>${label}${inner}</div>`;
     }
     i++;
   }
@@ -1332,6 +1416,48 @@ function isSkippableFlow(item: FlowItem, ctx: RenderCtx): boolean {
   } finally {
     restoreCounters(ctx, snap);
   }
+}
+
+/**
+ * Does a layout carry any visible content outside deleted regions, and does
+ * it carry any deleted content at all? Used to mark whole-deleted flow
+ * containers (DL133 J3): inserted and current content both count as
+ * non-deleted, so a paragraph whose only survivor is an insertion stays
+ * visible in Clean.
+ */
+function layoutContentKinds(block: BlockNode): { nonDeleted: boolean; deleted: boolean } {
+  let nonDeleted = false;
+  let deleted = false;
+  const walk = (nodes: Node[], state: TraversalState) => {
+    for (const n of nodes) {
+      if (nonDeleted && deleted) return;
+      if (n.type === "property") {
+        if (n.key === "SpecialChar" || n.key === "backslash") {
+          if (traversalRegion(state) === "deleted") deleted = true;
+          else nonDeleted = true;
+          continue;
+        }
+        advanceTraversalState(state, n.key, n.value);
+        continue;
+      }
+      const region = traversalRegion(state);
+      if (n.type === "text") {
+        if (isStatusLine(n.text) || n.text.trim() === "") continue;
+        if (region === "deleted") deleted = true;
+        else nonDeleted = true;
+        continue;
+      }
+      if (n.type === "block") {
+        if (n.tag === "inset") {
+          const kind = insetKind(n);
+          if (kind === "ERT" || isInvisibleInset(n) || isOmittedInsetKind(kind)) continue;
+        }
+        walk(n.children, enterTraversalState(state));
+      }
+    }
+  };
+  walk(block.children, createTraversalState());
+  return { nonDeleted, deleted };
 }
 
 function listOpenTag(spec: { tag: string }, layout: string, enumDepth: number): string {
@@ -1634,21 +1760,103 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     }
   };
 
+  // DL133: one change-aware render. The list's OWN markers open `<ins>`/`<del>`
+  // wrappers; a region inherited from an enclosing list renders plain (its
+  // owner chip is already wrapped at the outer level). The wrapper is opened
+  // outside the inline font spans and rebuilt from state on every transition,
+  // so overlapping font/change markers nest validly.
+  interface ChangeWrapper {
+    type: "inserted" | "deleted";
+    ordinal: number;
+    author: string;
+    authorSlot: number;
+    ts: string;
+    snippet: string;
+  }
+  let wrapper: ChangeWrapper | null = null;
+
+  const ownRegion = (): "inserted" | "deleted" | "current" => {
+    if (state.deletedDepth > 0) return "deleted";
+    if (state.insertedDepth > 0) return "inserted";
+    return "current";
+  };
+
+  const addSnippet = (text: string) => {
+    if (wrapper) wrapper.snippet += text;
+  };
+
+  const closeWrapper = () => {
+    if (!wrapper) return;
+    closeAll();
+    html += wrapper.type === "inserted" ? "</ins>" : "</del>";
+    ctx.changes.push({
+      ordinal: wrapper.ordinal,
+      type: wrapper.type,
+      author: wrapper.author,
+      ts: wrapper.ts,
+      anchorId: `change-${wrapper.ordinal}`,
+      snippet: wrapper.snippet.replace(/\s+/g, " ").trim().slice(0, 80),
+    });
+    wrapper = null;
+  };
+
+  const syncChange = () => {
+    const region = ownRegion();
+    if (wrapper && wrapper.type === region) return;
+    closeWrapper();
+    if (region === "current") {
+      syncFont();
+      return;
+    }
+    const authorId = region === "inserted" ? state.insertedAuthor : state.deletedAuthor;
+    const ts = region === "inserted" ? state.insertedTs : state.deletedTs;
+    let authorSlot = ctx.authorSlots.get(authorId);
+    if (authorSlot === undefined) {
+      authorSlot = ctx.authorSlots.size % AUTHOR_COLOR_COUNT;
+      ctx.authorSlots.set(authorId, authorSlot);
+    }
+    ctx.changeSeq += 1;
+    wrapper = {
+      type: region,
+      ordinal: ctx.changeSeq,
+      author: ctx.authors.get(authorId) ?? `Author ${authorId}`,
+      authorSlot,
+      ts: ts || "0",
+      snippet: "",
+    };
+    // The wrapper must be outermost: close any inline spans still open from
+    // before the region (closeWrapper only closes them when a wrapper was
+    // active), then rebuild them inside the new wrapper.
+    closeAll();
+    html += region === "inserted"
+      ? `<ins class="change-inserted change-author-${authorSlot}" id="change-${wrapper.ordinal}">`
+      : `<del class="change-deleted change-author-${authorSlot}" id="change-${wrapper.ordinal}">`;
+    syncFont();
+  };
+
   for (const child of children) {
     if (child.type === "property") {
       if (SKIP_LAYOUT_PROPS.has(child.key)) continue;
       if (child.key === "SpecialChar") {
-        if (traversalRegion(state) === "deleted") continue;
-        html += escapeLiveHtml(specialChar(child.value ?? ""));
+        syncChange();
+        const ch = specialChar(child.value ?? "");
+        html += escapeLiveHtml(ch);
+        addSnippet(ch);
         continue;
       }
       if (child.key === "backslash") {
-        if (traversalRegion(state) === "deleted") continue;
-        html += escapeLiveHtml("\\");
+        syncChange();
+        html += "\\";
+        addSnippet("\\");
         continue;
       }
       advanceTraversalState(state, child.key, child.value);
       if (
+        child.key === "change_deleted" || child.key === "change_inserted" ||
+        child.key === "change_unchanged"
+      ) {
+        syncChange();
+      } else if (
         child.key === "emph" || child.key === "series" || child.key === "shape" ||
         child.key === "bar" || child.key === "strikeout" || child.key === "xout" ||
         child.key === "uuline" || child.key === "uwave" || child.key === "noun" ||
@@ -1658,15 +1866,19 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
       }
       continue;
     }
-    if (traversalRegion(state) === "deleted") continue;
+    syncChange();
     if (child.type === "text") {
-      html += escapeLiveHtml(expandSpecialInText(child.text));
+      const text = expandSpecialInText(child.text);
+      html += escapeLiveHtml(text);
+      addSnippet(text);
       continue;
     }
     if (child.type === "block") {
       html += renderInset(child, state, ctx);
+      addSnippet(child.tag === "inset" ? `[${insetKind(child)}]` : "");
     }
   }
+  closeWrapper();
   closeAll();
   return html;
 }
@@ -2381,11 +2593,12 @@ function renderInfo(block: BlockNode, ctx?: RenderCtx): string {
   if (type === "icon") {
     if (!arg) return "";
     const src = resolveInfoIconDataUri(arg, ctx?.systemImagesDir, ctx?.magickPath);
+    const fileName = resolvedInfoIconName(arg, ctx?.systemImagesDir);
     if (src) {
-      return `<img class="info-icon" src="${src}" alt="${escapeLiveHtml(arg)}" title="${escapeLiveHtml(arg)}" aria-label="${escapeLiveHtml(arg)}" data-info-icon="${escapeLiveHtml(arg)}"/>`;
+      return `<img class="info-icon" src="${src}" alt="${escapeLiveHtml(arg)}" title="${escapeLiveHtml(arg)}" aria-label="${escapeLiveHtml(arg)}" data-info-icon="${escapeLiveHtml(arg)}" data-info-file="${escapeLiveHtml(fileName)}"/>`;
     }
     // Glyph fallback when LyX images / magick are unavailable (DL130 J4).
-    return `<span class="info-icon" title="${escapeLiveHtml(arg)}" role="img" aria-label="${escapeLiveHtml(arg)}">▣</span>`;
+    return `<span class="info-icon" title="${escapeLiveHtml(arg)}" role="img" aria-label="${escapeLiveHtml(arg)}" data-info-file="${escapeLiveHtml(fileName)}">▣</span>`;
   }
   if (type === "shortcut" || type === "shortcuts") {
     if (!arg) return "";
@@ -2427,6 +2640,14 @@ function applyIconAliases(name: string, imagesDir: string): string {
     if (out.includes(from)) out = out.split(from).join(to);
   }
   return out;
+}
+
+/** The icon FILE base name LyX resolves for an Info/LFUN arg (munge + aliases). */
+function resolvedInfoIconName(name: string, imagesDir?: string): string {
+  const trimmed = name.trim();
+  if (!trimmed) return "";
+  const munged = trimmed.replace(/\\/g, "backslash").replace(/[ ;]/g, "_");
+  return imagesDir ? applyIconAliases(munged, imagesDir) : munged;
 }
 
 /**
@@ -3486,9 +3707,33 @@ export interface SemNode {
 
 const VOID_TAGS = new Set(["br", "img", "hr", "meta", "link", "input"]);
 
-export function normalizeReaderHtml(html: string): SemNode {
+/** Inline presentation roles that merge when adjacent (same role + attrs). */
+const INLINE_MERGE_ROLES = new Set(["emphasis", "strong", "underline", "strike"]);
+
+/**
+ * Inline container roles whose own edge whitespace is content. Block-ish
+ * roles (item, term, cell, paragraph, …) keep the historical boundary trim
+ * that strips LyXHTML inter-block newlines; an inline wrapper must not.
+ */
+const INLINE_EDGE_ROLES = new Set([
+  "wrap",
+  "emphasis",
+  "strong",
+  "underline",
+  "strike",
+  "ref",
+  "link",
+  "citation",
+  "shortcut",
+  "icon",
+]);
+
+export function normalizeReaderHtml(
+  html: string,
+  options?: { changeView?: "accepted" },
+): SemNode {
   const parsed = parseFragment(html);
-  return collapse(mapRole(parsed));
+  return collapse(mapRole(parsed, options?.changeView));
 }
 
 export function semanticEqual(a: SemNode, b: SemNode): boolean {
@@ -3553,6 +3798,21 @@ function collapse(node: SemNode): SemNode {
     const last = merged[merged.length - 1];
     if (c.role === "text" && last?.role === "text") {
       last.text = (last.text ?? "") + (c.text ?? "");
+    } else if (
+      INLINE_MERGE_ROLES.has(c.role) &&
+      c.role === last?.role &&
+      JSON.stringify(c.attrs ?? {}) === JSON.stringify(last.attrs ?? {})
+    ) {
+      // Adjacent same-style runs are one run (LyXHTML emits a continuous
+      // <em> where Live splits around a change wrapper — DL133 Clean parity).
+      for (const inner of c.children) {
+        const tail = last.children[last.children.length - 1];
+        if (inner.role === "text" && tail?.role === "text") {
+          tail.text = (tail.text ?? "") + (inner.text ?? "");
+        } else {
+          last.children.push(inner);
+        }
+      }
     } else {
       merged.push(c);
     }
@@ -3578,9 +3838,15 @@ function collapse(node: SemNode): SemNode {
       "author",
       "note",
     ]);
-    if (merged[0]?.role === "text" && merged[0].text) merged[0].text = merged[0].text.trimStart();
-    const last = merged[merged.length - 1];
-    if (last?.role === "text" && last.text) last.text = last.text.trimEnd();
+    // Only block containers trim their OWN first/last text (LyXHTML inter-block
+    // newlines). An inline wrapper must keep its edge whitespace — DL133 change
+    // wrappers split runs at space boundaries, and promoting them to Clean
+    // cannot eat the space.
+    if (!INLINE_EDGE_ROLES.has(node.role)) {
+      if (merged[0]?.role === "text" && merged[0].text) merged[0].text = merged[0].text.trimStart();
+      const last = merged[merged.length - 1];
+      if (last?.role === "text" && last.text) last.text = last.text.trimEnd();
+    }
     for (let i = 0; i < merged.length; i++) {
       const cur = merged[i];
       if (cur.role !== "text" || !cur.text) continue;
@@ -3620,10 +3886,11 @@ function collapseWs(text: string, preserve: boolean): string {
   return text.replace(/[ \t\r\n]+([.,;:!?])/g, "$1").replace(/[ \t\r\n]+/g, " ");
 }
 
-function mapRole(node: SemNode): SemNode {
+function mapRole(node: SemNode, changeView?: "accepted"): SemNode {
   const tag = node.role;
   const cls = node.attrs?.class ?? "";
-  const children = node.children.map(mapRole);
+  const classes = cls.split(/\s+/).filter(Boolean);
+  const children = node.children.map((c) => mapRole(c, changeView));
   if (tag === "root") {
     if (children.length === 1 && children[0].role === "document") return children[0];
     return { role: "document", children };
@@ -3667,7 +3934,12 @@ function mapRole(node: SemNode): SemNode {
   }
   if (tag === "img") {
     const classes = cls.split(/\s+/).filter(Boolean);
-    const fromAttr = node.attrs?.["data-info-icon"] || node.attrs?.["aria-label"] ||
+    // DL133 follow-up: Live rasterizes the icon, so the resolved FILE name
+    // (post icon.aliases, e.g. dialog-show_findreplace) is carried separately
+    // from the LFUN arg; compare against that — native LyXHTML exports the
+    // resolved name.
+    const fromAttr = node.attrs?.["data-info-file"] || node.attrs?.["data-info-icon"] ||
+      node.attrs?.["aria-label"] ||
       node.attrs?.title || "";
     const fromFile = basenameAttr(node.attrs?.src ?? "").replace(/\.(svgz?|png|jpe?g|gif|webp)$/i, "");
     const iconName = (fromAttr || fromFile).trim();
@@ -3699,6 +3971,17 @@ function mapRole(node: SemNode): SemNode {
   if (tag === "em" || tag === "i") return { role: "emphasis", children };
   if (tag === "strong" || tag === "b") return { role: "strong", children };
   if (tag === "u") return { role: "underline", children };
+  // DL133 change wrappers: transparent by default; the accepted view (Clean
+  // oracle parity) drops <del> subtrees and promotes <ins>.
+  if (
+    (tag === "ins" || tag === "del") &&
+    (classes.includes("change-inserted") || classes.includes("change-deleted"))
+  ) {
+    if (changeView === "accepted" && tag === "del") {
+      return { role: "wrap", children: [] };
+    }
+    return { role: "wrap", children };
+  }
   if (tag === "s" || tag === "del") return { role: "strike", children };
   if (tag === "aside") return { role: "note", children };
   if (tag === "kbd" || tag === "bdo") {
@@ -3729,6 +4012,11 @@ function mapRole(node: SemNode): SemNode {
   }
   if (tag === "p" || tag === "div") {
     const classes = cls.split(/\s+/).filter(Boolean);
+    // DL133 J3: the accepted view drops whole-deleted containers entirely —
+    // promoting the inner <del> away would leave an empty-shell paragraph.
+    if (changeView === "accepted" && classes.includes("change-deleted")) {
+      return { role: "wrap", children: [] };
+    }
     if (classes.includes("float-figure") || classes.includes("float-table")) {
       return { role: "figure", children };
     }
@@ -3743,7 +4031,7 @@ function mapRole(node: SemNode): SemNode {
     if (classes.includes("citation")) return { role: "citation", children };
     if (classes.includes("ref")) return mapRefRole(node, children);
     if (classes.includes("info-icon")) {
-      const name = node.attrs?.["aria-label"] || node.attrs?.title ||
+      const name = node.attrs?.["data-info-file"] || node.attrs?.["aria-label"] || node.attrs?.title ||
         collectText({ role: tag, children, text: node.text }).trim();
       return { role: "icon", attrs: name ? { name } : undefined, children: [] };
     }

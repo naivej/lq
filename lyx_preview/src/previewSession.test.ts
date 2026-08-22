@@ -5,6 +5,7 @@ import {
   LIVE_CONTRACT,
   PreviewSession,
   emptyNavigate,
+  formatChangeTime,
   parseLiveStdout,
 } from "./previewSession";
 
@@ -34,6 +35,7 @@ function validRender(over: Record<string, unknown> = {}): string {
       { level: 1, number: "1", text: "Intro", id: "sec-1" },
     ],
     navigate: emptyNavigate(),
+    changes: [],
     ...over,
   });
 }
@@ -81,6 +83,34 @@ describe("parseLiveStdout", () => {
     }));
     assert.equal(render.outline.length, 2);
     assert.equal(render.capabilities.outline, true);
+  });
+
+  it("accepts and validates the changes index", () => {
+    const render = parseLiveStdout(validRender({
+      changes: [
+        { ordinal: 1, type: "inserted", author: "Alice", ts: "1724000000", anchorId: "change-1", snippet: "added" },
+        { ordinal: 2, type: "deleted", author: "Bob", ts: "0", anchorId: "change-2", snippet: "removed" },
+      ],
+    }));
+    assert.equal(render.changes.length, 2);
+    assert.equal(render.changes[0]!.author, "Alice");
+    assert.throws(
+      () => parseLiveStdout(validRender({ changes: [{ ordinal: 1, type: "other" }] })),
+      (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",
+    );
+  });
+});
+
+describe("formatChangeTime", () => {
+  it("formats unix seconds as local YYYY-MM-DD HH:MM", () => {
+    // 2024-08-18T12:33:20Z → local time; assert only the shape (timezone-dependent).
+    assert.match(formatChangeTime("1723984400"), /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$/);
+  });
+
+  it("returns empty for zero, missing, and invalid timestamps", () => {
+    assert.equal(formatChangeTime("0"), "");
+    assert.equal(formatChangeTime(""), "");
+    assert.equal(formatChangeTime("nope"), "");
   });
 });
 

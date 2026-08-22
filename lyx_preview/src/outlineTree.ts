@@ -6,70 +6,25 @@
  */
 
 import * as vscode from "vscode";
-import type { LiveNavEntry, LiveNavigate, LiveOutlineEntry } from "./previewSession";
+import {
+  formatChangeTime,
+  type LiveChangeEntry,
+  type LiveNavEntry,
+  type LiveNavigate,
+  type LiveOutlineEntry,
+} from "./previewSession";
 import { emptyNavigate } from "./previewSession";
-import { nestOutlineEntries, type NestedOutline, type OutlineEntryLike } from "./outlineNest";
-
-export type NavNode =
-  | { type: "group"; key: string; label: string; children: NavNode[] }
-  | { type: "heading"; entry: OutlineEntryLike; nested: NestedOutline }
-  | { type: "item"; entry: LiveNavEntry };
+import {
+  buildNavigateRoots,
+  type NavNode,
+  type OutlineEntryLike,
+} from "./outlineNest";
 
 function nodeId(node: NavNode): string {
   if (node.type === "group") return `group:${node.key}`;
   if (node.type === "heading") return `h:${node.entry.id}`;
+  if (node.type === "change") return `c:${node.entry.anchorId}`;
   return `i:${node.entry.kind}:${node.entry.id}:${node.entry.name ?? ""}`;
-}
-
-function group(key: string, label: string, children: NavNode[]): NavNode | undefined {
-  if (children.length === 0) return undefined;
-  return { type: "group", key, label, children };
-}
-
-function asNavArray(v: LiveNavEntry[] | undefined): LiveNavEntry[] {
-  return Array.isArray(v) ? v.filter((e) => e && typeof e.id === "string") : [];
-}
-
-function normalizeNavigate(navigate: LiveNavigate | undefined): LiveNavigate {
-  if (!navigate) return emptyNavigate();
-  return {
-    figures: asNavArray(navigate.figures),
-    tables: asNavArray(navigate.tables),
-    equations: asNavArray(navigate.equations),
-    labels: asNavArray(navigate.labels),
-    listings: asNavArray(navigate.listings),
-    algorithms: asNavArray(navigate.algorithms),
-  };
-}
-
-export function buildNavigateRoots(
-  outline: OutlineEntryLike[] | undefined,
-  navigate: LiveNavigate | undefined,
-): NavNode[] {
-  const headings = Array.isArray(outline) ? outline.filter(Boolean) : [];
-  const headingRoots = nestOutlineEntries(headings).map((n): NavNode => ({
-    type: "heading",
-    entry: n.entry,
-    nested: n,
-  }));
-  const item = (e: LiveNavEntry): NavNode => ({ type: "item", entry: e });
-  const roots: NavNode[] = [];
-  const outlineGroup = group("outline", "Outline", headingRoots);
-  if (outlineGroup) roots.push(outlineGroup);
-  const nav = normalizeNavigate(navigate);
-  for (
-    const g of [
-      group("figures", "List of Figures", nav.figures.map(item)),
-      group("tables", "List of Tables", nav.tables.map(item)),
-      group("equations", "List of Equations", nav.equations.map(item)),
-      group("listings", "List of Listings", nav.listings.map(item)),
-      group("algorithms", "List of Algorithms", nav.algorithms.map(item)),
-      group("labels", "Labels", nav.labels.map(item)),
-    ]
-  ) {
-    if (g) roots.push(g);
-  }
-  return roots;
 }
 
 function childNodes(node: NavNode): NavNode[] {
@@ -92,6 +47,8 @@ export class NavigateTreeItem extends vscode.TreeItem {
       this.iconPath = new vscode.ThemeIcon(
         node.key === "outline"
           ? "list-tree"
+          : node.key === "changes"
+          ? "diff"
           : node.key === "labels"
           ? "tag"
           : node.key === "equations"
@@ -112,6 +69,23 @@ export class NavigateTreeItem extends vscode.TreeItem {
         command: "lyx-preview.revealOutline",
         title: "Reveal",
         arguments: [node.entry.id, node.entry.line],
+      };
+    } else if (node.type === "change") {
+      const e = node.entry;
+      const verb = e.type === "inserted" ? "Insert" : "Delete";
+      super(
+        `${e.ordinal} ${verb} — ${e.snippet}`,
+        vscode.TreeItemCollapsibleState.None,
+      );
+      const time = formatChangeTime(e.ts);
+      this.description = time ? `${e.author} · ${time}` : e.author;
+      this.iconPath = new vscode.ThemeIcon(
+        e.type === "inserted" ? "diff-added" : "diff-removed",
+      );
+      this.command = {
+        command: "lyx-preview.revealOutline",
+        title: "Reveal Change",
+        arguments: [e.anchorId],
       };
     } else {
       const e = node.entry;
@@ -146,6 +120,7 @@ export class LyxOutlineTreeProvider implements vscode.TreeDataProvider<NavigateT
   readonly onDidChangeTreeData = this._onDidChange.event;
   private outline: OutlineEntryLike[] = [];
   private navigate: LiveNavigate = emptyNavigate();
+  private changes: LiveChangeEntry[] = [];
   /** Stable id → node, so getChildren works after VS Code drops custom fields. */
   private readonly nodesById = new Map<string, NavNode>();
 
@@ -153,22 +128,24 @@ export class LyxOutlineTreeProvider implements vscode.TreeDataProvider<NavigateT
     _filePath: string | undefined,
     outline: OutlineEntryLike[],
     navigate?: LiveNavigate,
+    changes?: LiveChangeEntry[],
   ): void {
     this.outline = Array.isArray(outline) ? outline : [];
-    this.navigate = normalizeNavigate(navigate);
+    this.navigate = navigate ?? emptyNavigate();
+    this.changes = Array.isArray(changes) ? changes : [];
     this.nodesById.clear();
     const register = (n: NavNode) => {
       this.nodesById.set(nodeId(n), n);
       for (const c of childNodes(n)) register(c);
     };
-    for (const r of buildNavigateRoots(this.outline, this.navigate)) register(r);
+    for (const r of buildNavigateRoots(this.outline, this.navigate, this.changes)) register(r);
     const has = this.nodesById.size > 0;
     void vscode.commands.executeCommand("setContext", "lyxPreview.hasOutline", has);
     this._onDidChange.fire(undefined);
   }
 
   clear(): void {
-    this.refresh(undefined, [], undefined);
+    this.refresh(undefined, [], undefined, undefined);
   }
 
   getTreeItem(element: NavigateTreeItem): vscode.TreeItem {
@@ -177,7 +154,8 @@ export class LyxOutlineTreeProvider implements vscode.TreeDataProvider<NavigateT
 
   getChildren(element?: NavigateTreeItem): NavigateTreeItem[] {
     if (!element) {
-      return buildNavigateRoots(this.outline, this.navigate).map((n) => new NavigateTreeItem(n));
+      return buildNavigateRoots(this.outline, this.navigate, this.changes)
+        .map((n) => new NavigateTreeItem(n));
     }
     const id = element.id;
     if (!id) return [];
