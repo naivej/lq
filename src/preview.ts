@@ -781,11 +781,21 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
     floatNo: string | undefined,
     atBody: boolean,
     inHeadingLayout: boolean,
+    state: TraversalState,
   ) => {
     for (const n of list) {
+      if (n.type === "property") {
+        if (
+          n.key === "change_deleted" || n.key === "change_inserted" ||
+          n.key === "change_unchanged"
+        ) {
+          advanceTraversalState(state, n.key, n.value);
+        }
+        continue;
+      }
       if (n.type !== "block") continue;
       if (n.tag === "deeper") {
-        walk(n.children, floatNo, atBody, inHeadingLayout);
+        walk(n.children, floatNo, atBody, inHeadingLayout, state);
         continue;
       }
       if (n.tag === "layout") {
@@ -807,14 +817,14 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
           }
           // Only labels nested in the heading layout are TOC labels — not every
           // later body label while currentHeading is set.
-          walk(n.children, floatNo, false, true);
+          walk(n.children, floatNo, false, true, state);
           continue;
         }
-        walk(n.children, floatNo, false, false);
+        walk(n.children, floatNo, false, false, state);
         continue;
       }
       if (n.tag !== "inset") {
-        walk(n.children, floatNo, atBody, inHeadingLayout);
+        walk(n.children, floatNo, atBody, inHeadingLayout, state);
         continue;
       }
       const kind = insetKind(n);
@@ -824,45 +834,60 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         const variant = kind.startsWith("Float ")
           ? kind.slice("Float ".length).trim()
           : kind.slice("Wrap ".length).trim();
-        const taken = takeFloatNumber(ctx, variant) ?? takeGenericFloatNumber(ctx, variant);
-        noteFloatListEntry(ctx, n, variant, taken);
+        // LyX InsetCaption un-steps on the inherited `deleted` flag, so a
+        // deleted float is excluded from nav and does not consume a number.
+        const deleted = state.deletedDepth > 0 || state.outerDeletedDepth > 0;
+        const taken = deleted
+          ? undefined
+          : takeFloatNumber(ctx, variant) ?? takeGenericFloatNumber(ctx, variant);
+        if (!deleted) noteFloatListEntry(ctx, n, variant, taken);
         const prevCap = currentFloatCaption;
         const caps = captionBlocks(n);
         // nameref for floats matches native LyXHTML ("Figure 1"), not the caption prose.
         currentFloatCaption = taken
           ? `${floatNamerefPrefix(variant)} ${taken}`
           : caps.map((c) => collectVisibleText(c)).join(" ").replace(/\s+/g, " ").trim();
-        walk(n.children, taken ?? floatNo, false, false);
+        // Children are a fresh paragraph space; the inherited flag moves to
+        // outer* so nested equations still count (LyX hull quirk) while nested
+        // captions/floats skip (InsetCaption param propagation).
+        walk(n.children, taken ?? floatNo, false, false, enterTraversalState(state));
         currentFloatCaption = prevCap;
         continue;
       }
       if (kind === "listings" || kind.startsWith("listings ")) {
-        const taken = listingTakesNumber(n) ? takeFloatNumber(ctx, "listing") : undefined;
-        walk(n.children, taken ?? floatNo, false, false);
+        const deleted = state.deletedDepth > 0 || state.outerDeletedDepth > 0;
+        const taken = !deleted && listingTakesNumber(n) ? takeFloatNumber(ctx, "listing") : undefined;
+        walk(n.children, taken ?? floatNo, false, false, enterTraversalState(state));
         continue;
       }
       if (kind.startsWith("CommandInset include") && includeIsListings(n)) {
+        // LyX InsetInclude steps the listing counter unconditionally (quirk);
+        // only the label registration is skipped for a deleted include.
+        const deleted = state.deletedDepth > 0 || state.outerDeletedDepth > 0;
         const taken = takeFloatNumber(ctx, "listing");
         const label = listingParam(findProperty(n, "lstparams") ?? "", "label");
-        if (label && taken) {
+        if (!deleted && label && taken) {
           ctx.labels.set(label, taken);
           ctx.labelKinds.set(label, "float");
         }
-        walk(n.children, taken ?? floatNo, false, false);
+        walk(n.children, taken ?? floatNo, false, false, enterTraversalState(state));
         continue;
       }
       if (kind.startsWith("CommandInset label")) {
-        const name = findProperty(n, "name");
-        if (name) {
-          ctx.labels.set(name, floatNo ?? currentHeading);
-          const kindHint: "heading" | "float" | "other" = floatNo
-            ? "float"
-            : inHeadingLayout
-            ? "heading"
-            : "other";
-          ctx.labelKinds.set(name, kindHint);
-          const title = (currentFloatCaption || currentHeadingTitle).trim();
-          if (title) ctx.labelTitles.set(name, title);
+        const deleted = state.deletedDepth > 0 || state.outerDeletedDepth > 0;
+        if (!deleted) {
+          const name = findProperty(n, "name");
+          if (name) {
+            ctx.labels.set(name, floatNo ?? currentHeading);
+            const kindHint: "heading" | "float" | "other" = floatNo
+              ? "float"
+              : inHeadingLayout
+              ? "heading"
+              : "other";
+            ctx.labelKinds.set(name, kindHint);
+            const title = (currentFloatCaption || currentHeadingTitle).trim();
+            if (title) ctx.labelTitles.set(name, title);
+          }
         }
         continue;
       }
@@ -876,7 +901,9 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         continue;
       }
       if (kind === "Formula" || kind.startsWith("Formula")) {
-        takeFormulaNumbers(formulaSource(n), ctx);
+        // LyX InsetMathHull checks only its own paragraph marker, so a formula
+        // inside a deleted owner still consumes a number (J-C quirk).
+        takeFormulaNumbers(formulaSource(n), ctx, state.deletedDepth > 0);
         continue;
       }
       if (kind.startsWith("CommandInset citation")) {
@@ -900,10 +927,10 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         if (entry.terms.length || entry.see) ctx.index.push(entry);
         continue;
       }
-      walk(n.children, floatNo, false, inHeadingLayout);
+      walk(n.children, floatNo, false, inHeadingLayout, enterTraversalState(state));
     }
   };
-  walk(nodes, undefined, true, false);
+  walk(nodes, undefined, true, false, createTraversalState());
   ctx.figure = 0;
   ctx.table = 0;
   ctx.algorithm = 0;
@@ -1128,7 +1155,10 @@ export async function renderLiveHtml(
     diagnostics: ctx.diagnostics,
     outline: ctx.outline.map((e) => ({ ...e })),
     navigate: buildNavigate(ctx),
-    changes: ctx.changes.map((e) => ({ ...e })),
+    changes: ctx.changes
+      .slice()
+      .sort((a, b) => a.ordinal - b.ordinal)
+      .map((e) => ({ ...e })),
   };
 }
 
@@ -1252,7 +1282,7 @@ function headingPlainText(layout: BlockNode): string {
   return out.replace(/\s+/g, " ").trim();
 }
 
-function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
+function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: TraversalState): string {
   let i = 0;
   let html = "";
   const openLevels: number[] = [];
@@ -1273,12 +1303,12 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
       continue;
     }
     if (layout.kind === "title") {
-      html += `<h1 class="title">${renderLayoutInline(item.node, ctx, true)}</h1>`;
+      html += `<h1 class="title">${renderLayoutInline(item.node, ctx, true, outerState)}</h1>`;
       i++;
       continue;
     }
     if (layout.kind === "front") {
-      html += `<div class="${layoutSlug(item.layout)}">${renderLayoutInline(item.node, ctx, true)}</div>`;
+      html += `<div class="${layoutSlug(item.layout)}">${renderLayoutInline(item.node, ctx, true, outerState)}</div>`;
       i++;
       continue;
     }
@@ -1294,7 +1324,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
       noteChapterHeading(ctx, layout, number);
       const text = headingPlainText(item.node);
       const id = sectionId(number, text);
-      html += `<section id="${escapeLiveHtml(id)}"><${layout.tag}>${number}${renderLayoutInline(item.node, ctx)}</${layout.tag}>`;
+      html += `<section id="${escapeLiveHtml(id)}"><${layout.tag}>${number}${renderLayoutInline(item.node, ctx, false, outerState)}</${layout.tag}>`;
       openLevels.push(layout.level);
       i++;
       continue;
@@ -1322,7 +1352,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx): string {
       i++;
       continue;
     }
-    const inner = renderLayoutInline(item.node, ctx);
+    const inner = renderLayoutInline(item.node, ctx, false, outerState);
     if (inner.trim().length === 0) {
       i++;
       continue;
@@ -1638,11 +1668,20 @@ function renderAbstract(items: FlowItem[], start: number, ctx: RenderCtx): [stri
 
 const TITLE_MARKS = ["*", "†", "‡", "§", "¶", "‖", "**", "††"];
 
-function renderLayoutInline(layout: BlockNode, ctx: RenderCtx, inTitle = false): string {
+function renderLayoutInline(
+  layout: BlockNode,
+  ctx: RenderCtx,
+  inTitle = false,
+  outerState?: TraversalState,
+): string {
   const prev = ctx.inTitle;
   if (inTitle) ctx.inTitle = true;
   try {
-    return renderChildren(layout.children, createTraversalState(), ctx);
+    return renderChildren(
+      layout.children,
+      outerState ? enterTraversalState(outerState) : createTraversalState(),
+      ctx,
+    );
   } finally {
     ctx.inTitle = prev;
   }
@@ -1769,6 +1808,7 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     type: "inserted" | "deleted";
     ordinal: number;
     author: string;
+    authorId: number;
     authorSlot: number;
     ts: string;
     snippet: string;
@@ -1802,7 +1842,15 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
 
   const syncChange = () => {
     const region = ownRegion();
-    if (wrapper && wrapper.type === region) return;
+    if (region !== "current" && wrapper && wrapper.type === region) {
+      // LyX's flat model nests same-type openers, but two adjacent regions by
+      // different authors must stay author-distinct (DL133 bug batch: the
+      // one/two/three runs in review_changes.lyx get separate colors).
+      const authorId = region === "inserted" ? state.insertedAuthor : state.deletedAuthor;
+      if (wrapper.authorId === authorId) return;
+    } else if (wrapper && wrapper.type === region) {
+      return;
+    }
     closeWrapper();
     if (region === "current") {
       syncFont();
@@ -1820,6 +1868,7 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
       type: region,
       ordinal: ctx.changeSeq,
       author: ctx.authors.get(authorId) ?? `Author ${authorId}`,
+      authorId,
       authorSlot,
       ts: ts || "0",
       snippet: "",
@@ -1929,8 +1978,10 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
         { summaryClass: "foot_intitle_label", bodyClass: "foot_intitle_inner" },
       );
     }
-    ctx.footnote += 1;
-    const n = ctx.footnote;
+    // LyX InsetFoot: deleted footnotes show the would-be number but un-step
+    // the counter (inherited `deleted` flag propagates into nested feet too).
+    const deleted = parentState.deletedDepth > 0 || parentState.outerDeletedDepth > 0;
+    const n = deleted ? ctx.footnote + 1 : ++ctx.footnote;
     return wrapDisclosure(
       "foot",
       String(n),
@@ -1942,7 +1993,9 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return "";
   }
   if (kind === "Formula" || kind.startsWith("Formula ") || kind.startsWith("Formula")) {
-    return renderFormulaNavigate(block, ctx);
+    // LyX InsetMathHull checks only the hull's own paragraph marker, so a
+    // formula nested in a deleted owner still consumes a number (J-C).
+    return renderFormulaNavigate(block, ctx, parentState.deletedDepth > 0);
   }
   if (kind === "Newpage" || kind.startsWith("Newpage ")) {
     return `<div class="lyx-pagebreak" role="separator" aria-label="New page"><span class="lyx-break-label">New page</span></div>`;
@@ -2221,7 +2274,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
 function renderFootInner(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
   const nested = flattenFlow(block.children, 0);
   if (nested.length > 0) {
-    return nested.map((item) => renderLayoutInline(item.node, ctx, ctx.inTitle)).join("");
+    return nested.map((item) => renderLayoutInline(item.node, ctx, ctx.inTitle, parentState)).join("");
   }
   return renderChildren(block.children, enterTraversalState(parentState), ctx);
 }
@@ -2229,7 +2282,7 @@ function renderFootInner(block: BlockNode, parentState: TraversalState, ctx: Ren
 function renderInsetLayouts(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
   const nested = flattenFlow(block.children, 0);
   if (nested.length > 0) {
-    return renderFlowItems(nested, ctx);
+    return renderFlowItems(nested, ctx, parentState);
   }
   return renderChildren(block.children, enterTraversalState(parentState), ctx);
 }
@@ -2240,7 +2293,9 @@ function enterSubequations(ctx: RenderCtx): number {
   return ctx.equation;
 }
 
-function takeEquationNumber(ctx: RenderCtx): string {
+function takeEquationNumber(ctx: RenderCtx, deleted = false): string {
+  // LyX InsetMathHull: a deleted numbered row shows `#` and does not step.
+  if (deleted) return "#";
   if (ctx.subeq) {
     ctx.subeq.child += 1;
     return `${ctx.subeq.parent}${String.fromCharCode(96 + ctx.subeq.child)}`;
@@ -2252,16 +2307,19 @@ function takeEquationNumber(ctx: RenderCtx): string {
 function takeFormulaNumbers(
   src: string,
   ctx: RenderCtx,
+  deleted = false,
 ): string | Array<string | undefined> | undefined {
   const plan = planFormulaLines(src);
   const nos: Array<string | undefined> = [];
   for (const line of plan.lines) {
     if (line.consumesNumber) {
-      const num = takeEquationNumber(ctx);
+      const num = takeEquationNumber(ctx, deleted);
       nos.push(num);
       for (const lab of line.labels) {
-        ctx.labels.set(lab, num);
-        ctx.labelKinds.set(lab, "equation");
+        if (!deleted) {
+          ctx.labels.set(lab, num);
+          ctx.labelKinds.set(lab, "equation");
+        }
       }
     } else {
       nos.push(undefined);
@@ -2272,28 +2330,30 @@ function takeFormulaNumbers(
 }
 
 /** Render formula HTML and register numbered equations for LyX Navigate. */
-function renderFormulaNavigate(block: BlockNode, ctx: RenderCtx): string {
+function renderFormulaNavigate(block: BlockNode, ctx: RenderCtx, deleted = false): string {
   const source = formulaSource(block);
   const plan = planFormulaLines(source);
-  const nos = takeFormulaNumbers(source, ctx);
+  const nos = takeFormulaNumbers(source, ctx, deleted);
   const noList = Array.isArray(nos) ? nos : [nos];
   let html = renderFormulaHtml(source, nos, ctx.mathMacros ?? undefined);
   const ids: string[] = [];
-  for (let i = 0; i < plan.lines.length; i++) {
-    const line = plan.lines[i]!;
-    const no = noList[i];
-    if (no === undefined || no === "") continue;
-    const lab = line.labels[0];
-    const id = lab ? xmlId(lab) : `eq-${String(no).replaceAll(".", "-")}`;
-    ids.push(id);
-    const snippet = line.tex.replace(/\\label\{[^}]*\}/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
-    ctx.navEquations.push({
-      kind: "equation",
-      number: String(no),
-      text: snippet,
-      id,
-      name: lab,
-    });
+  if (!deleted) {
+    for (let i = 0; i < plan.lines.length; i++) {
+      const line = plan.lines[i]!;
+      const no = noList[i];
+      if (no === undefined || no === "") continue;
+      const lab = line.labels[0];
+      const id = lab ? xmlId(lab) : `eq-${String(no).replaceAll(".", "-")}`;
+      ids.push(id);
+      const snippet = line.tex.replace(/\\label\{[^}]*\}/g, "").replace(/\s+/g, " ").trim().slice(0, 60);
+      ctx.navEquations.push({
+        kind: "equation",
+        number: String(no),
+        text: snippet,
+        id,
+        name: lab,
+      });
+    }
   }
   if (ids.length === 1) {
     html = html.replace('<span class="formula"', `<span class="formula" id="${escapeLiveHtml(ids[0]!)}"`);
@@ -2371,7 +2431,7 @@ function formulaSource(block: BlockNode): string {
 function renderCell(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
   const nested = flattenFlow(block.children, 0);
   if (nested.length === 0) return renderChildren(block.children, enterTraversalState(parentState), ctx);
-  return nested.map((item) => renderLayoutInline(item.node, ctx)).join("");
+  return nested.map((item) => renderLayoutInline(item.node, ctx, false, parentState)).join("");
 }
 
 function parseXmlAttrs(raw: string): Record<string, string> {
@@ -2722,12 +2782,16 @@ function resolveInfoIconDataUri(
   return undefined;
 }
 
-function renderCaptionInline(block: BlockNode, ctx: RenderCtx): string {
+function renderCaptionInline(block: BlockNode, ctx: RenderCtx, parentState?: TraversalState): string {
   const nested = flattenFlow(block.children, 0);
   if (nested.length > 0) {
-    return nested.map((item) => renderLayoutInline(item.node, ctx)).join("");
+    return nested.map((item) => renderLayoutInline(item.node, ctx, false, parentState)).join("");
   }
-  return renderChildren(block.children, createTraversalState(), ctx);
+  return renderChildren(
+    block.children,
+    parentState ? enterTraversalState(parentState) : createTraversalState(),
+    ctx,
+  );
 }
 
 function noteChapterHeading(ctx: RenderCtx, heading: LayoutRole, number: string): void {
@@ -2742,29 +2806,29 @@ function noteChapterHeading(ctx: RenderCtx, heading: LayoutRole, number: string)
   ctx.floatTypeCounts = new Map();
 }
 
-function takeFloatNumber(ctx: RenderCtx, variant: string): string | undefined {
+function takeFloatNumber(ctx: RenderCtx, variant: string, deleted = false): string | undefined {
   let n = 0;
   if (variant === "figure") {
-    ctx.figure += 1;
-    n = ctx.figure;
+    n = ctx.figure + 1;
+    if (!deleted) ctx.figure = n;
   } else if (variant === "table") {
-    ctx.table += 1;
-    n = ctx.table;
+    n = ctx.table + 1;
+    if (!deleted) ctx.table = n;
   } else if (variant === "algorithm") {
-    ctx.algorithm += 1;
-    n = ctx.algorithm;
+    n = ctx.algorithm + 1;
+    if (!deleted) ctx.algorithm = n;
   } else if (variant === "listing") {
-    ctx.listing += 1;
-    n = ctx.listing;
+    n = ctx.listing + 1;
+    if (!deleted) ctx.listing = n;
   } else {
     return undefined;
   }
   return ctx.chapterLabel ? `${ctx.chapterLabel}.${n}` : String(n);
 }
 
-function takeGenericFloatNumber(ctx: RenderCtx, variant: string): string {
+function takeGenericFloatNumber(ctx: RenderCtx, variant: string, deleted = false): string {
   const n = (ctx.floatTypeCounts.get(variant) ?? 0) + 1;
-  ctx.floatTypeCounts.set(variant, n);
+  if (!deleted) ctx.floatTypeCounts.set(variant, n);
   return ctx.chapterLabel ? `${ctx.chapterLabel}.${n}` : String(n);
 }
 
@@ -3036,11 +3100,21 @@ function includeIsListings(block: BlockNode): boolean {
   return command.includes("lstinput") || command.includes("inputminted");
 }
 
-function renderCaptionedFloat(block: BlockNode, variant: string, ctx: RenderCtx): string {
+function renderCaptionedFloat(
+  block: BlockNode,
+  variant: string,
+  ctx: RenderCtx,
+  parentState?: TraversalState,
+): string {
   const allCaptions = captionBlocks(block);
   const numbered = !captionsAreUnnumbered(allCaptions);
+  // LyX InsetCaption un-steps on the inherited `deleted` flag, so floats and
+  // captions nested in a deleted owner skip their number too (J-C).
+  const deleted = parentState
+    ? parentState.deletedDepth > 0 || parentState.outerDeletedDepth > 0
+    : false;
   const num = numbered
-    ? (takeFloatNumber(ctx, variant) ?? takeGenericFloatNumber(ctx, variant))
+    ? (takeFloatNumber(ctx, variant, deleted) ?? takeGenericFloatNumber(ctx, variant, deleted))
     : undefined;
   const prefix = numbered ? floatCaptionPrefix(variant, num) : "";
   const id = num ? ` id="float-${layoutSlug(variant)}-${num.replaceAll(".", "-")}"` : "";
@@ -3048,13 +3122,13 @@ function renderCaptionedFloat(block: BlockNode, variant: string, ctx: RenderCtx)
   for (const item of flattenFlow(block.children, 0)) {
     const captions = collectBlocks(item.node, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
     if (captions.length > 0) {
-      const cap = captions.map((c) => renderCaptionInline(c, ctx)).join("");
+      const cap = captions.map((c) => renderCaptionInline(c, ctx, parentState)).join("");
       // Number once per float; only the first caption block gets the prefix.
       const usePrefix = prefix && html.indexOf("<figcaption") === -1 ? prefix : "";
       html += `<figcaption${captionClassAttr(captions)}>${usePrefix}${cap}</figcaption>`;
       continue;
     }
-    html += `<div class="float-body">${renderLayoutInline(item.node, ctx)}</div>`;
+    html += `<div class="float-body">${renderLayoutInline(item.node, ctx, false, parentState)}</div>`;
   }
   html += "</figure>";
   return html;
@@ -3070,7 +3144,7 @@ function floatDisclosureLabel(variant: string): string {
   return floatTypeLabel("Float", variant);
 }
 
-function renderWrap(block: BlockNode, _parentState: TraversalState, ctx: RenderCtx): string {
+function renderWrap(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
   const width = widthToCss(findProperty(block, "width")) || "50%";
   const placement = (findProperty(block, "placement") ?? "").toLowerCase();
   const side = placement === "l" || placement === "i" ? "left" : "right";
@@ -3079,7 +3153,7 @@ function renderWrap(block: BlockNode, _parentState: TraversalState, ctx: RenderC
   ctx.inWrap = true;
   let inner = "";
   try {
-    inner = renderCaptionedFloat(block, variant, ctx);
+    inner = renderCaptionedFloat(block, variant, ctx, parentState);
   } finally {
     ctx.inWrap = prev;
   }
@@ -3131,26 +3205,29 @@ function listingCode(block: BlockNode): string {
   return lines.join("\n").replace(/^\n+/, "").replace(/\n+$/, "");
 }
 
-function renderListings(block: BlockNode, _parentState: TraversalState, ctx: RenderCtx): string {
+function renderListings(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
   const lang = listingLanguage(findProperty(block, "lstparams") ?? "");
   const inline = (findProperty(block, "inline") ?? "").toLowerCase() === "true";
   const captions = captionBlocks(block);
-  const captionHtml = captions.map((c) => renderCaptionInline(c, ctx)).join("");
+  const captionHtml = captions.map((c) => renderCaptionInline(c, ctx, parentState)).join("");
   const cls = lang ? `listings ${escapeLiveHtml(lang)}` : "listings";
   const code = `<code class="${cls}">${escapeLiveHtml(listingCode(block))}</code>`;
   if (inline) return code;
   let html = `<div class="float-listings">`;
   if (captionHtml) {
-    const prefix = listingTakesNumber(block) ? floatCaptionPrefix("listing", takeFloatNumber(ctx, "listing")) : "";
+    const deleted = parentState.deletedDepth > 0 || parentState.outerDeletedDepth > 0;
+    const prefix = listingTakesNumber(block)
+      ? floatCaptionPrefix("listing", takeFloatNumber(ctx, "listing", deleted))
+      : "";
     html += `<div class="listings-caption"${captionClassAttr(captions)}>${prefix}${captionHtml}</div>`;
   }
   html += `${code}</div>`;
   return html;
 }
 
-function renderFloat(block: BlockNode, kind: string, _parentState: TraversalState, ctx: RenderCtx): string {
+function renderFloat(block: BlockNode, kind: string, parentState: TraversalState, ctx: RenderCtx): string {
   const variant = kind.slice("Float ".length).trim() || "figure";
-  const figure = renderCaptionedFloat(block, variant, ctx);
+  const figure = renderCaptionedFloat(block, variant, ctx, parentState);
   return wrapDisclosure(
     `float float-${layoutSlug(variant)}`,
     floatDisclosureLabel(variant),

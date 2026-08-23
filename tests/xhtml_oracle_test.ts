@@ -25,9 +25,11 @@ const PARITY_FIXTURES = [
   "hostile.lyx",
   "front_matter_math.lyx",
   // DL133: tracked_ert_notes keeps the DL131 Live-only ERT chip, so it is not
-  // a LyXHTML-parity isolate; review_changes covers Clean parity for change
-  // wrappers (insert/delete, emphasis crossing, whole-deleted paragraph).
-  "review_changes.lyx",
+  // a LyXHTML-parity isolate; review_changes keeps Live-only Note chips and
+  // nested-owner cases, so its no-note variant review_changes_parity covers
+  // Clean parity for change wrappers (insert/delete, emphasis crossing,
+  // whole-deleted paragraph, author-distinct adjacent runs).
+  "review_changes_parity.lyx",
 ];
 
 /** DL130 construct slices — Help clones / feature isolates. */

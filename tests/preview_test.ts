@@ -5,7 +5,7 @@
  * Real-document renderer checks use my_template.lyx and Help/.
  * fixtures/Synthetic/ holds tiny hand-written isolates (hostile, oracle, CRLF).
  */
-import { assert, assertEquals, assertStringIncludes, assertThrows } from "@std/assert";
+import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows } from "@std/assert";
 import { fromFileUrl, join } from "@std/path";
 import { parse } from "../src/parser.ts";
 import { hashText } from "../src/cache.ts";
@@ -323,15 +323,23 @@ Deno.test("Live renderer - review_changes covers index, nesting, foot chip, whol
     "4:inserted:Alice:1724000200",
     "5:inserted:Alice:1724000300",
     "6:deleted:Bob:1724000400",
-    "7:deleted:Alice:1724000500",
+    "7:deleted:Shifu:1787415906",
+    "8:inserted:Shifu:1787415958",
+    "9:inserted:Shifu:1787415949",
+    "10:inserted:Shifu:1787415961",
+    "11:deleted:Alice:1724000500",
   ]);
+  // Document order = wrapper open order (ordinal), even when nested wrappers
+  // close after their parent (DL133 bug-batch fix).
+  assertEquals(changes.map((c) => c.ordinal), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   // Adjacent same/different-author runs reopen wrappers in document order.
   assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-2">one</ins>');
   assertStringIncludes(html, '<ins class="change-inserted change-author-1" id="change-3">two</ins>');
   assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-4">three</ins>');
-  // Different authors get different color slots (Alice=0, Bob=1).
+  // Different authors get different color slots (Alice=0, Bob=1, Shifu=2).
   assert(html.includes("change-author-0"), "Alice's slot must be present");
   assert(html.includes("change-author-1"), "Bob's slot must be present");
+  assert(html.includes("change-author-2"), "Shifu's slot must be present");
   // Emphasis crossing a change boundary nests validly (wrapper outermost).
   assertStringIncludes(
     html,
@@ -340,13 +348,61 @@ Deno.test("Live renderer - review_changes covers index, nesting, foot chip, whol
   // A deleted footnote is wrapped at the chip level; its body stays plain.
   assertStringIncludes(html, '<del class="change-deleted change-author-1" id="change-6"><details class="disclose foot"');
   assertStringIncludes(html, "Deleted footnote body.");
+  // Whole-inset inserted Note+Foot owner opens before its inner runs (ordinal
+  // 8/9/10), so the outer wrapper stays first in document order.
+  assertStringIncludes(
+    html,
+    '<ins class="change-inserted change-author-2" id="change-8"><details class="disclose note note-note">',
+  );
+  assertStringIncludes(html, '<ins class="change-inserted change-author-2" id="change-9">new note</ins>');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-2" id="change-10">new foot</ins>');
+  // LyX numbering: the deleted footnote shows its would-be number 1 without
+  // consuming it, so the inserted footnote is also 1.
+  assertEquals((html.match(/class="foot_label">1<\/summary>/g) ?? []).length, 2);
   assertEquals(changes[5].snippet, "[Foot]");
+  assertEquals(changes[6].snippet, "[Note Note]");
+  assertEquals(changes[7].snippet, "[Note Note][Foot]");
   // Whole-deleted paragraph keeps the del wrapper and marks its container.
   assertStringIncludes(
     html,
-    '<div class="standard change-deleted"><del class="change-deleted change-author-0" id="change-7">This whole paragraph was deleted.</del></div>',
+    '<div class="standard change-deleted"><del class="change-deleted change-author-0" id="change-11">This whole paragraph was deleted.</del></div>',
   );
-  assertEquals(changes[6].snippet, "This whole paragraph was deleted.");
+  assertEquals(changes[10].snippet, "This whole paragraph was deleted.");
+});
+
+Deno.test("Live renderer - review_changes_counters skips deleted construct numbers (LyX J-C)", async () => {
+  const { html, navigate } = await renderFile("review_changes_counters.lyx");
+  // Footnotes: a deleted footnote shows the would-be number and does not
+  // consume it; the next footnote is also 1.
+  assertEquals((html.match(/class="foot_label">1<\/summary>/g) ?? []).length, 2);
+  // A footnote nested inside a deleted footnote also skips (LyX propagates
+  // the deleted flag), so the outer deleted foot, its nested foot, and the
+  // following foot all show the same would-be number 2.
+  assertEquals((html.match(/class="foot_label">2<\/summary>/g) ?? []).length, 3);
+  // Floats: deleted figure/table captions keep the would-be number without
+  // consuming it; the next figure/table is also numbered 1.
+  assertStringIncludes(html, "Figure 1: Deleted figure caption");
+  assertStringIncludes(html, "Figure 1: Second figure caption");
+  assertStringIncludes(html, "Table 1: Deleted table caption");
+  assertStringIncludes(html, "Table 1: Second table caption");
+  // The deleted float with an equation shows the would-be Figure 2.
+  assertStringIncludes(html, "Figure 2: Deleted float with equation");
+  // Equations: a deleted row shows # and does not consume; the next is 1.
+  assertStringIncludes(html, '<span class="eqno">(#)</span>');
+  assertStringIncludes(html, '<span class="eqno">(1)</span>');
+  // LyX hull quirk (J-C): an equation inside a whole-deleted float still
+  // consumes a number, so it is 2 and the following equation is 3.
+  assertStringIncludes(html, '<span class="eqno">(2)</span>');
+  assertStringIncludes(html, '<span class="eqno">(3)</span>');
+  // Nav mirrors the render: deleted floats/equations are excluded, but the
+  // nested equation inside the deleted float stays (its own position is not
+  // deleted), and numbers match the page.
+  assertEquals(
+    navigate.equations.map((e) => `${e.number}:${e.text}`),
+    ["1:y=2", "2:a=b", "3:c=d"],
+  );
+  assertEquals(navigate.figures.map((e) => e.number), ["1"]);
+  assertEquals(navigate.tables.map((e) => e.number), ["1"]);
 });
 
 Deno.test("Live renderer - click disclosure and private Note/Comment (DL131)", async () => {
@@ -437,6 +493,65 @@ Deno.test("Live renderer - disclosure_collapsibles covers foldable inset set (DL
     !html.slice(Math.max(0, codeIdx - 80), codeIdx).includes("<details"),
     "Flex Code must not sit inside a preceding details opener",
   );
+});
+
+Deno.test("Live renderer - disclosure_collapsibles tracked whole-inset variants (DL133)", async () => {
+  const { html, changes } = await renderFile("disclosure_collapsibles.lyx");
+  // 16 disclosure kinds × inserted/deleted + 4 nested combos = 36 regions,
+  // all from author 1 ("Tester").
+  assertEquals(changes.length, 36);
+  assert(changes.every((c) => c.author === "Tester"));
+  // Every disclosure-chip kind appears as a whole-inset insert and delete.
+  const kinds = [
+    "foot",
+    "note note-note",
+    "note note-comment",
+    "marginal",
+    "box boxed",
+    "float float-figure",
+    "float float-table",
+    "wrap",
+    "branch",
+    "ert",
+    "phantom",
+    "index-marker",
+    "nomencl",
+    "argument short-title",
+  ];
+  for (const kind of kinds) {
+    // Index/Nomencl chips carry a leading anchor between the wrapper and the
+    // details element, so the regex allows an optional <a id>.
+    const anchor = `(?:<a id="[^"]*"></a>)?`;
+    assertMatch(
+      html,
+      new RegExp(`<ins class="change-inserted change-author-0" id="change-\\d+">${anchor}<details class="disclose ${kind}\\b`),
+      `whole-inset inserted ${kind} must be wrapped`,
+    );
+    assertMatch(
+      html,
+      new RegExp(`<del class="change-deleted change-author-0" id="change-\\d+">${anchor}<details class="disclose ${kind}\\b`),
+      `whole-inset deleted ${kind} must be wrapped`,
+    );
+  }
+  // Phantom/HPhantom/VPhantom share the chip class; all three get both cases.
+  assertEquals((html.match(/<ins class="change-inserted change-author-0" id="change-\d+"><details class="disclose phantom\b/g) ?? []).length, 3);
+  assertEquals((html.match(/<del class="change-deleted change-author-0" id="change-\d+"><details class="disclose phantom\b/g) ?? []).length, 3);
+  // Nested combos keep the outer whole-inset wrapper and a plain inner chip.
+  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-33"><details class="disclose box boxed"');
+  assertStringIncludes(html, "Nested foot inside inserted box.");
+  assertStringIncludes(html, '<del class="change-deleted change-author-0" id="change-34"><details class="disclose float float-figure"');
+  assertStringIncludes(html, "Nested foot inside deleted float.");
+  assertStringIncludes(html, '<del class="change-deleted change-author-0" id="change-35"><details class="disclose note note-note"');
+  assertStringIncludes(html, "Nested box inside deleted note.");
+  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-36"><details class="disclose branch"');
+  assertStringIncludes(html, "Nested comment inside inserted branch.");
+  // Numbering: the deleted footnote shows its would-be number without
+  // consuming it (1 existing, 2 inserted foot, 3 deleted would-be + nested
+  // foot in the inserted box, 4 nested would-be in the deleted float).
+  assertEquals((html.match(/class="foot_label">1<\/summary>/g) ?? []).length, 1);
+  assertEquals((html.match(/class="foot_label">2<\/summary>/g) ?? []).length, 1);
+  assertEquals((html.match(/class="foot_label">3<\/summary>/g) ?? []).length, 2);
+  assertEquals((html.match(/class="foot_label">4<\/summary>/g) ?? []).length, 1);
 });
 
 Deno.test("Live renderer - title, author, abstract, and math", async () => {
