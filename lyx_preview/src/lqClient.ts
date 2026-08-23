@@ -6,12 +6,15 @@ import * as vscode from "vscode";
 export { runLivePreview } from "./lqRunner";
 
 /**
- * Development-only fallback: binaries produced by `deno task build` in the lq
- * repo. Consulted only when neither lqPath nor PATH finds an lq binary.
+ * Development preference: binaries produced by `deno task build` in the lq
+ * repo. Consulted first so a freshly built lq always wins over configured or
+ * PATH binaries.
  */
 const DEV_LQ_BIN_DIR = join(homedir(), "Github", "lq_dev", "lq", "bin");
 
 export function discoverLqBinary(documentUri: vscode.Uri): string {
+  const devBinary = findLqInDir(DEV_LQ_BIN_DIR);
+  if (devBinary) return devBinary;
   const configured = vscode.workspace
     .getConfiguration("lyx-preview", documentUri)
     .get<string>("lqPath")
@@ -19,8 +22,6 @@ export function discoverLqBinary(documentUri: vscode.Uri): string {
   if (configured) return configured;
   const onPath = findOnPath("lq");
   if (onPath) return onPath;
-  const devBinary = findLqInDir(DEV_LQ_BIN_DIR);
-  if (devBinary) return devBinary;
   return "lq";
 }
 

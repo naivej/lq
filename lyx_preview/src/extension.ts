@@ -349,6 +349,20 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("lyx-preview.viewClean", () => {
       LivePreviewPanel.setMode("clean");
     }),
+    vscode.commands.registerCommand("lyx-preview.changeView", async () => {
+      // J-E fallback: the submenu icon does not render in this VS Code
+      // build's editor/title, so the Live panel title bar carries a plain
+      // command button (icon = lyx-l-yellow.svg) that opens this quick pick.
+      const picked = await vscode.window.showQuickPick(
+        [
+          { label: "Original", description: "Show the document before the changes", mode: "original" },
+          { label: "Tracked", description: "Show insertions and deletions marked (default)", mode: "tracked" },
+          { label: "Clean", description: "Show the document after accepting all changes", mode: "clean" },
+        ] as (vscode.QuickPickItem & { mode: ChangeViewMode })[],
+        { placeHolder: "Live Preview view mode" },
+      );
+      if (picked) LivePreviewPanel.setMode(picked.mode);
+    }),
     vscode.commands.registerCommand(
       "lyx-preview.revealOutline",
       async (id: string, line?: number) => {

@@ -52,9 +52,9 @@ Full tolerance list: development log `130_live_native_xhtml_parity.md` §8; disc
 `lq preview` renders **every** tracked insertion and deletion in one change-aware
 HTML (`<ins class="change-inserted" id="change-N">` /
 `<del class="change-deleted" id="change-N">`). The extension shows that one render
-through three views — pick from the **View** dropdown in the top-right corner of
-the Live panel title bar (it replaces the Open LyX Preview button while Live is
-focused):
+through three views — click the **View** button in the top-right corner of the
+Live panel title bar (it opens a quick pick; the button replaces the Open LyX
+Preview button while Live is focused):
 
 | View | Shows |
 | --- | --- |
@@ -63,6 +63,21 @@ focused):
 | **Clean** | The document after accepting (deletions hidden, insertions plain) |
 
 Switching views never re-runs `lq`; the webview only flips a `data-mode` attribute.
+
+Tracked marks follow LyX semantics:
+
+- **Whole-inset changes** — an inserted inset (footnote, note, box, float, …)
+  has its chip label and body underlined; a deleted inset's chip label is
+  struck through and, once expanded, the whole box gets a diagonal deleted
+  stamp (no separate body line-through).
+- **Numbering** — a tracked-deleted footnote, float, or table caption keeps
+  its would-be number on the chip but does not consume it, so the next
+  surviving construct reuses that number; a deleted equation shows `#`.
+  Footnotes/captions nested inside a deleted owner skip too, while equations
+  inside a deleted owner still consume (LyX's per-inset behavior).
+- **Author colors** — each author gets a fixed color slot in order of first
+  appearance (`change-author-0`…`7`); chip labels inherit the author color in
+  Tracked view.
 
 Two supporting surfaces share the same change index:
 
@@ -99,6 +114,6 @@ If a toggle is missing, that is a VS Code/webview limitation for that version �
 
 **How the extension finds `lq`** (first match wins):
 
-1. `lyx-preview.lqPath`
-2. `lq` on `PATH`
-3. `~\Github\lq_dev\lq\bin` — development-only fallback: the most recently modified `lq*` file there (e.g. `lq_<version>_win64.exe`, case-insensitive, `.map` excluded)
+1. `~\Github\lq_dev\lq\bin` — development preference: the most recently modified `lq*` file there (e.g. `lq_<version>_win64.exe`, case-insensitive, `.map` excluded)
+2. `lyx-preview.lqPath`
+3. `lq` on `PATH`

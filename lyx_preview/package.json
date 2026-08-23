@@ -62,13 +62,12 @@
         "command": "lyx-preview.viewClean",
         "title": "Clean",
         "category": "LyX Preview"
-      }
-    ],
-    "submenus": [
+      },
       {
-        "id": "lyxPreview.changeView",
-        "label": "View",
-        "icon": "media/lyx-l-yellow.svg"
+        "command": "lyx-preview.changeView",
+        "title": "Change View",
+        "icon": "media/lyx-l-yellow.svg",
+        "category": "LyX Preview"
       }
     ],
     "views": {
@@ -89,23 +88,9 @@
           "group": "navigation"
         },
         {
-          "submenu": "lyxPreview.changeView",
+          "command": "lyx-preview.changeView",
           "when": "activeWebviewPanelId == 'lyxPreview.live'",
           "group": "navigation"
-        }
-      ],
-      "lyxPreview.changeView": [
-        {
-          "command": "lyx-preview.viewOriginal",
-          "group": "1_views@1"
-        },
-        {
-          "command": "lyx-preview.viewTracked",
-          "group": "1_views@2"
-        },
-        {
-          "command": "lyx-preview.viewClean",
-          "group": "1_views@3"
         }
       ],
       "commandPalette": [
@@ -128,6 +113,10 @@
         {
           "command": "lyx-preview.viewClean",
           "when": "false"
+        },
+        {
+          "command": "lyx-preview.changeView",
+          "when": "false"
         }
       ]
     },
@@ -137,7 +126,7 @@
         "lyx-preview.lqPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the compiled lq binary. When empty, the extension falls back to lq on PATH, then the lq repo dev build directory."
+          "description": "Path to the compiled lq binary. The extension prefers the newest binary in the lq repo dev build directory, then this path, then lq on PATH."
         },
         "lyx-preview.timeoutMs": {
           "type": "number",

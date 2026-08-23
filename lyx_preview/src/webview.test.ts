@@ -78,9 +78,15 @@ describe("renderWebviewHtml change views", () => {
     assert.match(html, /ins\.change-author-1, del\.change-author-1/);
   });
 
-  it("strikes deleted disclosures whose chip stops the parent line-through", () => {
+  it("marks whole-inset disclosures: inserted underline, deleted label strike + open diagonal", () => {
     const html = render("tracked");
-    assert.match(html, /del\.change-deleted details\.disclose > \*/);
-    assert.match(html, /body\[data-mode="original"\] del\.change-deleted details\.disclose > \*/);
+    assert.match(html, /ins\.change-inserted details\.disclose > \*/);
+    assert.match(html, /del\.change-deleted details\.disclose > summary/);
+    assert.match(html, /del\.change-deleted details\.disclose\[open\] > span::after/);
+    assert.match(html, /linear-gradient\(\s*to top left/);
+    assert.match(html, /body\[data-mode="tracked"\] del\.change-deleted details\.disclose > summary/);
+    assert.match(html, /body\[data-mode="original"\] del\.change-deleted details\.disclose > summary/);
+    assert.match(html, /body\[data-mode="original"\] del\.change-deleted details\.disclose\[open\] > span::after/);
+    assert.match(html, /body\[data-mode="clean"\] ins\.change-inserted details\.disclose > \*/);
   });
 });

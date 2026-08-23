@@ -641,11 +641,36 @@ ins.change-inserted {
 del.change-deleted {
   text-decoration: line-through;
 }
-/* <details> chips are atomic inline boxes and disclosure bodies are block
- * boxes, so a parent <del> line-through cannot reach inside them; strike
- * deleted disclosures (e.g. footnote 1) explicitly. */
-del.change-deleted details.disclose > * {
+/* <details> chips are atomic inline boxes, so a parent <ins>/<del>
+ * text-decoration cannot reach inside them; apply the marks to the chip's
+ * children explicitly. J-A: a deleted chip label keeps its strike, but the
+ * expanded box uses a diagonal stamp instead of a body line-through. */
+ins.change-inserted details.disclose > * {
+  text-decoration: underline;
+}
+del.change-deleted details.disclose > summary {
   text-decoration: line-through;
+}
+/* J-A: the deleted expanded box gets a diagonal stamp inside the body only,
+ * running bottom-left to top-right (the 50% band of a "to top left"
+ * gradient is perpendicular to the gradient axis). The body span is the
+ * only direct <span> child of a disclosure; footnotes name it foot_inner /
+ * foot_intitle_inner instead of disclose-body, so match the span role. */
+del.change-deleted details.disclose[open] > span {
+  position: relative;
+}
+del.change-deleted details.disclose[open] > span::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(
+    to top left,
+    transparent calc(50% - 1px),
+    currentColor calc(50% - 1px),
+    currentColor calc(50% + 1px),
+    transparent calc(50% + 1px)
+  );
 }
 /* Author-distinct palette: color = who, underline/strike = what happened. */
 ins.change-author-0, del.change-author-0 { color: #1a7f37; }
@@ -656,6 +681,11 @@ ins.change-author-4, del.change-author-4 { color: #087e8b; }
 ins.change-author-5, del.change-author-5 { color: #a40e4c; }
 ins.change-author-6, del.change-author-6 { color: #8b6914; }
 ins.change-author-7, del.change-author-7 { color: #cf222e; }
+/* Tracked: typed chip label colors must not override who made the change. */
+body[data-mode="tracked"] ins.change-inserted details.disclose > summary,
+body[data-mode="tracked"] del.change-deleted details.disclose > summary {
+  color: inherit;
+}
 /* Original: reject all — show deletions unstruck, hide insertions. */
 body[data-mode="original"] ins.change-inserted {
   display: none;
@@ -664,14 +694,20 @@ body[data-mode="original"] del.change-deleted {
   text-decoration: none;
   color: inherit;
 }
-body[data-mode="original"] del.change-deleted details.disclose > * {
+body[data-mode="original"] del.change-deleted details.disclose > summary {
   text-decoration: none;
+}
+body[data-mode="original"] del.change-deleted details.disclose[open] > span::after {
+  display: none;
 }
 /* Clean: accept all — show insertions plain, hide deletions and whole-deleted
  * containers (J3: no empty-shell gap). */
 body[data-mode="clean"] ins.change-inserted {
   text-decoration: none;
   color: inherit;
+}
+body[data-mode="clean"] ins.change-inserted details.disclose > * {
+  text-decoration: none;
 }
 body[data-mode="clean"] del.change-deleted {
   display: none;
