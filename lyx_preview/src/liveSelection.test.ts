@@ -114,6 +114,12 @@ describe("invoke / JSON / path", () => {
     assert.equal(invokeLiveSelection(undefined), NO_LIVE_SELECTION);
   });
 
+  it("invoke returns the formatted record", () => {
+    const record = resolveSelection(tokens, "tok-1", "the phrase", false, baseCtx)!;
+    assert.equal(invokeLiveSelection(record), formatLiveSelectionJson(record));
+    assert.match(invokeLiveSelection(record), /"selector": "layout\[Standard\]:nth-match\(12\)"/);
+  });
+
   it("formats the record and round-trips the file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lyx-sel-"));
     try {

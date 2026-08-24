@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -72,4 +73,78 @@ describe("MCP get_live_selection", () => {
     const info = init?.result as { serverInfo: { name: string } };
     assert.equal(info.serverInfo.name, "lyx-preview");
   });
+
+  it("stdio server returns the same JSON as invoke", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lyx-mcp-stdio-"));
+    const path = join(dir, "live-selection.json");
+    try {
+      await writeLiveSelectionFile(path, record);
+      const child = spawn(process.execPath, [join(__dirname, "mcpServer.js")], {
+        env: { ...process.env, LQ_LIVE_SELECTION_PATH: path },
+        stdio: ["pipe", "pipe", "pipe"],
+      });
+      try {
+        sendFramed(child.stdin, { jsonrpc: "2.0", id: 1, method: "initialize", params: {} });
+        sendFramed(child.stdin, {
+          jsonrpc: "2.0",
+          id: 2,
+          method: "tools/call",
+          params: { name: MCP_TOOL_NAME },
+        });
+        const messages = await readFramed(child.stdout, 2, 3000);
+        const call = messages.find((m) => m.id === 2);
+        const text = (call?.result as { content: Array<{ text: string }> }).content[0]?.text ?? "";
+        assert.match(text, /"selector": "layout\[Standard\]:nth-match\(12\)"/);
+        assert.match(text, /"selectedText": "phrase"/);
+      } finally {
+        child.kill();
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
 });
+
+function sendFramed(stdin: NodeJS.WritableStream, obj: unknown): void {
+  const body = JSON.stringify(obj);
+  stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`);
+}
+
+function readFramed(
+  stdout: NodeJS.ReadableStream,
+  count: number,
+  timeoutMs: number,
+): Promise<Array<{ id?: unknown; result?: unknown }>> {
+  return new Promise((resolve, reject) => {
+    let buf = Buffer.alloc(0);
+    const out: Array<{ id?: unknown; result?: unknown }> = [];
+    const timer = setTimeout(() => reject(new Error("MCP stdio timed out")), timeoutMs);
+    const onData = (chunk: Buffer): void => {
+      buf = Buffer.concat([buf, chunk]);
+      while (true) {
+        const headerEnd = buf.indexOf("\r\n\r\n");
+        if (headerEnd < 0) return;
+        const match = /Content-Length:\s*(\d+)/i.exec(buf.subarray(0, headerEnd).toString("utf8"));
+        if (!match) {
+          buf = buf.subarray(headerEnd + 4);
+          continue;
+        }
+        const length = Number.parseInt(match[1] ?? "0", 10);
+        const start = headerEnd + 4;
+        if (buf.length < start + length) return;
+        out.push(JSON.parse(buf.subarray(start, start + length).toString("utf8")) as {
+          id?: unknown;
+          result?: unknown;
+        });
+        buf = buf.subarray(start + length);
+        if (out.length >= count) {
+          clearTimeout(timer);
+          stdout.off("data", onData);
+          resolve(out);
+          return;
+        }
+      }
+    };
+    stdout.on("data", onData);
+  });
+}

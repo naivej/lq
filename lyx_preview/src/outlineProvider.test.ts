@@ -219,8 +219,16 @@ describe("outline cache bounds", () => {
     rememberOutline("C:/Docs/A.LYX", [
       { level: 1, number: "1", text: "A", id: "sec-a" },
     ]);
-    forgetOutline("c:/docs/a.lyx");
+    forgetOutline("C:/Docs/A.LYX");
     assert.equal(getCachedOutline("C:/Docs/A.LYX"), undefined);
+    // Case folding is Windows-only (sameFsPath); Linux paths are distinct.
+    if (process.platform === "win32") {
+      rememberOutline("C:/Docs/A.LYX", [
+        { level: 1, number: "1", text: "A", id: "sec-a" },
+      ]);
+      forgetOutline("c:/docs/a.lyx");
+      assert.equal(getCachedOutline("C:/Docs/A.LYX"), undefined);
+    }
   });
 
   it("carries changes alongside outline/navigate", () => {
