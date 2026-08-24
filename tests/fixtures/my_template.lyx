@@ -168,7 +168,7 @@ name "sec:Section_label"
 \end_layout
 
 \begin_layout Standard
-Some writing in 
+Some writing in section 
 \begin_inset CommandInset ref
 LatexCommand ref
 reference "sec:Section_label"

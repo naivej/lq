@@ -14,8 +14,6 @@
   ],
   "main": "./out/extension.js",
   "activationEvents": [
-    "onLanguage:lyx",
-    "onCommand:lyx-preview.open",
     "workspaceContains:**/*.lyx"
   ],
   "contributes": {
@@ -76,7 +74,8 @@
           "id": "lyxPreview.outline",
           "name": "LyX Navigate",
           "when": "lyxPreview.hasOutline || resourceExtname == .lyx",
-          "contextualTitle": "LyX Navigate"
+          "contextualTitle": "LyX Navigate",
+          "icon": "media/lyx-l.svg"
         }
       ]
     },
