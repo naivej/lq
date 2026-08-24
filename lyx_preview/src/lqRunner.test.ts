@@ -22,7 +22,7 @@ const VALID_PAYLOAD = JSON.stringify({
   },
   capabilities: {
     review: false,
-    mapping: false,
+    mapping: true,
     outline: true,
     editing: false,
     sourceReveal: false,
@@ -31,6 +31,7 @@ const VALID_PAYLOAD = JSON.stringify({
   outline: [{ level: 1, number: "1", text: "Intro", id: "sec-1" }],
   navigate: emptyNavigate(),
   changes: [],
+  tokens: [],
 });
 
 function isAdapterError(code: string): (err: unknown) => boolean {

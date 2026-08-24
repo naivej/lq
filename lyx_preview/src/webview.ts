@@ -112,8 +112,20 @@ export function renderWebviewHtml(options: {
       return;
     }
     var node = sel.anchorNode.nodeType === 1 ? sel.anchorNode : sel.anchorNode.parentElement;
-    var el = node && node.closest ? node.closest("ins.change-inserted, del.change-deleted") : null;
-    postChangeFocus(el && el.id ? el.id : null);
+    var changeEl = node && node.closest ? node.closest("ins.change-inserted, del.change-deleted") : null;
+    postChangeFocus(changeEl && changeEl.id ? changeEl.id : null);
+    var owner = node && node.closest ? node.closest("[data-ref]") : null;
+    if (!owner) return;
+    var id = owner.getAttribute("data-ref") || owner.id;
+    if (!id) return;
+    var text = sel.isCollapsed ? "" : String(sel);
+    var multi = false;
+    if (!sel.isCollapsed && sel.focusNode) {
+      var focus = sel.focusNode.nodeType === 1 ? sel.focusNode : sel.focusNode.parentElement;
+      var other = focus && focus.closest ? focus.closest("[data-ref]") : null;
+      multi = !!(other && other !== owner);
+    }
+    vscode.postMessage({ type: "select", id: id, selectedText: text, multi: multi });
   });
   window.addEventListener("blur", function () {
     postChangeFocus(null);

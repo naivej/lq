@@ -23,7 +23,7 @@ function render(mode?: "original" | "tracked" | "clean"): string {
       },
       capabilities: {
         review: false,
-        mapping: false,
+        mapping: true,
         outline: true,
         editing: false,
         sourceReveal: false,
@@ -39,6 +39,7 @@ function render(mode?: "original" | "tracked" | "clean"): string {
         algorithms: [],
       },
       changes: [],
+      tokens: [],
     },
     imgCsp: "'none'",
     scriptCsp: "'nonce-test123'",
@@ -67,6 +68,10 @@ describe("renderWebviewHtml change views", () => {
     assert.match(html, /msg\.mode === "original" \|\| msg\.mode === "tracked" \|\| msg\.mode === "clean"/);
     assert.match(html, /vscode\.postMessage\(\{ type: "changeFocus"/);
     assert.match(html, /closest\("ins\.change-inserted, del\.change-deleted"\)/);
+    assert.match(html, /closest\("\[data-ref\]"\)/);
+    assert.match(html, /type: "select"/);
+    assert.match(html, /window\.addEventListener\("blur"/);
+    assert.doesNotMatch(html, /blur[\s\S]*type: "select"[\s\S]*null/);
   });
 
   it("ships the three-view CSS", () => {

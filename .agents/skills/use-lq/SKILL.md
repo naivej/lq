@@ -1,6 +1,6 @@
 ---
 name: use-lq
-description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use headless LyX to create, import, or export the documents, and open the LyX GUI to establish a LyXServer connection.
+description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). When Live Preview has a pointer (#lyxSelection, MCP get_live_selection, or .lq/live-selection.json), extract its selector and read that node first. Use headless LyX to create, import, or export the documents, and open the LyX GUI to establish a LyXServer connection.
 allowed-tools: Bash(lq *)
 ---
 
@@ -21,6 +21,8 @@ Run the same sequence for every task:
 1. **Set the task's author name first.** `lq init --author-name "<task>"` before the first mutation, and switch when the task changes. Replay undo is author-scoped, so each task's edits stay separately revertible. Name the task, not the human.
 2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, optional `layoutsDir` overlay, `refresh` — plus `layoutSearch` (order) and `layoutRoots` (paths) when writing config. Change configuration only with authorization. See the state-scope note below.
 3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → count (`--count`) → text-only on the narrowed result. Done when you can see the exact node(s) you will touch.
+
+   **Live pointer.** If the human selected in Live Preview, get that record first: call `get_live_selection` when it is in the catalog (VS Code LM `#lyxSelection` **or** MCP `get_live_selection`); otherwise Read `.lq/live-selection.json` if the file exists. Extract `selector` and run `lq read <file> "<selector>"` — do **not** pass the JSON or bundle as the CLI selector. Use `selectedText` to pin `--find`; use `coords` only to disambiguate table cells. **Stale gate:** `stale: true` → inspect only until the human saves and a new pointer lands; `stale: false` → the pointer matches the saved file, then `--count` before mutating that file. The pointer is a read reference, not a mutation selector.
 4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not.
 5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.
 6. **Mutate minimally.** Every match is edited — `insert` duplicates its payload per match, broad `set`/`delete` can rewrite the document. Prefer a unique anchor and the smallest scale that expresses the workflow.

@@ -25,7 +25,7 @@ function validRender(over: Record<string, unknown> = {}): string {
     },
     capabilities: {
       review: false,
-      mapping: false,
+      mapping: true,
       outline: true,
       editing: false,
       sourceReveal: false,
@@ -36,6 +36,7 @@ function validRender(over: Record<string, unknown> = {}): string {
     ],
     navigate: emptyNavigate(),
     changes: [],
+    tokens: [],
     ...over,
   });
 }
@@ -60,7 +61,32 @@ describe("parseLiveStdout", () => {
 
   it("rejects deferred review/edit fields", () => {
     assert.throws(
-      () => parseLiveStdout(validRender({ tokens: [] })),
+      () => parseLiveStdout(validRender({ editTargets: [] })),
+      (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",
+    );
+    assert.throws(
+      () => parseLiveStdout(validRender({ mapping: {} })),
+      (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",
+    );
+  });
+
+  it("accepts tokens and rejects unknown shapes", () => {
+    const render = parseLiveStdout(validRender({
+      tokens: [{ id: "tok-1", bundle: { selector: "layout[Standard]:nth-match(1)" } }],
+    }));
+    assert.equal(render.tokens.length, 1);
+    assert.equal(render.capabilities.mapping, true);
+    assert.throws(
+      () => parseLiveStdout(validRender({ tokens: [{ id: "tok-1", bundle: { selector: "" } }] })),
+      (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",
+    );
+    assert.throws(
+      () => parseLiveStdout(validRender({
+        tokens: [
+          { id: "tok-1", bundle: { selector: "layout[Standard]:nth-match(1)" } },
+          { id: "tok-1", bundle: { selector: "layout[Standard]:nth-match(2)" } },
+        ],
+      })),
       (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",
     );
   });

@@ -667,14 +667,17 @@ export const HELP_PAGES: HelpPage[] = [
           "                 bytes (hashAlgorithm 'sha256', hashInput 'raw-file-bytes'),\n" +
           "                 diskHash, lineEnding (lf|crlf|mixed), lineCount, and\n" +
           "                 fresh=true (this command always reads the saved file).\n" +
-          "  capabilities   review, mapping, editing, and sourceReveal are false;\n" +
-          "                 outline is true (live outline headings). All five fields\n" +
-          "                 are present as booleans.\n" +
+          "  capabilities   mapping and outline are true; review, editing, and\n" +
+          "                 sourceReveal are false. All five fields are present as\n" +
+          "                 booleans.\n" +
           "  diagnostics    Structured notes such as unknown insets.\n" +
           "  changes        Ordered tracked-change regions in document order: each\n" +
           "                 entry carries ordinal, type (inserted|deleted), resolved\n" +
           "                 author, raw timestamp ts, anchorId (change-N on the\n" +
           "                 <ins>/<del> wrapper), and a collapsed text snippet.\n" +
+          "  tokens         Read-first mapping tokens: each has id (equals the HTML\n" +
+          "                 id/data-ref) and bundle {selector, optional coords}. The\n" +
+          "                 selector is a read reference, not a mutation selector.\n" +
           "  warnings       Non-fatal messages from the CLI envelope.\n\n" +
           "A parse or file error is the usual {code, message} JSON object and a\n" +
           "non-zero exit. A missing or unresolvable textclass layout is reported as\n" +
@@ -691,7 +694,8 @@ export const HELP_PAGES: HelpPage[] = [
           "  XHTML omits them).\n" +
           "- Formulas use a TeX→MathML subset with escaped fallback; they are not executed.\n" +
           "- Unknown insets become an escaped, marked fallback plus a diagnostic.\n" +
-          "- No source tokens, selection references, or edit commands are emitted.",
+          "- Mapping tokens are emitted on supported owners (HTML id/data-ref).\n" +
+          "  There is no source reveal and no send-to-chat command.",
       ),
     ],
     furtherReading: [

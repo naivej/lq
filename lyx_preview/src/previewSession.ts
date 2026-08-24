@@ -2,14 +2,32 @@
 
 export const LIVE_CONTRACT = "lyx-preview/live-1";
 
-/** Live capability flags. `outline: true` since DL131 Phase B (M2.7). */
+/** Live capability flags. `outline: true` since DL131 Phase B (M2.7); `mapping: true` since DL134. */
 export const LIVE_CAPABILITIES = {
   review: false,
-  mapping: false,
+  mapping: true,
   outline: true,
   editing: false,
   sourceReveal: false,
 } as const;
+
+/** Table-cell coordinates on a mapped owner (1-based, DL134). */
+export interface LiveTokenCoords {
+  row: number;
+  column: number;
+}
+
+/** Read-first lq bundle: selector path plus optional cell coords. Not a mutation selector. */
+export interface LiveTokenBundle {
+  selector: string;
+  coords?: LiveTokenCoords;
+}
+
+/** One mapped Live owner (HTML id/`data-ref` equals token id). */
+export interface LiveToken {
+  id: string;
+  bundle: LiveTokenBundle;
+}
 
 export interface LiveSourceIdentity {
   path: string;
@@ -72,6 +90,8 @@ export interface LiveRender {
   outline: LiveOutlineEntry[];
   navigate: LiveNavigate;
   changes: LiveChangeEntry[];
+  /** Read-first mapping tokens (DL134). HTML `id`/`data-ref` equals `token.id`. */
+  tokens: LiveToken[];
   warnings?: string[];
 }
 
@@ -106,7 +126,8 @@ export class AdapterError extends Error {
   }
 }
 
-const DEFERRED = ["tokens", "mapping", "editTargets", "reviewRegions", "mode"];
+/** Field names later milestones may add. `tokens` is on the wire (DL134); `mapping` remains an unused field name. */
+const DEFERRED = ["mapping", "editTargets", "reviewRegions", "mode"];
 
 export function parseLiveStdout(stdout: string): LiveRender {
   let parsed: unknown;
@@ -187,6 +208,42 @@ export function parseLiveStdout(stdout: string): LiveRender {
       typeof e.snippet !== "string"
     ) {
       throw new AdapterError("CONTRACT", "change entry needs ordinal/type/author/ts/anchorId/snippet.");
+    }
+  }
+  if (!Array.isArray(obj.tokens)) {
+    throw new AdapterError("CONTRACT", "lq preview omitted tokens.");
+  }
+  const seenTokenIds = new Set<string>();
+  for (const entry of obj.tokens) {
+    if (entry === null || typeof entry !== "object") {
+      throw new AdapterError("CONTRACT", "each token must be an object.");
+    }
+    const t = entry as Record<string, unknown>;
+    if (typeof t.id !== "string" || t.id.length === 0) {
+      throw new AdapterError("CONTRACT", "token.id must be a non-empty string.");
+    }
+    if (seenTokenIds.has(t.id)) {
+      throw new AdapterError("CONTRACT", `token.id '${t.id}' is not unique.`);
+    }
+    seenTokenIds.add(t.id);
+    if (t.bundle === null || typeof t.bundle !== "object") {
+      throw new AdapterError("CONTRACT", "token.bundle must be an object.");
+    }
+    const b = t.bundle as Record<string, unknown>;
+    if (typeof b.selector !== "string" || b.selector.length === 0) {
+      throw new AdapterError("CONTRACT", "token.bundle.selector must be a non-empty string.");
+    }
+    if ("coords" in b && b.coords !== undefined && b.coords !== null) {
+      if (typeof b.coords !== "object") {
+        throw new AdapterError("CONTRACT", "token.bundle.coords must be an object when present.");
+      }
+      const coords = b.coords as Record<string, unknown>;
+      if (typeof coords.row !== "number" || !Number.isInteger(coords.row) || coords.row < 1) {
+        throw new AdapterError("CONTRACT", "token.bundle.coords.row must be a positive integer.");
+      }
+      if (typeof coords.column !== "number" || !Number.isInteger(coords.column) || coords.column < 1) {
+        throw new AdapterError("CONTRACT", "token.bundle.coords.column must be a positive integer.");
+      }
     }
   }
   return obj as unknown as LiveRender;

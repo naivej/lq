@@ -4,3 +4,4 @@ cov
 audit
 .lq/cache
 .lq/undo
+.lq/live-selection.json

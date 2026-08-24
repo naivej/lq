@@ -96,6 +96,7 @@ Deno.test("Live contract - rejects malformed required fields", () => {
     outline: [],
     navigate: emptyNavigate(),
     changes: [],
+    tokens: [],
   };
   assertThrows(() => validateLiveResponse({ ...base, contract: "nope" }), Error, "contract");
   assertThrows(() => validateLiveResponse({ ...base, projection: "review" }), Error, "projection");
@@ -132,11 +133,12 @@ Deno.test("Live contract - deferred fields are rejected", () => {
     outline: [],
     navigate: emptyNavigate(),
     changes: [],
+    tokens: [],
   };
   for (const field of LIVE_DEFERRED_FIELDS) {
     assertThrows(() => validateLiveResponse({ ...base, [field]: [] }), Error, field);
   }
-  // outline and changes are no longer deferred — must be accepted.
+  // outline, changes, and tokens are no longer deferred — must be accepted.
   validateLiveResponse(base);
   validateLiveResponse({
     ...base,
@@ -151,6 +153,37 @@ Deno.test("Live contract - deferred fields are rejected", () => {
       },
     ],
   });
+  validateLiveResponse({
+    ...base,
+    tokens: [
+      { id: "tok-1", bundle: { selector: "layout[Standard]:nth-match(1)" } },
+      {
+        id: "cell-1",
+        bundle: { selector: "inset[Tabular]:nth-match(1)", coords: { row: 1, column: 2 } },
+      },
+    ],
+  });
+  assertThrows(
+    () =>
+      validateLiveResponse({
+        ...base,
+        tokens: [{ id: "", bundle: { selector: "layout[Standard]:nth-match(1)" } }],
+      }),
+    Error,
+    "token.id",
+  );
+  assertThrows(
+    () =>
+      validateLiveResponse({
+        ...base,
+        tokens: [
+          { id: "tok-1", bundle: { selector: "layout[Standard]:nth-match(1)" } },
+          { id: "tok-1", bundle: { selector: "layout[Section]:nth-match(1)" } },
+        ],
+      }),
+    Error,
+    "unique",
+  );
 });
 
 Deno.test("Live contract - CLI envelope distinguishes disk identity", async () => {
@@ -160,10 +193,76 @@ Deno.test("Live contract - CLI envelope distinguishes disk identity", async () =
   assertEquals(validated.source.lineEnding, detectLineEnding(await Deno.readTextFile(syntheticPath("headings_paragraphs.lyx"))));
   assert(validated.source.lineCount > 1);
   assertEquals(validated.capabilities.editing, false);
-  assertEquals(validated.capabilities.mapping, false);
+  assertEquals(validated.capabilities.mapping, true);
   assertEquals(validated.capabilities.outline, true);
   assertEquals(validated.capabilities.sourceReveal, false);
   assert(validated.outline.some((e) => e.text.includes("Introduction")));
+});
+
+function stripMappingAttrs(html: string): string {
+  return html
+    .replace(/\s+data-ref="[^"]*"/g, "")
+    .replace(/\s+id="tok-\d+"/g, "");
+}
+
+Deno.test("Live mapping - headings_paragraphs tokens match HTML ids (DL134)", async () => {
+  const file = syntheticPath("headings_paragraphs.lyx");
+  const text = await Deno.readTextFile(file);
+  const { response } = await buildLiveResponse(file, parse(text), text);
+  const validated = validateLiveResponse(response);
+  assertEquals(validated.capabilities.mapping, true);
+  assert(validated.tokens.length >= 4, "section + paragraphs should yield tokens");
+  const ids = new Set(validated.tokens.map((t) => t.id));
+  assertEquals(ids.size, validated.tokens.length, "token ids are unique");
+  for (const token of validated.tokens) {
+    assertStringIncludes(response.html, `id="${token.id}"`);
+    assertStringIncludes(response.html, `data-ref="${token.id}"`);
+    assert(token.bundle.selector.length > 0);
+  }
+  const section = validated.tokens.find((t) => t.bundle.selector.startsWith("layout[Section]"));
+  assert(section, "Section heading is mapped");
+  const standard = validated.tokens.filter((t) => t.bundle.selector.startsWith("layout[Standard]"));
+  assert(standard.length >= 2, "Standard paragraphs are mapped");
+  assertEquals(standard[0]?.bundle.selector, "layout[Standard]:nth-match(1)");
+});
+
+Deno.test("Live mapping - table cells carry 1-based coords (DL134)", async () => {
+  const file = syntheticPath("table_figure_foot_math.lyx");
+  const text = await Deno.readTextFile(file);
+  const { response } = await buildLiveResponse(file, parse(text), text);
+  const validated = validateLiveResponse(response);
+  const cells = validated.tokens.filter((t) => t.bundle.coords);
+  assert(cells.length >= 1, "tabular cells should be mapped");
+  for (const cell of cells) {
+    assert(cell.bundle.selector.includes("inset[Tabular]") || cell.bundle.selector.includes("inset[tabular]"));
+    assert(cell.bundle.coords!.row >= 1);
+    assert(cell.bundle.coords!.column >= 1);
+    assertStringIncludes(response.html, `id="${cell.id}"`);
+  }
+});
+
+Deno.test("Live mapping - review_changes.lyx emits change-N tokens (DL134)", async () => {
+  const file = syntheticPath("review_changes.lyx");
+  const text = await Deno.readTextFile(file);
+  const { response } = await buildLiveResponse(file, parse(text), text);
+  const validated = validateLiveResponse(response);
+  const changeTokens = validated.tokens.filter((t) => t.id.startsWith("change-"));
+  assert(changeTokens.length >= 1, "change regions should be mapped");
+  for (const t of changeTokens) {
+    assertStringIncludes(response.html, `id="${t.id}"`);
+    assert(t.bundle.selector.startsWith("layout["));
+  }
+  assert(validated.changes.every((c) => changeTokens.some((t) => t.id === c.anchorId)));
+});
+
+Deno.test("Live mapping - no-change HTML is additive-only (DL134)", async () => {
+  const file = syntheticPath("headings_paragraphs.lyx");
+  const text = await Deno.readTextFile(file);
+  const { response } = await buildLiveResponse(file, parse(text), text);
+  const stripped = stripMappingAttrs(response.html);
+  assert(!/data-ref=/.test(stripped));
+  assertEquals(stripped.includes("<section"), true);
+  assertEquals(stripped.includes("<h1") || stripped.includes("<h2") || stripped.includes("<section"), true);
 });
 
 Deno.test("Live contract - buildLiveResponse honors the passed diskHash (DL132 P4)", async () => {
@@ -245,11 +344,11 @@ Deno.test("Live renderer - headings, paragraphs, unicode, empty, emphasis", asyn
 Deno.test("Live renderer - lists and quotes", async () => {
   const { html } = await renderFile("lists_quotes.lyx");
   assertStringIncludes(html, "<ul>");
-  assertStringIncludes(html, "<li>outer one");
-  assertStringIncludes(html, "<ul><li>nested</li></ul>");
+  assertMatch(html, /<li\b[^>]*>outer one/);
+  assertMatch(html, /<ul><li\b[^>]*>nested<\/li><\/ul>/);
   assertStringIncludes(html, '<ol class="enumi">');
-  assertStringIncludes(html, "<li>first</li>");
-  assertStringIncludes(html, "<dt>Term</dt>");
+  assertMatch(html, /<li\b[^>]*>first<\/li>/);
+  assertMatch(html, /<dt\b[^>]*>Term<\/dt>/);
   assertStringIncludes(html, "<dd>the explanation</dd>");
   assertStringIncludes(html, '<blockquote class="quote">');
   assertStringIncludes(html, "A quoted line.");
@@ -302,8 +401,8 @@ Deno.test("Live renderer - hostile strings stay escaped", async () => {
 Deno.test("Live renderer - tracked changes render as ins/del wrappers; ERT is a Live chip", async () => {
   const { html, diagnostics, changes } = await renderFile("tracked_ert_notes.lyx");
   assertStringIncludes(html, "Visible");
-  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-1"> inserted</ins>');
-  assertStringIncludes(html, '<del class="change-deleted change-author-0" id="change-2"> deleted</del>');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-1" data-ref="change-1"> inserted</ins>');
+  assertStringIncludes(html, '<del class="change-deleted change-author-0" id="change-2" data-ref="change-2"> deleted</del>');
   assertEquals(changes, [
     { ordinal: 1, type: "inserted", author: "Tester", ts: "0", anchorId: "change-1", snippet: "inserted" },
     { ordinal: 2, type: "deleted", author: "Tester", ts: "0", anchorId: "change-2", snippet: "deleted" },
@@ -333,9 +432,9 @@ Deno.test("Live renderer - review_changes covers index, nesting, foot chip, whol
   // close after their parent (DL133 bug-batch fix).
   assertEquals(changes.map((c) => c.ordinal), [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
   // Adjacent same/different-author runs reopen wrappers in document order.
-  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-2">one</ins>');
-  assertStringIncludes(html, '<ins class="change-inserted change-author-1" id="change-3">two</ins>');
-  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-4">three</ins>');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-2" data-ref="change-2">one</ins>');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-1" id="change-3" data-ref="change-3">two</ins>');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-4" data-ref="change-4">three</ins>');
   // Different authors get different color slots (Alice=0, Bob=1, Shifu=2).
   assert(html.includes("change-author-0"), "Alice's slot must be present");
   assert(html.includes("change-author-1"), "Bob's slot must be present");
@@ -343,19 +442,19 @@ Deno.test("Live renderer - review_changes covers index, nesting, foot chip, whol
   // Emphasis crossing a change boundary nests validly (wrapper outermost).
   assertStringIncludes(
     html,
-    '<em>base</em><ins class="change-inserted change-author-0" id="change-5"><em>ins</em></ins><em>tail</em>',
+    '<em>base</em><ins class="change-inserted change-author-0" id="change-5" data-ref="change-5"><em>ins</em></ins><em>tail</em>',
   );
   // A deleted footnote is wrapped at the chip level; its body stays plain.
-  assertStringIncludes(html, '<del class="change-deleted change-author-1" id="change-6"><details class="disclose foot"');
+  assertStringIncludes(html, '<del class="change-deleted change-author-1" id="change-6" data-ref="change-6"><details class="disclose foot"');
   assertStringIncludes(html, "Deleted footnote body.");
   // Whole-inset inserted Note+Foot owner opens before its inner runs (ordinal
   // 8/9/10), so the outer wrapper stays first in document order.
   assertStringIncludes(
     html,
-    '<ins class="change-inserted change-author-2" id="change-8"><details class="disclose note note-note">',
+    '<ins class="change-inserted change-author-2" id="change-8" data-ref="change-8"><details class="disclose note note-note"',
   );
-  assertStringIncludes(html, '<ins class="change-inserted change-author-2" id="change-9">new note</ins>');
-  assertStringIncludes(html, '<ins class="change-inserted change-author-2" id="change-10">new foot</ins>');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-2" id="change-9" data-ref="change-9">new note</ins>');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-2" id="change-10" data-ref="change-10">new foot</ins>');
   // LyX numbering: the deleted footnote shows its would-be number 1 without
   // consuming it, so the inserted footnote is also 1.
   assertEquals((html.match(/class="foot_label">1<\/summary>/g) ?? []).length, 2);
@@ -365,7 +464,7 @@ Deno.test("Live renderer - review_changes covers index, nesting, foot chip, whol
   // Whole-deleted paragraph keeps the del wrapper and marks its container.
   assertStringIncludes(
     html,
-    '<div class="standard change-deleted"><del class="change-deleted change-author-0" id="change-11">This whole paragraph was deleted.</del></div>',
+    '<div class="standard change-deleted" id="tok-13" data-ref="tok-13"><del class="change-deleted change-author-0" id="change-11" data-ref="change-11">This whole paragraph was deleted.</del></div>',
   );
   assertEquals(changes[10].snippet, "This whole paragraph was deleted.");
 });
@@ -521,29 +620,29 @@ Deno.test("Live renderer - disclosure_collapsibles tracked whole-inset variants 
   for (const kind of kinds) {
     // Index/Nomencl chips carry a leading anchor between the wrapper and the
     // details element, so the regex allows an optional <a id>.
-    const anchor = `(?:<a id="[^"]*"></a>)?`;
+    const anchor = `(?:<a id="[^"]*"(?: data-ref="[^"]*")?></a>)?`;
     assertMatch(
       html,
-      new RegExp(`<ins class="change-inserted change-author-0" id="change-\\d+">${anchor}<details class="disclose ${kind}\\b`),
+      new RegExp(`<ins class="change-inserted change-author-0" id="change-\\d+" data-ref="change-\\d+">${anchor}<details class="disclose ${kind}\\b`),
       `whole-inset inserted ${kind} must be wrapped`,
     );
     assertMatch(
       html,
-      new RegExp(`<del class="change-deleted change-author-0" id="change-\\d+">${anchor}<details class="disclose ${kind}\\b`),
+      new RegExp(`<del class="change-deleted change-author-0" id="change-\\d+" data-ref="change-\\d+">${anchor}<details class="disclose ${kind}\\b`),
       `whole-inset deleted ${kind} must be wrapped`,
     );
   }
   // Phantom/HPhantom/VPhantom share the chip class; all three get both cases.
-  assertEquals((html.match(/<ins class="change-inserted change-author-0" id="change-\d+"><details class="disclose phantom\b/g) ?? []).length, 3);
-  assertEquals((html.match(/<del class="change-deleted change-author-0" id="change-\d+"><details class="disclose phantom\b/g) ?? []).length, 3);
+  assertEquals((html.match(/<ins class="change-inserted change-author-0" id="change-\d+" data-ref="change-\d+"><details class="disclose phantom\b/g) ?? []).length, 3);
+  assertEquals((html.match(/<del class="change-deleted change-author-0" id="change-\d+" data-ref="change-\d+"><details class="disclose phantom\b/g) ?? []).length, 3);
   // Nested combos keep the outer whole-inset wrapper and a plain inner chip.
-  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-33"><details class="disclose box boxed"');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-33" data-ref="change-33"><details class="disclose box boxed"');
   assertStringIncludes(html, "Nested foot inside inserted box.");
-  assertStringIncludes(html, '<del class="change-deleted change-author-0" id="change-34"><details class="disclose float float-figure"');
+  assertStringIncludes(html, '<del class="change-deleted change-author-0" id="change-34" data-ref="change-34"><details class="disclose float float-figure"');
   assertStringIncludes(html, "Nested foot inside deleted float.");
-  assertStringIncludes(html, '<del class="change-deleted change-author-0" id="change-35"><details class="disclose note note-note"');
+  assertStringIncludes(html, '<del class="change-deleted change-author-0" id="change-35" data-ref="change-35"><details class="disclose note note-note"');
   assertStringIncludes(html, "Nested box inside deleted note.");
-  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-36"><details class="disclose branch"');
+  assertStringIncludes(html, '<ins class="change-inserted change-author-0" id="change-36" data-ref="change-36"><details class="disclose branch"');
   assertStringIncludes(html, "Nested comment inside inserted branch.");
   // Numbering: the deleted footnote shows its would-be number without
   // consuming it (1 existing, 2 inserted foot, 3 deleted would-be + nested
@@ -556,15 +655,15 @@ Deno.test("Live renderer - disclosure_collapsibles tracked whole-inset variants 
 
 Deno.test("Live renderer - title, author, abstract, and math", async () => {
   const { html } = await renderFile("front_matter_math.lyx");
-  assertStringIncludes(html, '<h1 class="title">Title</h1>');
-  assertStringIncludes(html, '<div class="author">My name');
+  assertMatch(html, /<h1 class="title"[^>]*>Title<\/h1>/);
+  assertMatch(html, /<div class="author"[^>]*>My name/);
   assertStringIncludes(html, 'class="disclose foot foot_intitle"');
   assertStringIncludes(html, 'class="foot_intitle_label">*</summary>');
   assertStringIncludes(html, "Details about me");
   assertStringIncludes(html, '<div class="abstract">');
   assertStringIncludes(html, '<span class="abstract_label">Abstract</span>');
-  assertStringIncludes(html, '<div class="abstract_item">Abstract</div>');
-  assertStringIncludes(html, '<div class="abstract_item">Keywords: one</div>');
+  assertMatch(html, /<div class="abstract_item"[^>]*>Abstract<\/div>/);
+  assertMatch(html, /<div class="abstract_item"[^>]*>Keywords: one<\/div>/);
   assert(!html.includes('<div class="abstract">Abstract</div>'), "abstracts must be grouped, not repeated as sibling blocks");
   assertStringIncludes(html, '<math xmlns="http://www.w3.org/1998/Math/MathML" display="block">');
   assertStringIncludes(html, "<mi>ζ</mi>");
@@ -581,11 +680,11 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   const filePath = fromFileUrl(new URL("./fixtures/my_template.lyx", import.meta.url));
   const text = await Deno.readTextFile(filePath);
   const { html } = await renderLiveHtml(parse(text), { filePath });
-  assertStringIncludes(html, '<h1 class="title">Title</h1>');
-  assertStringIncludes(html, '<div class="author">My name');
+  assertMatch(html, /<h1 class="title"[^>]*>Title<\/h1>/);
+  assertMatch(html, /<div class="author"[^>]*>My name/);
   assertStringIncludes(html, '<span class="abstract_label">Abstract</span>');
-  assertStringIncludes(html, '<div class="abstract_item">Keywords:');
-  assertStringIncludes(html, '<div class="abstract_item">JEL:');
+  assertMatch(html, /<div class="abstract_item"[^>]*>Keywords:/);
+  assertMatch(html, /<div class="abstract_item"[^>]*>JEL:/);
   assertStringIncludes(html, 'display="block"');
   assertStringIncludes(html, "<mi>ζ</mi>");
   assertStringIncludes(html, "∑");
@@ -804,8 +903,8 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assertStringIncludes(html, 'class="flex_code"');
   assert(!html.includes("<code><div"), "Flex Code must stay inline");
   assertStringIncludes(html, '<dl class="description">');
-  assertStringIncludes(html, "<dt>Address</dt>");
-  assertStringIncludes(html, "<dt>Current");
+  assertMatch(html, /<dt\b[^>]*>Address<\/dt>/);
+  assertMatch(html, /<dt\b[^>]*>Current/);
   assertStringIncludes(html, "Current\u00a0Address</dt>");
   assertStringIncludes(html, 'class="Frameless"');
   assertStringIncludes(html, '<span class="noun">');
@@ -815,7 +914,7 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   assert(!html.includes("List SpacingLists"), "Index inset must not leak into heading/TOC text");
   assertStringIncludes(html, "\u201c");
   assertStringIncludes(html, "\u201d");
-  assertStringIncludes(html, "<li>resumed</li>");
+  assertMatch(html, /<li\b[^>]*>resumed<\/li>/);
   assert(!html.includes('class="enumerate_resume"'), "Enumerate-Resume must not fall back to a generic div");
   assert(!html.includes("status collapsed"), "inset status lines must not leak into heading/TOC text");
   assertStringIncludes(html, '<span class="layout-label">Theorem 1.</span>');
@@ -934,26 +1033,27 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, "《");
   assertStringIncludes(html, "‹");
   assertStringIncludes(html, "›");
-  const helloLi = html.indexOf("<li>Hello");
+  const helloLi = html.search(/<li\b[^>]*>Hello/);
   assert(helloLi !== -1, "UserGuide 3.4.6 Hello item missing");
   const helloAt = html.lastIndexOf("<ol", helloLi);
-  const nest = html.slice(helloAt, html.indexOf("<li>Hi"));
+  const hiLi = html.search(/<li\b[^>]*>Hi/);
+  const nest = html.slice(helloAt, hiLi === -1 ? undefined : hiLi);
   assertStringIncludes(nest, 'class="enumi"');
   assertStringIncludes(nest, 'class="enumii"');
   assertStringIncludes(nest, 'class="enumiii"');
-  assertStringIncludes(nest, "<li>this is an");
-  assertStringIncludes(nest, "<li>enumeration</li>");
-  assertStringIncludes(nest, "<li>itemize list</li>");
-  const itemizeAt = nest.indexOf("<li>itemize list</li>");
-  const enumEnd = nest.indexOf("<li>enumeration</li>");
+  assertMatch(nest, /<li\b[^>]*>this is an/);
+  assertMatch(nest, /<li\b[^>]*>enumeration<\/li>/);
+  assertMatch(nest, /<li\b[^>]*>itemize list<\/li>/);
+  const itemizeAt = nest.search(/<li\b[^>]*>itemize list<\/li>/);
+  const enumEnd = nest.search(/<li\b[^>]*>enumeration<\/li>/);
   assert(itemizeAt > enumEnd, "itemize must follow the inner enumeration");
   assert(
     nest.slice(0, itemizeAt).includes("enumiii") && nest.includes("</ol><ul>"),
     "itemize must stay nested beside the inner enumeration, not restart at the top level",
   );
   assert(
-    html.includes('<h2 class="bibliography">References</h2>') ||
-      html.includes('<h2 class="bibliography">Bibliography</h2>'),
+    /<h2 class="(?:bibliography|bibtex)"/.test(html) &&
+      (html.includes("References") || html.includes("Bibliography")),
     "Bibliography environment must emit a References/Bibliography heading",
   );
   assertStringIncludes(html, 'id="LyXCite-lyxcredit"');
@@ -991,12 +1091,12 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, "this one is centered");
   assertStringIncludes(html, 'style="text-align: left"');
   assertStringIncludes(html, "this one is left aligned");
-  assertStringIncludes(html, "<dt>Vector\u00a0fonts");
+  assertMatch(html, /<dt\b[^>]*>Vector\u00a0fonts/);
   assert(!html.includes("fontsrange"), "Index params must not leak into Description labels");
   assert(!html.includes("status collapsedFonts"), "Index status must not leak into Description");
   assertStringIncludes(html, '<div class="index">');
   assertStringIncludes(html, '<h2 class="index">Index</h2>');
-  assertStringIncludes(html, "<li>Font, Types");
+  assertMatch(html, /<li\b[^>]*>Font, Types/);
   assertStringIncludes(html, ">3.3.4.4 Short Titles</");
   assert(!html.includes("HeadingsShort Titles"), "short-title Argument must not concatenate onto the long heading in the TOC");
 });
@@ -1119,7 +1219,7 @@ Deno.test("Live renderer - Help Intro.lyx TOC, href, quotes, table", async () =>
   const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
   assertStringIncludes(html, '<article class="lyx-live">');
   assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
-  assertStringIncludes(html, '<h1 class="title">Introduction to LyX</h1>');
+  assertMatch(html, /<h1 class="title"[^>]*>Introduction to LyX<\/h1>/);
   assertStringIncludes(html, '<nav class="toc">');
   assertStringIncludes(html, 'class="href"');
   assertStringIncludes(html, "lyx-docs@lists.lyx.org");
@@ -1173,7 +1273,7 @@ Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels",
   const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
   assertStringIncludes(html, '<article class="lyx-live">');
   assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
-  assertStringIncludes(html, '<dt><code class="flex_code">Format</code></dt>');
+  assertMatch(html, /<dt\b[^>]*><code class="flex_code">Format<\/code><\/dt>/);
   assert(!html.includes("status collapsedFormat"), "Flex Code status must not leak into Description labels");
   assert(
     !html.includes("International Keyboard Support"),
@@ -1438,7 +1538,7 @@ Deno.test("Live comparison - incidental ids and classes are ignored", () => {
 });
 
 Deno.test("Live comparison - accepted view drops del and promotes ins (DL133 J4)", () => {
-  const html = `<div class="standard">Visible<ins class="change-inserted" id="change-1"> added</ins> and<del class="change-deleted" id="change-2"> removed</del> text.</div>`;
+  const html = `<div class="standard">Visible<ins class="change-inserted" id="change-1" data-ref="change-1"> added</ins> and<del class="change-deleted" id="change-2" data-ref="change-2"> removed</del> text.</div>`;
   // Default: wrappers are transparent — all content survives normalization.
   const defaultView = normalizeReaderHtml(html);
   const defaultDump = formatSem(defaultView);

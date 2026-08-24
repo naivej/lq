@@ -45,10 +45,10 @@ export const LIVE_PROJECTION = "live";
 export const LIVE_HASH_ALGORITHM = "sha256";
 export const LIVE_HASH_INPUT = "raw-file-bytes";
 
-/** Live capability flags. `outline: true` since DL131 Phase B (M2.7). */
+/** Live capability flags. `outline: true` since DL131 Phase B (M2.7); `mapping: true` since DL134. */
 export const LIVE_CAPABILITIES = {
   review: false,
-  mapping: false,
+  mapping: true,
   outline: true,
   editing: false,
   sourceReveal: false,
@@ -59,12 +59,29 @@ export const LIVE_UNAVAILABLE_CAPABILITIES = LIVE_CAPABILITIES;
 
 /** Fields later milestones may add. Must not appear on the wire yet. */
 export const LIVE_DEFERRED_FIELDS = [
-  "tokens",
   "mapping",
   "editTargets",
   "reviewRegions",
   "mode",
 ] as const;
+
+/** Table-cell coordinates on a mapped owner (1-based, DL134). */
+export interface LiveTokenCoords {
+  row: number;
+  column: number;
+}
+
+/** Read-first lq bundle: selector path plus optional cell coords. Not a mutation selector. */
+export interface LiveTokenBundle {
+  selector: string;
+  coords?: LiveTokenCoords;
+}
+
+/** One mapped Live owner (HTML id equals token id). */
+export interface LiveToken {
+  id: string;
+  bundle: LiveTokenBundle;
+}
 
 /** Heading outline entry (same data as TOC / FloatList anchors). */
 export interface LiveOutlineEntry {
@@ -146,6 +163,8 @@ export interface LivePreviewResponse {
   navigate: LiveNavigate;
   /** Ordered tracked-change regions rendered as `<ins>`/`<del>` wrappers. */
   changes: LiveChangeEntry[];
+  /** Read-first mapping tokens (DL134). HTML `id`/`data-ref` equals `token.id`. */
+  tokens: LiveToken[];
 }
 
 export interface LiveRenderResult {
@@ -287,6 +306,42 @@ export function validateLiveResponse(value: unknown): LivePreviewResponse {
       throw new LiveContractError("change entry.snippet must be a string.");
     }
   }
+  if (!Array.isArray(obj.tokens)) {
+    throw new LiveContractError("tokens must be an array.");
+  }
+  const seenTokenIds = new Set<string>();
+  for (const entry of obj.tokens) {
+    if (entry === null || typeof entry !== "object") {
+      throw new LiveContractError("each token must be an object.");
+    }
+    const t = entry as Record<string, unknown>;
+    if (typeof t.id !== "string" || t.id.length === 0) {
+      throw new LiveContractError("token.id must be a non-empty string.");
+    }
+    if (seenTokenIds.has(t.id)) {
+      throw new LiveContractError(`token.id '${t.id}' is not unique.`);
+    }
+    seenTokenIds.add(t.id);
+    if (t.bundle === null || typeof t.bundle !== "object") {
+      throw new LiveContractError("token.bundle must be an object.");
+    }
+    const b = t.bundle as Record<string, unknown>;
+    if (typeof b.selector !== "string" || b.selector.length === 0) {
+      throw new LiveContractError("token.bundle.selector must be a non-empty string.");
+    }
+    if ("coords" in b && b.coords !== undefined && b.coords !== null) {
+      if (typeof b.coords !== "object") {
+        throw new LiveContractError("token.bundle.coords must be an object when present.");
+      }
+      const c = b.coords as Record<string, unknown>;
+      if (typeof c.row !== "number" || !Number.isInteger(c.row) || c.row < 1) {
+        throw new LiveContractError("token.bundle.coords.row must be a positive integer.");
+      }
+      if (typeof c.column !== "number" || !Number.isInteger(c.column) || c.column < 1) {
+        throw new LiveContractError("token.bundle.coords.column must be a positive integer.");
+      }
+    }
+  }
   if (!Array.isArray(obj.diagnostics)) {
     throw new LiveContractError("diagnostics must be an array.");
   }
@@ -373,6 +428,16 @@ interface RenderCtx {
   changeSeq: number;
   /** Author id → color slot, assigned in order of first appearance. */
   authorSlots: Map<number, number>;
+  /** Read-first mapping tokens (DL134). */
+  tokens: LiveToken[];
+  /** layout:<name> / inset:<kind> → nth-match counter (query document order). */
+  matchCounts: Map<string, number>;
+  /** Next `tok-N` id for owners without a pre-existing HTML id. */
+  tokSeq: number;
+  /** Selector of the layout currently being rendered (change-region owner). */
+  currentLayoutSelector?: string;
+  /** Selector of the inset currently being rendered (disclosure / cell owner). */
+  currentInsetSelector?: string;
   bibitem: number;
   includeStack: string[];
   subeq: { parent: number; child: number } | null;
@@ -695,6 +760,55 @@ function flexNativeClass(kindOrName: string): string {
 /** LyX `xml::cleanAttr`: non-ASCII-alnum → `_` (`sec:Section_label` → `sec_Section_label`). */
 function xmlId(name: string): string {
   return name.replace(/[^A-Za-z0-9]/g, "_");
+}
+
+function nextMatch(ctx: RenderCtx, kind: "layout" | "inset", name: string): number {
+  const key = `${kind}:${name}`;
+  const n = (ctx.matchCounts.get(key) ?? 0) + 1;
+  ctx.matchCounts.set(key, n);
+  return n;
+}
+
+function layoutSelector(ctx: RenderCtx, name: string): string {
+  return `layout[${name}]:nth-match(${nextMatch(ctx, "layout", name)})`;
+}
+
+function insetSelector(ctx: RenderCtx, kind: string): string {
+  return `inset[${kind}]:nth-match(${nextMatch(ctx, "inset", kind)})`;
+}
+
+function emitToken(
+  ctx: RenderCtx,
+  id: string,
+  selector: string,
+  coords?: LiveTokenCoords,
+): void {
+  ctx.tokens.push({
+    id,
+    bundle: coords ? { selector, coords } : { selector },
+  });
+}
+
+function takeOwnerId(ctx: RenderCtx, existing?: string): string {
+  if (existing) return existing;
+  ctx.tokSeq += 1;
+  return `tok-${ctx.tokSeq}`;
+}
+
+function mappingAttrs(id: string): string {
+  return ` id="${escapeLiveHtml(id)}" data-ref="${escapeLiveHtml(id)}"`;
+}
+
+/** Count this layout for nth-match (even when HTML is skipped) and run `fn` as its owner. */
+function withLayout(ctx: RenderCtx, name: string, fn: (selector: string) => string): string {
+  const selector = layoutSelector(ctx, name);
+  const prev = ctx.currentLayoutSelector;
+  ctx.currentLayoutSelector = selector;
+  try {
+    return fn(selector);
+  } finally {
+    ctx.currentLayoutSelector = prev;
+  }
 }
 
 function findBody(ast: DocumentNode): Node[] {
@@ -1076,6 +1190,7 @@ export async function renderLiveHtml(
   outline: LiveOutlineEntry[];
   navigate: LiveNavigate;
   changes: LiveChangeEntry[];
+  tokens: LiveToken[];
 }> {
   let searchPaths: string[];
   let systemLayoutsDir: string | undefined;
@@ -1141,6 +1256,9 @@ export async function renderLiveHtml(
     changes: [],
     changeSeq: 0,
     authorSlots: new Map(),
+    tokens: [],
+    matchCounts: new Map(),
+    tokSeq: 0,
     subeq: null,
     bibitem: 0,
     includeStack: [],
@@ -1159,6 +1277,12 @@ export async function renderLiveHtml(
       .slice()
       .sort((a, b) => a.ordinal - b.ordinal)
       .map((e) => ({ ...e })),
+    tokens: ctx.tokens.map((t) => ({
+      id: t.id,
+      bundle: t.bundle.coords
+        ? { selector: t.bundle.selector, coords: { ...t.bundle.coords } }
+        : { selector: t.bundle.selector },
+    })),
   };
 }
 
@@ -1193,6 +1317,7 @@ export async function buildLiveResponse(
     outline: rendered.outline,
     navigate: rendered.navigate,
     changes: rendered.changes,
+    tokens: rendered.tokens,
   };
   return { response, warnings: rendered.warnings };
 }
@@ -1299,16 +1424,25 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
     const item = items[i];
     const layout = role(item.layout, ctx);
     if (layout.kind === "omit") {
+      layoutSelector(ctx, item.layout);
       i++;
       continue;
     }
     if (layout.kind === "title") {
-      html += `<h1 class="title">${renderLayoutInline(item.node, ctx, true, outerState)}</h1>`;
+      html += withLayout(ctx, item.layout, (selector) => {
+        const id = takeOwnerId(ctx);
+        emitToken(ctx, id, selector);
+        return `<h1 class="title"${mappingAttrs(id)}>${renderLayoutInline(item.node, ctx, true, outerState)}</h1>`;
+      });
       i++;
       continue;
     }
     if (layout.kind === "front") {
-      html += `<div class="${layoutSlug(item.layout)}">${renderLayoutInline(item.node, ctx, true, outerState)}</div>`;
+      html += withLayout(ctx, item.layout, (selector) => {
+        const id = takeOwnerId(ctx);
+        emitToken(ctx, id, selector);
+        return `<div class="${layoutSlug(item.layout)}"${mappingAttrs(id)}>${renderLayoutInline(item.node, ctx, true, outerState)}</div>`;
+      });
       i++;
       continue;
     }
@@ -1319,13 +1453,18 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
       continue;
     }
     if (layout.kind === "heading") {
-      closeSections(layout.level);
-      const number = headings.next(item.layout, layout.level, hasStartOfAppendix(item.node));
-      noteChapterHeading(ctx, layout, number);
-      const text = headingPlainText(item.node);
-      const id = sectionId(number, text);
-      html += `<section id="${escapeLiveHtml(id)}"><${layout.tag}>${number}${renderLayoutInline(item.node, ctx, false, outerState)}</${layout.tag}>`;
-      openLevels.push(layout.level);
+      html += withLayout(ctx, item.layout, (selector) => {
+        closeSections(layout.level);
+        const number = headings.next(item.layout, layout.level, hasStartOfAppendix(item.node));
+        noteChapterHeading(ctx, layout, number);
+        const text = headingPlainText(item.node);
+        const id = sectionId(number, text);
+        emitToken(ctx, id, selector);
+        const chunk =
+          `<section${mappingAttrs(id)}><${layout.tag}>${number}${renderLayoutInline(item.node, ctx, false, outerState)}</${layout.tag}>`;
+        openLevels.push(layout.level);
+        return chunk;
+      });
       i++;
       continue;
     }
@@ -1348,24 +1487,28 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
       continue;
     }
     if (item.layout === "Initial") {
-      html += renderInitial(item.node, ctx);
+      html += withLayout(ctx, item.layout, (selector) => {
+        const id = takeOwnerId(ctx);
+        emitToken(ctx, id, selector);
+        const inner = renderInitial(item.node, ctx);
+        if (!inner) return inner;
+        return inner.replace(/^<(\w+)/, `<$1${mappingAttrs(id)}`);
+      });
       i++;
       continue;
     }
-    const inner = renderLayoutInline(item.node, ctx, false, outerState);
-    if (inner.trim().length === 0) {
-      i++;
-      continue;
-    }
-    // Promote bare figures (and DL131 disclosed floats) out of Standard wrappers.
-    const trimmedInner = inner.trim();
-    if (
-      /^<figure\b[\s\S]*<\/figure>$/.test(trimmedInner) ||
-      /^<details\b[^>]*\bfloat\b[^>]*>[\s\S]*<\/details>$/.test(trimmedInner) ||
-      /^<details\b[^>]*\bwrap\b[^>]*>[\s\S]*<\/details>$/.test(trimmedInner)
-    ) {
-      html += inner;
-    } else {
+    html += withLayout(ctx, item.layout, (selector) => {
+      const inner = renderLayoutInline(item.node, ctx, false, outerState);
+      if (inner.trim().length === 0) return "";
+      // Promote bare figures (and DL131 disclosed floats) out of Standard wrappers.
+      const trimmedInner = inner.trim();
+      if (
+        /^<figure\b[\s\S]*<\/figure>$/.test(trimmedInner) ||
+        /^<details\b[^>]*\bfloat\b[^>]*>[\s\S]*<\/details>$/.test(trimmedInner) ||
+        /^<details\b[^>]*\bwrap\b[^>]*>[\s\S]*<\/details>$/.test(trimmedInner)
+      ) {
+        return inner;
+      }
       const firstOfRun = i === 0 ||
         items[i - 1].layout !== item.layout ||
         items[i - 1].depth !== item.depth;
@@ -1375,8 +1518,10 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
       const deletedOnly = /class="change-deleted(?:\s|")/.test(inner) &&
         !layoutContentKinds(item.node).nonDeleted;
       const deletedClass = deletedOnly ? " change-deleted" : "";
-      html += `<div class="${layoutSlug(item.layout)}${deletedClass}"${alignAttr(item.node)}>${label}${inner}</div>`;
-    }
+      const id = takeOwnerId(ctx);
+      emitToken(ctx, id, selector);
+      return `<div class="${layoutSlug(item.layout)}${deletedClass}"${mappingAttrs(id)}${alignAttr(item.node)}>${label}${inner}</div>`;
+    });
     i++;
   }
   closeSections(-999);
@@ -1404,6 +1549,11 @@ function snapshotCounters(ctx: RenderCtx) {
     layoutCounters: new Map(ctx.layoutCounters),
     floatTypeCounts: new Map(ctx.floatTypeCounts),
     subeq: ctx.subeq ? { ...ctx.subeq } : null,
+    matchCounts: new Map(ctx.matchCounts),
+    tokens: ctx.tokens.slice(),
+    tokSeq: ctx.tokSeq,
+    currentLayoutSelector: ctx.currentLayoutSelector,
+    currentInsetSelector: ctx.currentInsetSelector,
   };
 }
 
@@ -1421,6 +1571,11 @@ function restoreCounters(ctx: RenderCtx, snap: ReturnType<typeof snapshotCounter
   ctx.layoutCounters = snap.layoutCounters;
   ctx.floatTypeCounts = snap.floatTypeCounts;
   ctx.subeq = snap.subeq;
+  ctx.matchCounts = snap.matchCounts;
+  ctx.tokens = snap.tokens;
+  ctx.tokSeq = snap.tokSeq;
+  ctx.currentLayoutSelector = snap.currentLayoutSelector;
+  ctx.currentInsetSelector = snap.currentInsetSelector;
 }
 
 /** True when HTML is only Newpage/Separator/VSpace chrome (no reader prose). */
@@ -1516,17 +1671,23 @@ function renderList(
     if (item.depth === depth) {
       if (item.layout !== first.layout) {
         if (isSkippableFlow(item, ctx)) {
+          layoutSelector(ctx, item.layout);
           i++;
           continue;
         }
         break;
       }
       if (first.layout === "Description" || spec.tag === "dl") {
-        const { label, rest } = splitDescription(item.node, ctx);
-        html += `<dt>${label}</dt><dd>${rest}`;
+        html += withLayout(ctx, item.layout, (selector) => {
+          const { label, rest } = splitDescription(item.node, ctx);
+          const id = takeOwnerId(ctx);
+          emitToken(ctx, id, selector);
+          return `<dt${mappingAttrs(id)}>${label}</dt><dd>${rest}`;
+        });
         i++;
         while (i < items.length && items[i].depth > depth) {
           if (isSkippableFlow(items[i], ctx)) {
+            layoutSelector(ctx, items[i].layout);
             i++;
             continue;
           }
@@ -1537,10 +1698,15 @@ function renderList(
         }
         html += "</dd>";
       } else {
-        html += `<${spec.item}>${renderLayoutInline(item.node, ctx)}`;
+        html += withLayout(ctx, item.layout, (selector) => {
+          const id = takeOwnerId(ctx);
+          emitToken(ctx, id, selector);
+          return `<${spec.item}${mappingAttrs(id)}>${renderLayoutInline(item.node, ctx)}`;
+        });
         i++;
         while (i < items.length && items[i].depth > depth) {
           if (isSkippableFlow(items[i], ctx)) {
+            layoutSelector(ctx, items[i].layout);
             i++;
             continue;
           }
@@ -1552,6 +1718,7 @@ function renderList(
         html += `</${spec.item}>`;
       }
     } else if (isSkippableFlow(item, ctx)) {
+      layoutSelector(ctx, item.layout);
       i++;
     } else if (isListLayout(item.layout, ctx)) {
       const [nested, next] = nestFrom(i);
@@ -1582,7 +1749,11 @@ function renderEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string, n
   }
   let html = `<${spec.tag}${cls}>`;
   while (i < items.length && items[i].layout === first.layout && items[i].depth === first.depth) {
-    html += `<${spec.item}>${renderLayoutInline(items[i].node, ctx)}</${spec.item}>`;
+    html += withLayout(ctx, items[i].layout, (selector) => {
+      const id = takeOwnerId(ctx);
+      emitToken(ctx, id, selector);
+      return `<${spec.item}${mappingAttrs(id)}>${renderLayoutInline(items[i].node, ctx)}</${spec.item}>`;
+    });
     i++;
   }
   html += `</${spec.tag}>`;
@@ -1659,7 +1830,11 @@ function renderAbstract(items: FlowItem[], start: number, ctx: RenderCtx): [stri
   let i = start;
   let html = `<div class="abstract"><span class="abstract_label">Abstract</span>`;
   while (i < items.length && items[i].layout === "Abstract" && items[i].depth === items[start].depth) {
-    html += `<div class="abstract_item">${renderLayoutInline(items[i].node, ctx, true)}</div>`;
+    html += withLayout(ctx, items[i].layout, (selector) => {
+      const id = takeOwnerId(ctx);
+      emitToken(ctx, id, selector);
+      return `<div class="abstract_item"${mappingAttrs(id)}>${renderLayoutInline(items[i].node, ctx, true)}</div>`;
+    });
     i++;
   }
   html += "</div>";
@@ -1878,8 +2053,10 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     // active), then rebuild them inside the new wrapper.
     closeAll();
     html += region === "inserted"
-      ? `<ins class="change-inserted change-author-${authorSlot}" id="change-${wrapper.ordinal}">`
-      : `<del class="change-deleted change-author-${authorSlot}" id="change-${wrapper.ordinal}">`;
+      ? `<ins class="change-inserted change-author-${authorSlot}"${mappingAttrs(`change-${wrapper.ordinal}`)}>`
+      : `<del class="change-deleted change-author-${authorSlot}"${mappingAttrs(`change-${wrapper.ordinal}`)}>`;
+    const ownerSel = ctx.currentLayoutSelector ?? ctx.currentInsetSelector ?? `layout:nth-match(1)`;
+    emitToken(ctx, `change-${wrapper.ordinal}`, ownerSel);
     syncFont();
   };
 
@@ -1944,24 +2121,39 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     return renderChildren(block.children, enterTraversalState(parentState), ctx);
   }
   const kind = insetKind(block);
+  const prevInset = ctx.currentInsetSelector;
+  ctx.currentInsetSelector = insetSelector(ctx, kind);
+  try {
+    return renderInsetBody(block, kind, parentState, ctx);
+  } finally {
+    ctx.currentInsetSelector = prevInset;
+  }
+}
+
+function renderInsetBody(
+  block: BlockNode,
+  kind: string,
+  parentState: TraversalState,
+  ctx: RenderCtx,
+): string {
   if (kind === "ERT") {
     // DL131 Live-only: native LyXHTML omits ERT; Live shows escaped TeX in a chip.
     // ERT body is opaque text lines (not nested layout CST) — see ertPlainText.
-    return wrapPlainTextMarker("ert", "ERT", ertPlainText(block));
+    return wrapPlainTextMarker(ctx, "ert", "ERT", ertPlainText(block));
   }
   // Live shows Note/Comment as click-disclosable private notes (DL131); query still uses isInvisibleInset.
   if (kind === "Note Note" || kind === "Note Comment") {
     const label = kind === "Note Comment" ? "Comment" : "Note";
     const cls = kind === "Note Comment" ? "note-comment" : "note-note";
     const inner = renderInsetLayouts(block, parentState, ctx);
-    return wrapDisclosure(`note ${cls}`, label, inner);
+    return wrapDisclosure(ctx, `note ${cls}`, label, inner);
   }
   if (isInvisibleInset(block)) return "";
   if (kind === "Note Greyedout" || kind.startsWith("Note Greyedout")) {
     // DL131: Greyedout is a collapsed chip (user); open body stays grey.
     // Inline color so CLI Live (no webview CSS) still reads grey.
     const inner = renderInsetLayouts(block, parentState, ctx);
-    return wrapDisclosure(
+    return wrapDisclosure(ctx,
       "note note-greyedout",
       "Greyedout",
       `<span class="note_greyedout" style="color:#A0A0A0">${inner}</span>`,
@@ -1971,7 +2163,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     if (ctx.inTitle) {
       const mark = TITLE_MARKS[ctx.titleFoot] ?? "*".repeat(ctx.titleFoot + 1);
       ctx.titleFoot += 1;
-      return wrapDisclosure(
+      return wrapDisclosure(ctx,
         "foot foot_intitle",
         mark,
         renderFootInner(block, parentState, ctx),
@@ -1982,7 +2174,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     // the counter (inherited `deleted` flag propagates into nested feet too).
     const deleted = parentState.deletedDepth > 0 || parentState.outerDeletedDepth > 0;
     const n = deleted ? ctx.footnote + 1 : ++ctx.footnote;
-    return wrapDisclosure(
+    return wrapDisclosure(ctx,
       "foot",
       String(n),
       renderInsetLayouts(block, parentState, ctx),
@@ -2010,7 +2202,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind === "Argument 1") {
     // Short-title slot (and other Arg-1 uses): Live chip; parents still read via argumentText.
-    return wrapPlainTextMarker(
+    return wrapPlainTextMarker(ctx,
       "argument short-title",
       "Short Title",
       nomenclText(block) || collectVisibleText(block),
@@ -2021,13 +2213,13 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     // Inside a Nomenclature they carry the description and render as a nested
     // expandable box (disclosure_collapsibles corpus).
     if (ctx.inNomencl) {
-      return wrapDisclosure("argument", "Argument", renderInsetLayouts(block, parentState, ctx));
+      return wrapDisclosure(ctx, "argument", "Argument", renderInsetLayouts(block, parentState, ctx));
     }
     return "";
   }
   if (kind === "Phantom" || kind.startsWith("Phantom ")) {
     // DL131 Live-only: native XHTML drops Phantom; Live shows body as plain text.
-    return wrapPlainTextMarker("phantom", phantomSummaryLabel(kind), collectVisibleText(block));
+    return wrapPlainTextMarker(ctx, "phantom", phantomSummaryLabel(kind), collectVisibleText(block));
   }
   if (kind === "Info" || kind.startsWith("Info ")) {
     return renderInfo(block, ctx);
@@ -2035,7 +2227,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind === "Tabular") return renderTabular(block, parentState, ctx);
   if (kind.startsWith("Float ")) return renderFloat(block, kind, parentState, ctx);
   if (kind === "Marginal" || kind.startsWith("Marginal ")) {
-    return wrapDisclosure(
+    return wrapDisclosure(ctx,
       "marginal",
       "Margin",
       renderInsetLayouts(block, parentState, ctx),
@@ -2070,7 +2262,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
       ? `${entry.terms.join(", ")} (see ${entry.see})`
       : entry.terms.join(", ") || entry.see;
     const label = entry.terms.join(", ") || entry.see || "Index";
-    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapPlainTextMarker("index-marker", label, text)}`;
+    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapPlainTextMarker(ctx, "index-marker", label, text)}`;
   }
   if (kind.startsWith("IndexMacro ") || kind === "IndexMacro") return "";
   if (kind === "Nomenclature" || kind.startsWith("Nomenclature ")) {
@@ -2082,7 +2274,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     ctx.inNomencl = true;
     const inner = renderInsetLayouts(block, parentState, ctx);
     ctx.inNomencl = prev;
-    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapDisclosure("nomencl", label, inner)}`;
+    return `<a id="${escapeLiveHtml(entry.id)}"></a>${wrapDisclosure(ctx, "nomencl", label, inner)}`;
   }
   if (kind === "Preview" || kind.startsWith("Preview ")) {
     // Non-click chrome box (not <details>); no extra "Preview" label — body alone.
@@ -2113,7 +2305,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const body = renderInsetLayouts(block, parentState, ctx);
     const head = preface ? `<div class="multicol-preface">${escapeLiveHtml(preface)}</div>` : "";
     const box = `${head}<div class="${flexNativeClass(kind)}" style="column-count: ${escapeLiveHtml(n)}">${body}</div>`;
-    return wrapDisclosure("flex-container multicol", "Columns", box);
+    return wrapDisclosure(ctx, "flex-container multicol", "Columns", box);
   }
   if (kind.startsWith("Flex Rotatebox")) {
     const angle = argumentText(block, "2") || "0";
@@ -2141,7 +2333,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const css = maxW && !maxW.startsWith("\\") ? widthToCss(maxW) : "";
     const style = css ? ` style="max-width: ${escapeLiveHtml(css)}"` : "";
     const box = `<div class="${flexNativeClass(kind)}"${style}>${renderInsetLayouts(block, parentState, ctx)}</div>`;
-    return wrapDisclosure("flex-container minipage", "Minipage", box);
+    return wrapDisclosure(ctx, "flex-container minipage", "Minipage", box);
   }
   if (kind === "Flex URL" || kind.startsWith("Flex URL")) {
     // Native: outer span.flex_url + HTMLInnerTag a (stdinsets.inc).
@@ -2169,19 +2361,19 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     const cls = kind.includes("Marginnote") ? "marginnote" : "sidenote";
     const label = kind.includes("Marginnote") ? "Margin note" : "Sidenote";
     const aside = `<aside class="${cls} marginal">${renderInsetLayouts(block, parentState, ctx)}</aside>`;
-    return wrapDisclosure(`flex-container ${cls}`, label, aside);
+    return wrapDisclosure(ctx, `flex-container ${cls}`, label, aside);
   }
   // tcolorbox.module — DocBook phrase role; Live uses a bordered box.
   if (kind.startsWith("Flex ") && kind.includes("Color Box")) {
     const box = `<div class="color-box">${renderInsetLayouts(block, parentState, ctx)}</div>`;
-    return wrapDisclosure("flex-container color-box", "Color Box", box);
+    return wrapDisclosure(ctx, "flex-container color-box", "Color Box", box);
   }
   // Literate / specialty Flex insets — semantic wrappers (not UNKNOWN; not bare passthrough).
   if (kind.startsWith("Flex Chunk")) {
     const title = argumentText(block, "1").trim();
     const head = title ? `<div class="chunk-title">${escapeLiveHtml(title)}</div>` : "";
     const box = `<div class="chunk">${head}<pre class="chunk-body">${renderInsetLayouts(block, parentState, ctx)}</pre></div>`;
-    return wrapDisclosure("flex-container chunk", title || "Chunk", box);
+    return wrapDisclosure(ctx, "flex-container chunk", title || "Chunk", box);
   }
   if (kind.startsWith("Flex Structure Tree")) {
     return `<pre class="structure-tree">${escapeLiveHtml(collectVisibleText(block))}</pre>`;
@@ -2191,7 +2383,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind.startsWith("Flex ChessBoard")) {
     const box = `<div class="chessboard">${renderInsetLayouts(block, parentState, ctx)}</div>`;
-    return wrapDisclosure("flex-container chessboard", "Chess board", box);
+    return wrapDisclosure(ctx, "flex-container chessboard", "Chess board", box);
   }
   if (kind.startsWith("Flex Mainline")) {
     return `<span class="chess-mainline">${renderFlexInline(block, ctx)}</span>`;
@@ -2204,7 +2396,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   if (kind.startsWith("Flex LandscapeSlide")) {
     const box = `<div class="landscape-slide">${renderInsetLayouts(block, parentState, ctx)}</div>`;
-    return wrapDisclosure("flex-container landscape-slide", "Slide", box);
+    return wrapDisclosure(ctx, "flex-container landscape-slide", "Slide", box);
   }
   if (kind.startsWith("Flex tablenotemark")) {
     return `<sup class="tablenotemark">${renderFlexInline(block, ctx)}</sup>`;
@@ -2217,7 +2409,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   ) {
     const cls = layoutSlug(kind.slice("Flex ".length));
     const aside = `<aside class="pdf-comment ${cls}">${renderInsetLayouts(block, parentState, ctx)}</aside>`;
-    return wrapDisclosure(`flex-container pdf-comment ${cls}`, "PDF comment", aside);
+    return wrapDisclosure(ctx, `flex-container pdf-comment ${cls}`, "PDF comment", aside);
   }
   if (
     kind.startsWith("Flex PDFAction") ||
@@ -2238,7 +2430,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
     enterSubequations(ctx);
     try {
       const box = `<div class="subequations">${renderInsetLayouts(block, parentState, ctx)}</div>`;
-      return wrapDisclosure("flex-container subequations", "Subequations", box);
+      return wrapDisclosure(ctx, "flex-container subequations", "Subequations", box);
     } finally {
       ctx.subeq = null;
     }
@@ -2256,7 +2448,7 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   if (kind.startsWith("Branch ")) {
     if (!branchProducesOutput(block, ctx)) return "";
     const name = kind.slice("Branch ".length).trim() || "Branch";
-    return wrapDisclosure(
+    return wrapDisclosure(ctx,
       "branch",
       `Branch: ${name}`,
       renderInsetLayouts(block, parentState, ctx),
@@ -2570,7 +2762,12 @@ function renderTabular(block: BlockNode, parentState: TraversalState, ctx: Rende
     const spanAttr = span > 1 ? ` colspan="${span}"` : "";
     const rowAttr = rowspan > 1 ? ` rowspan="${rowspan}"` : "";
     const cell = cells[i];
-    html += `<td${spanAttr}${rowAttr}${style}>${cell ? renderCell(cell, parentState, ctx) : ""}</td>`;
+    const row = Math.floor(i / usedCols) + 1;
+    const column = c + 1;
+    const selector = ctx.currentInsetSelector ?? "inset[Tabular]";
+    const id = takeOwnerId(ctx);
+    emitToken(ctx, id, selector, { row, column });
+    html += `<td${spanAttr}${rowAttr}${style}${mappingAttrs(id)}>${cell ? renderCell(cell, parentState, ctx) : ""}</td>`;
     c += span;
     if (c >= usedCols) {
       html += "</tr>";
@@ -2597,7 +2794,7 @@ function renderBox(block: BlockNode, kind: string, parentState: TraversalState, 
     ? (nested[0] ? renderLayoutInline(nested[0].node, ctx) : "")
     : renderInsetLayouts(block, parentState, ctx);
   const box = `<div class="${escapeLiveHtml(variant)}"${style}>${inner}</div>`;
-  return wrapDisclosure(`box ${layoutSlug(variant)}`, "Box", box);
+  return wrapDisclosure(ctx, `box ${layoutSlug(variant)}`, "Box", box);
 }
 
 /**
@@ -2605,6 +2802,7 @@ function renderBox(block: BlockNode, kind: string, parentState: TraversalState, 
  * Always starts collapsed (J5). Hover must not open.
  */
 function wrapDisclosure(
+  ctx: RenderCtx,
   className: string,
   summaryLabel: string,
   bodyHtml: string,
@@ -2612,15 +2810,26 @@ function wrapDisclosure(
 ): string {
   const sumCls = opts?.summaryClass ?? "disclose-summary";
   const bodyCls = opts?.bodyClass ?? "disclose-body";
-  return `<details class="disclose ${escapeLiveHtml(className)}"><summary class="${escapeLiveHtml(sumCls)}">${escapeLiveHtml(summaryLabel)}</summary><span class="${escapeLiveHtml(bodyCls)}">${bodyHtml}</span></details>`;
+  let idAttr = "";
+  if (ctx.currentInsetSelector) {
+    const id = takeOwnerId(ctx);
+    emitToken(ctx, id, ctx.currentInsetSelector);
+    idAttr = mappingAttrs(id);
+  }
+  return `<details class="disclose ${escapeLiveHtml(className)}"${idAttr}><summary class="${escapeLiveHtml(sumCls)}">${escapeLiveHtml(summaryLabel)}</summary><span class="${escapeLiveHtml(bodyCls)}">${bodyHtml}</span></details>`;
 }
 
 /** Escaped plain-text chip for denylist markers (ERT / Phantom / Index / Nomencl). */
-function wrapPlainTextMarker(className: string, summaryLabel: string, rawText: string): string {
+function wrapPlainTextMarker(
+  ctx: RenderCtx,
+  className: string,
+  summaryLabel: string,
+  rawText: string,
+): string {
   const text = rawText.replace(/\s+/g, " ").trim();
   const body =
     `<code class="marker-body">${escapeLiveHtml(text || `(empty ${summaryLabel})`)}</code>`;
-  return wrapDisclosure(className, summaryLabel, body);
+  return wrapDisclosure(ctx, className, summaryLabel, body);
 }
 
 function phantomSummaryLabel(kind: string): string {
@@ -2950,13 +3159,13 @@ function renderFlexDefault(
   const fromLayout = renderFlexFromLayout(kind, name, multipar, block, parentState, ctx);
   if (fromLayout !== undefined) {
     return multipar
-      ? wrapDisclosure(`flex-container ${slug}`, name || "Flex", fromLayout)
+      ? wrapDisclosure(ctx, `flex-container ${slug}`, name || "Flex", fromLayout)
       : fromLayout;
   }
 
   if (multipar) {
     const box = `<div class="flex ${slug}">${renderInsetLayouts(block, parentState, ctx)}</div>`;
-    return wrapDisclosure(`flex-container ${slug}`, name || "Flex", box);
+    return wrapDisclosure(ctx, `flex-container ${slug}`, name || "Flex", box);
   }
   return `<span class="flex ${slug}">${renderFlexInline(block, ctx)}</span>`;
 }
@@ -3158,7 +3367,7 @@ function renderWrap(block: BlockNode, parentState: TraversalState, ctx: RenderCt
     ctx.inWrap = prev;
   }
   const wrap = `<div class="wrap wrap-${side}" style="width: ${escapeLiveHtml(width)}">${inner}</div>`;
-  return wrapDisclosure(
+  return wrapDisclosure(ctx,
     `wrap wrap-${side} wrap-${layoutSlug(variant)}`,
     floatTypeLabel("Wrap", variant),
     wrap,
@@ -3228,7 +3437,7 @@ function renderListings(block: BlockNode, parentState: TraversalState, ctx: Rend
 function renderFloat(block: BlockNode, kind: string, parentState: TraversalState, ctx: RenderCtx): string {
   const variant = kind.slice("Float ".length).trim() || "figure";
   const figure = renderCaptionedFloat(block, variant, ctx, parentState);
-  return wrapDisclosure(
+  return wrapDisclosure(ctx,
     `float float-${layoutSlug(variant)}`,
     floatDisclosureLabel(variant),
     figure,
@@ -3407,7 +3616,11 @@ function renderBibEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string
   let html = `<div class="bibliography"><h2 class="bibliography">${escapeLiveHtml(title)}</h2>`;
   let i = start;
   while (i < items.length && items[i].layout === "Bibliography" && items[i].depth === items[start].depth) {
-    html += `<div class="bibitem">${renderLayoutInline(items[i].node, ctx)}</div>`;
+    html += withLayout(ctx, items[i].layout, (selector) => {
+      const id = takeOwnerId(ctx);
+      emitToken(ctx, id, selector);
+      return `<div class="bibitem"${mappingAttrs(id)}>${renderLayoutInline(items[i].node, ctx)}</div>`;
+    });
     i++;
   }
   html += "</div>";
@@ -3621,7 +3834,10 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
   if (subtype === "bibtex") return renderBibliography(ctx);
   if (subtype === "toc") return renderToc(ctx);
   if (subtype === "label") {
-    return name ? `<a id="${escapeLiveHtml(xmlId(name))}"></a>` : "";
+    if (!name) return "";
+    const id = xmlId(name);
+    if (ctx.currentInsetSelector) emitToken(ctx, id, ctx.currentInsetSelector);
+    return `<a${mappingAttrs(id)}></a>`;
   }
   if (subtype === "nomenclature_print") return "";
   if (subtype === "index_print") return renderIndex(ctx, findProperty(block, "name") || "Index");

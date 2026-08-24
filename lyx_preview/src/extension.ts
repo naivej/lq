@@ -24,10 +24,26 @@ import {
 } from "./outlineNest";
 import { LyxOutlineTreeProvider } from "./outlineTree";
 import { renderWebviewHtml } from "./webview";
+import {
+  LM_TOOL_NAME,
+  LiveSelectionStore,
+  compactSelector,
+  invokeLiveSelection,
+  parseSelectMessage,
+  resolveLiveSelectionPath,
+  writeLiveSelectionFile,
+  type LiveSelectionRecord,
+} from "./liveSelection";
 
 const VIEW_TYPE = "lyxPreview.live";
 
 export type ChangeViewMode = "original" | "tracked" | "clean";
+
+interface LiveSelectionHost {
+  selection: LiveSelectionStore;
+  persistSelection: (record: LiveSelectionRecord) => void;
+  onSelectionChange: (record: LiveSelectionRecord | undefined) => void;
+}
 
 class LivePreviewPanel {
   private static current: LivePreviewPanel | undefined;
@@ -46,9 +62,11 @@ class LivePreviewPanel {
     private readonly panel: vscode.WebviewPanel,
     private document: vscode.TextDocument,
     private readonly outlineTree: LyxOutlineTreeProvider,
+    private readonly host: LiveSelectionHost,
     private readonly onChangeFocus?: (entry: LiveChangeEntry | undefined) => void,
   ) {
     this.filePath = normalizeFsPath(document.uri.fsPath);
+    void vscode.commands.executeCommand("setContext", "lyxPreview.liveOpen", true);
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     this.panel.webview.onDidReceiveMessage((msg: unknown) => {
       if (msg !== null && typeof msg === "object" && (msg as { type?: unknown }).type === "ready") {
@@ -63,6 +81,24 @@ class LivePreviewPanel {
           : undefined;
         this.onChangeFocus?.(entry);
       }
+      const select = parseSelectMessage(msg);
+      if (select) {
+        const render = this.session.lastValid;
+        if (!render) return;
+        const record = this.host.selection.applySelect(
+          render.tokens,
+          select.id,
+          select.selectedText,
+          select.multi,
+          {
+            file: this.filePath,
+            diskHash: render.source.diskHash,
+            stale: this.session.stale || this.document.isDirty,
+            mode: this.mode,
+          },
+        );
+        this.publishSelection(record);
+      }
     }, null, this.disposables);
 
     this.disposables.push(vscode.workspace.onDidSaveTextDocument((saved) => {
@@ -76,6 +112,8 @@ class LivePreviewPanel {
       this.document = change.document;
       if (change.contentChanges.length === 0) return;
       this.session.markStale();
+      const staleRecord = this.host.selection.markStale();
+      this.publishSelection(staleRecord);
       // DL132 P2: update the stale banner without rebuilding the whole webview.
       if (this.webviewReady) {
         void this.panel.webview.postMessage({ type: "stale" });
@@ -107,6 +145,7 @@ class LivePreviewPanel {
   static createOrShow(
     document: vscode.TextDocument,
     outlineTree: LyxOutlineTreeProvider,
+    host: LiveSelectionHost,
     onChangeFocus?: (entry: LiveChangeEntry | undefined) => void,
   ): void {
     const column = vscode.window.activeTextEditor?.viewColumn ?? vscode.ViewColumn.Beside;
@@ -114,7 +153,7 @@ class LivePreviewPanel {
       LivePreviewPanel.current.panel.reveal(column);
       if (!sameFsPath(LivePreviewPanel.current.filePath, document.uri.fsPath)) {
         LivePreviewPanel.current.dispose();
-        LivePreviewPanel.createOrShow(document, outlineTree, onChangeFocus);
+        LivePreviewPanel.createOrShow(document, outlineTree, host, onChangeFocus);
         return;
       }
       LivePreviewPanel.current.document = document;
@@ -137,7 +176,7 @@ class LivePreviewPanel {
         localResourceRoots: [...roots.values()],
       },
     );
-    LivePreviewPanel.current = new LivePreviewPanel(panel, document, outlineTree, onChangeFocus);
+    LivePreviewPanel.current = new LivePreviewPanel(panel, document, outlineTree, host, onChangeFocus);
   }
 
   /** Scroll Live Preview to heading id (focus unchanged). */
@@ -210,6 +249,14 @@ class LivePreviewPanel {
       // editor buffer still differs (edits during the render) — DL132 P2.
       this.session.stale = this.document.isDirty;
       this.publishOutline(render.outline, render.navigate, render.changes);
+      this.publishSelection(
+        this.host.selection.rematch(
+          render.tokens,
+          this.filePath,
+          render.source.diskHash,
+          this.session.stale,
+        ),
+      );
       this.pending = false;
       this.paint();
     } catch (error) {
@@ -223,6 +270,11 @@ class LivePreviewPanel {
         : error instanceof Error ? error.message : String(error);
       this.paint(message);
     }
+  }
+
+  private publishSelection(record: LiveSelectionRecord | undefined): void {
+    this.host.onSelectionChange(record);
+    if (record) this.host.persistSelection(record);
   }
 
   private paint(error?: string): void {
@@ -267,6 +319,9 @@ class LivePreviewPanel {
     this.outlineTree.clear();
     forgetOutline(this.filePath);
     this.onChangeFocus?.(undefined);
+    this.host.selection.clear();
+    this.host.onSelectionChange(undefined);
+    void vscode.commands.executeCommand("setContext", "lyxPreview.liveOpen", false);
     for (const d of this.disposables) d.dispose();
   }
 }
@@ -304,6 +359,31 @@ export function activate(context: vscode.ExtensionContext): void {
     showCollapseAll: true,
   });
   const changeStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
+  const selectStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 101);
+  const selection = new LiveSelectionStore();
+  let persistTimer: ReturnType<typeof setTimeout> | undefined;
+  const selectionPath = (): string =>
+    resolveLiveSelectionPath({
+      env: process.env,
+      workspaceFolder: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
+      globalStoragePath: context.globalStorageUri.fsPath,
+    });
+  const persistSelection = (record: LiveSelectionRecord): void => {
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      void writeLiveSelectionFile(selectionPath(), record);
+    }, 200);
+  };
+  const onSelectionChange = (record: LiveSelectionRecord | undefined): void => {
+    if (!record) {
+      selectStatus.hide();
+      return;
+    }
+    selectStatus.text = `LyX ${compactSelector(record)}`;
+    selectStatus.tooltip = record.selector;
+    selectStatus.show();
+  };
+  const host: LiveSelectionHost = { selection, persistSelection, onSelectionChange };
   const onLiveChangeFocus = (entry: LiveChangeEntry | undefined): void => {
     if (!entry) {
       changeStatus.hide();
@@ -332,13 +412,20 @@ export function activate(context: vscode.ExtensionContext): void {
   context.subscriptions.push(
     treeView,
     changeStatus,
+    selectStatus,
+    vscode.lm.registerTool(LM_TOOL_NAME, {
+      invoke: () =>
+        new vscode.LanguageModelToolResult([
+          new vscode.LanguageModelTextPart(invokeLiveSelection(selection.get())),
+        ]),
+    }),
     vscode.commands.registerCommand("lyx-preview.open", () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor || !editor.document.fileName.toLowerCase().endsWith(".lyx")) {
         void vscode.window.showWarningMessage("Open a .lyx document before starting LyX Live Preview.");
         return;
       }
-      LivePreviewPanel.createOrShow(editor.document, outlineTree, onLiveChangeFocus);
+      LivePreviewPanel.createOrShow(editor.document, outlineTree, host, onLiveChangeFocus);
     }),
     vscode.commands.registerCommand("lyx-preview.viewOriginal", () => {
       LivePreviewPanel.setMode("original");
