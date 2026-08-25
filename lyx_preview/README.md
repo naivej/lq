@@ -131,7 +131,7 @@ published on two buses:
 | **VS Code Chat** | `#lyxSelection` |
 | **Other sidebars** (Claude Code, Cursor, Cline, …) | `@.lq/live-selection.json` — type `@` then the path if the picker skips gitignored files |
 
-`stale: true` means the editor buffer has unsaved edits — inspect only until save. `coords` is `{row, column}` (1-based) for table cells. `multi: true` means a highlight crossed owners; v1 still sends the **anchor** owner’s selector plus the full `selectedText`.
+`stale: true` means the editor buffer has unsaved edits — inspect only until save. `coords` is unused for targeting (null on new tokens; leftover `{row, column}` may still appear in old JSON). `multi: true` means a highlight crossed owners; v1 still sends the **anchor** owner’s selector plus the full `selectedText`. Table-cell `selector` is the cell’s layout path (`inset[Tabular] … inset[Text] … layout[…]`), not the Tabular inset.
 
 ## Use
 

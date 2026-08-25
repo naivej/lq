@@ -30,9 +30,9 @@ Run the same sequence for every task:
    | `diskHash` | SHA-256 of the saved bytes of **`file`** (the edit target). Snapshot identity only. |
    | `stale` | `true` → inspect only until the user saves **`file`** and a new pointer lands. `false` → pointer matches that file's saved bytes. Master dirtiness alone does not stale a child pointer. |
    | `mode` | Preview shows `original` (before changes) / `tracked` (with tracked changes) / `clean` (after accepting all changes). |
-   | `selector` | Owner selector for `lq read <file> "<selector>"` on **`file`**. |
-   | `coords` | `{row, column}` 1-based table cell, else `null`. |
-   | `selectedText` | Phrase from a highlight, for `--find`; empty if caret-only. |
+   | `selector` | Owner for `lq read <file> "<selector>"` on **`file`**. A table-cell highlight is a nested layout path (`inset[Tabular]:nth-match(N) inset[Text]:nth-match(k) layout[Name]`), not the Tabular inset. |
+   | `coords` | Ignore for targeting. New cell tokens set this to `null`; there is no CLI coords flag. |
+   | `selectedText` | Highlight spelling from Live HTML, empty if caret-only. **Confirm it (or a CST equivalent) in `lq read` of `selector` before `--find`.** Live is a projection: heading numbers (`1 Figures` vs `Figures`), SpecialChar (`LyX` vs `\SpecialChar LyX`), resolved hrefs vs `inset[CommandInset href]`. If the phrase is missing, inspect default `lq read` `data` (not only `--text-only` on a coarse inset) and `--find` the CST form, or drop `--find` and edit the owner another way. |
    | `changeId` | `change-N` when the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this Live render |
    | `multi` | `true` if a highlight crossed owners; v1 still sends the **anchor** owner's selector plus the full `selectedText`. |
    | `via` | Optional. Present when `file` is an included child shown in another document's preview: `{ file, selector }` names the **parent** `.lyx` and the `inset[CommandInset include]:nth-match(N)` (or `input`) that inlined the child. Use for context only — mutate `file`, not `via`, unless the user asked to change the Include itself. |

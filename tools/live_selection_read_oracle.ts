@@ -3,7 +3,7 @@
  * `lq read` the published pointer and check the read-back owns the highlight.
  *
  * Selection kinds (Help/*.lyx plus my_template): caret, unique-phrase highlight,
- * include-child (via), table-cell coords, footnote/note nested paths, headings,
+ * include-child (via), table-cell nested layout paths, footnote/note nested paths, headings,
  * lists, frontmatter, formula/caption/float when mapped, multi-owner, first/last
  * token, short unique words.
  *
@@ -19,7 +19,7 @@
  */
 import { basename, dirname, fromFileUrl, join } from "@std/path";
 import { parse } from "../src/parser.ts";
-import type { Node } from "../src/ast.ts";
+import type { BlockNode, Node } from "../src/ast.ts";
 import { query } from "../src/query.ts";
 import { concatenateTextNodes } from "../src/text_utils.ts";
 import { extractAllText } from "../src/tracked_changes.ts";
@@ -113,12 +113,10 @@ function formatTextOnly(nodes: Node[]): string {
     let text: string;
     if (node.type === "block" && node.tag === "inset") {
       text = node.children
-        .filter((c) => c.type === "block" && c.tag === "layout")
-        .map((c) => {
-          const layout = c;
-          return "layout[" + ((layout.args || "").trim()) + "] " +
-            extractAllText(layout).trim();
-        })
+        .filter((c): c is BlockNode => c.type === "block" && c.tag === "layout")
+        .map((c) =>
+          "layout[" + ((c.args || "").trim()) + "] " + extractAllText(c).trim()
+        )
         .join("\n");
     } else {
       text = extractAllText(node).trim();
@@ -142,8 +140,10 @@ function ownsPhrase(nodes: Node[], phrase: string): boolean {
 function classifyToken(t: LiveToken): string {
   if (t.id.startsWith("change-")) return "change";
   if (t.bundle.via) return "include-child";
-  if (t.bundle.coords) return "table-cell";
   const s = t.bundle.selector;
+  if (/inset\[Tabular/.test(s) && /inset\[Text\]/.test(s) && /layout\[/.test(s)) {
+    return "table-cell";
+  }
   const inset = s.match(/inset\[([^\]]+)\]/);
   const layout = s.match(/layout\[([^\]]+)\]/);
   if (inset) {
@@ -737,7 +737,6 @@ async function main() {
       ks.cases++;
       const json = await writeAndReadRecord(tmp, c.record);
       if (!json.ok || !json.roundTrip) {
-        ks.cases = ks.cases;
         fails.push({
           file,
           kind: c.kind,

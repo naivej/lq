@@ -208,7 +208,6 @@ export function invokeLiveSelection(record: LiveSelectionRecord | undefined): st
 
 export function compactSelector(record: LiveSelectionRecord): string {
   let text = record.selector;
-  if (record.coords) text += ` [${record.coords.row},${record.coords.column}]`;
   if (record.multi) text += " +";
   if (record.via) text += " via";
   return text;

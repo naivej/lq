@@ -66,7 +66,7 @@ export const LIVE_DEFERRED_FIELDS = [
   "mode",
 ] as const;
 
-/** Table-cell coordinates on a mapped owner (1-based, DL134). */
+/** Table-cell coordinates on a mapped owner (1-based). Leftover JSON may still carry these; new cell tokens do not (DL138). */
 export interface LiveTokenCoords {
   row: number;
   column: number;
@@ -78,7 +78,7 @@ export interface LiveTokenVia {
   selector: string;
 }
 
-/** Read-first lq bundle: selector path plus optional cell coords. Not a mutation selector. */
+/** Read-first lq bundle: selector path plus optional leftover cell coords. Not a mutation selector. */
 export interface LiveTokenBundle {
   selector: string;
   coords?: LiveTokenCoords;
@@ -469,7 +469,7 @@ interface RenderCtx {
   tokSeq: number;
   /** Selector of the layout currently being rendered (change-region owner). */
   currentLayoutSelector?: string;
-  /** Selector of the inset currently being rendered (disclosure / cell owner). */
+  /** Selector of the inset currently being rendered (disclosure chip owner). */
   currentInsetSelector?: string;
   /** CST node for `currentInsetSelector` (nested layout paths, DL135). */
   currentInsetNode?: BlockNode;
@@ -862,6 +862,69 @@ function descendantLayoutsNamed(inset: BlockNode, name: string): BlockNode[] {
   return out;
 }
 
+/** Document-order descendants matching `query()` `inset[Name]` under `inset`. */
+function descendantInsetsNamed(inset: BlockNode, name: string): BlockNode[] {
+  const out: BlockNode[] = [];
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type !== "block") continue;
+      if (n.tag === "inset" && argsMatchSelector(n.args, name)) out.push(n);
+      walk(n.children);
+    }
+  };
+  walk(inset.children);
+  return out;
+}
+
+function scopedNthMatch(
+  tag: "inset" | "layout",
+  name: string,
+  node: BlockNode,
+  siblings: BlockNode[],
+): string {
+  const n = siblings.indexOf(node) + 1;
+  return siblings.length > 1 && n > 0
+    ? `${tag}[${name}]:nth-match(${n})`
+    : `${tag}[${name}]`;
+}
+
+/**
+ * J1 B: cell layout path is Tabular → that table's Text cell → layout.
+ * Do not route this through `layoutOwnerSelector` (Tabular is excluded from
+ * `isPathPrefixInset` so a stray `withLayout` cannot emit the one-hop form).
+ */
+function cellLayoutSelector(
+  ctx: RenderCtx,
+  tabular: BlockNode,
+  textInset: BlockNode,
+  layoutNode: BlockNode,
+  name: string,
+): string {
+  const tableSel = insetOwnerSelector(ctx, tabular);
+  const texts = descendantInsetsNamed(tabular, "Text");
+  const textPart = scopedNthMatch("inset", "Text", textInset, texts);
+  const same = descendantLayoutsNamed(textInset, name);
+  const layoutPart = scopedNthMatch("layout", name, layoutNode, same);
+  return `${tableSel} ${textPart} ${layoutPart}`;
+}
+
+function withCellLayout(
+  ctx: RenderCtx,
+  tabular: BlockNode,
+  textInset: BlockNode,
+  item: FlowItem,
+  fn: (selector: string) => string,
+): string {
+  const selector = cellLayoutSelector(ctx, tabular, textInset, item.node, item.layout);
+  const prev = ctx.currentLayoutSelector;
+  ctx.currentLayoutSelector = selector;
+  try {
+    return fn(selector);
+  } finally {
+    ctx.currentLayoutSelector = prev;
+  }
+}
+
 function activeQueryIndex(
   ctx: RenderCtx,
 ): Map<BlockNode, { tag: "layout" | "inset"; name: string; globalN: number }> {
@@ -905,10 +968,9 @@ function emitToken(
   ctx: RenderCtx,
   id: string,
   selector: string,
-  coords?: LiveTokenCoords,
 ): void {
   ctx.usedTokenIds.add(id);
-  const bundle: LiveTokenBundle = coords ? { selector, coords } : { selector };
+  const bundle: LiveTokenBundle = { selector };
   if (ctx.foreign) {
     bundle.file = ctx.foreign.file;
     bundle.diskHash = ctx.foreign.diskHash;
@@ -2761,10 +2823,22 @@ function formulaSource(block: BlockNode): string {
   return fromArgs || fromChildren;
 }
 
-function renderCell(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
+function renderCell(
+  block: BlockNode,
+  parentState: TraversalState,
+  ctx: RenderCtx,
+  tabular: BlockNode,
+): string {
   const nested = flattenFlow(block.children, 0);
   if (nested.length === 0) return renderChildren(block.children, enterTraversalState(parentState), ctx);
-  return nested.map((item) => renderLayoutInline(item.node, ctx, false, parentState)).join("");
+  return nested.map((item) =>
+    withCellLayout(ctx, tabular, block, item, (selector) => {
+      const id = takeOwnerId(ctx);
+      emitToken(ctx, id, selector);
+      const inner = renderLayoutInline(item.node, ctx, false, parentState);
+      return `<span${mappingAttrs(id)}>${inner}</span>`;
+    })
+  ).join("");
 }
 
 function parseXmlAttrs(raw: string): Record<string, string> {
@@ -2903,12 +2977,16 @@ function renderTabular(block: BlockNode, parentState: TraversalState, ctx: Rende
     const spanAttr = span > 1 ? ` colspan="${span}"` : "";
     const rowAttr = rowspan > 1 ? ` rowspan="${rowspan}"` : "";
     const cell = cells[i];
-    const row = Math.floor(i / usedCols) + 1;
-    const column = c + 1;
-    const selector = ctx.currentInsetSelector ?? "inset[Tabular]";
+    const nested = cell ? flattenFlow(cell.children, 0) : [];
+    const first = nested[0];
+    const tdSelector = first && cell
+      ? cellLayoutSelector(ctx, block, cell, first.node, first.layout)
+      : cell
+      ? `${insetOwnerSelector(ctx, block)} ${scopedNthMatch("inset", "Text", cell, descendantInsetsNamed(block, "Text"))} layout[Plain Layout]`
+      : (ctx.currentInsetSelector ?? "inset[Tabular]");
     const id = takeOwnerId(ctx);
-    emitToken(ctx, id, selector, { row, column });
-    html += `<td${spanAttr}${rowAttr}${style}${mappingAttrs(id)}>${cell ? renderCell(cell, parentState, ctx) : ""}</td>`;
+    emitToken(ctx, id, tdSelector);
+    html += `<td${spanAttr}${rowAttr}${style}${mappingAttrs(id)}>${cell ? renderCell(cell, parentState, ctx, block) : ""}</td>`;
     c += span;
     if (c >= usedCols) {
       html += "</tr>";

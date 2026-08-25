@@ -12,6 +12,7 @@ import { hashText } from "../src/cache.ts";
 import type { Node } from "../src/ast.ts";
 import { query } from "../src/query.ts";
 import { concatenateTextNodes } from "../src/text_utils.ts";
+import { extractAllText } from "../src/tracked_changes.ts";
 import {
   LIVE_CAPABILITIES,
   LIVE_CONTRACT,
@@ -273,6 +274,11 @@ function assertPhraseMapsToQuery(
   return token.bundle.selector;
 }
 
+/** J1 B: Tabular → that table's Text cell → layout. Not a bare Tabular inset. */
+function isTableCellLayoutSelector(sel: string): boolean {
+  return /inset\[Tabular/.test(sel) && /inset\[Text\]/.test(sel) && /layout\[/.test(sel);
+}
+
 Deno.test("Live mapping - headings_paragraphs tokens match HTML ids (DL134)", async () => {
   const file = syntheticPath("headings_paragraphs.lyx");
   const text = await Deno.readTextFile(file);
@@ -294,19 +300,56 @@ Deno.test("Live mapping - headings_paragraphs tokens match HTML ids (DL134)", as
   assertEquals(standard[0]?.bundle.selector, "layout[Standard]:nth-match(1)");
 });
 
-Deno.test("Live mapping - table cells carry 1-based coords (DL134)", async () => {
+Deno.test("Live mapping - table cells publish nested layout paths (DL138)", async () => {
   const file = syntheticPath("table_figure_foot_math.lyx");
   const text = await Deno.readTextFile(file);
-  const { response } = await buildLiveResponse(file, parse(text), text);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
   const validated = validateLiveResponse(response);
-  const cells = validated.tokens.filter((t) => t.bundle.coords);
-  assert(cells.length >= 1, "tabular cells should be mapped");
-  for (const cell of cells) {
-    assert(cell.bundle.selector.includes("inset[Tabular]") || cell.bundle.selector.includes("inset[tabular]"));
-    assert(cell.bundle.coords!.row >= 1);
-    assert(cell.bundle.coords!.column >= 1);
-    assertStringIncludes(response.html, `id="${cell.id}"`);
+  assertEquals(validated.tokens.filter((t) => t.bundle.coords).length, 0);
+  const tds = [...response.html.matchAll(/<td\b([^>]*)>/g)];
+  assert(tds.length >= 4, "2x2 table should emit four cells");
+  for (const td of tds) {
+    assert(/\bdata-ref="/.test(td[1]), "every <td> stays mapped (J2 B padding/empty)");
   }
+  const expected: Record<string, string> = {
+    A: "inset[Tabular]:nth-match(1) inset[Text]:nth-match(1) layout[Plain Layout]",
+    B: "inset[Tabular]:nth-match(1) inset[Text]:nth-match(2) layout[Plain Layout]",
+    C: "inset[Tabular]:nth-match(1) inset[Text]:nth-match(3) layout[Plain Layout]",
+    D: "inset[Tabular]:nth-match(1) inset[Text]:nth-match(4) layout[Plain Layout]",
+  };
+  for (const [letter, want] of Object.entries(expected)) {
+    const sel = assertPhraseMapsToQuery(response.html, validated.tokens, ast, letter);
+    assertEquals(sel, want);
+    assert(isTableCellLayoutSelector(sel));
+    assert(!/^inset\[Tabular\]:nth-match\(\d+\)$/.test(sel));
+    const matches = query(ast, sel);
+    assertEquals(matches.length, 1, `unique cell ${letter} should query to one node`);
+    assert(
+      matches.some((n) => extractAllText(n).includes(letter)),
+      `--text-only of ${sel} should contain ${letter}`,
+    );
+  }
+});
+
+Deno.test("Live mapping - Intro table phrase is a cell layout (DL138)", async () => {
+  const file = fromFileUrl(new URL("./fixtures/Help/Intro.lyx", import.meta.url));
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  const phrase = "name/description";
+  const sel = assertPhraseMapsToQuery(response.html, validated.tokens, ast, phrase);
+  assert(isTableCellLayoutSelector(sel), `expected nested cell layout, got ${sel}`);
+  assert(!/^inset\[Tabular\]:nth-match\(\d+\)$/.test(sel));
+  const token = validated.tokens.find((t) => t.bundle.selector === sel);
+  assert(token);
+  assertEquals(token.bundle.coords, undefined);
+  const matches = query(ast, sel);
+  assert(
+    matches.some((n) => extractAllText(n).includes(phrase)),
+    `--text-only of ${sel} should contain ${JSON.stringify(phrase)}`,
+  );
 });
 
 Deno.test("Live mapping - review_changes.lyx emits change-N tokens (DL134)", async () => {
@@ -1396,10 +1439,9 @@ Deno.test("Live renderer - Help Development.lyx multirow cells emit rowspan", as
   assertStringIncludes(html, '<article class="lyx-live">');
   assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
   assertStringIncludes(html, 'rowspan="3"');
-  const noAt = html.indexOf(">No</td>");
-  assert(noAt !== -1, "Development.lyx multirow 'No' cell missing");
-  const tdOpen = html.lastIndexOf("<td", noAt);
-  assert(html.slice(tdOpen, noAt).includes('rowspan="3"'), "the 'No' cell is the start of a 3-row span");
+  const noCell = html.match(/<td\b([^>]*)>(?:<span\b[^>]*>)?No/);
+  assert(noCell, "Development.lyx multirow 'No' cell missing");
+  assert(noCell[1].includes('rowspan="3"'), "the 'No' cell is the start of a 3-row span");
 });
 
 Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels", async () => {

@@ -23,7 +23,12 @@ import type { LiveToken } from "./previewSession";
 
 const tokens: LiveToken[] = [
   { id: "tok-1", bundle: { selector: "layout[Standard]:nth-match(12)" } },
-  { id: "tok-2", bundle: { selector: "inset[Tabular]:nth-match(1)", coords: { row: 2, column: 3 } } },
+  {
+    id: "tok-2",
+    bundle: {
+      selector: "inset[Tabular]:nth-match(1) inset[Text]:nth-match(2) layout[Plain Layout]",
+    },
+  },
   { id: "change-3", bundle: { selector: "layout[Standard]:nth-match(4)" } },
 ];
 
@@ -67,9 +72,13 @@ describe("resolveSelection / store", () => {
     });
   });
 
-  it("sets coords for table cells and changeId for change owners", () => {
+  it("leaves coords null for table cells and sets changeId for change owners", () => {
     const cell = resolveSelection(tokens, "tok-2", "", false, baseCtx);
-    assert.deepEqual(cell?.coords, { row: 2, column: 3 });
+    assert.equal(cell?.coords, null);
+    assert.equal(
+      cell?.selector,
+      "inset[Tabular]:nth-match(1) inset[Text]:nth-match(2) layout[Plain Layout]",
+    );
     const change = resolveSelection(tokens, "change-3", "x", false, baseCtx);
     assert.equal(change?.changeId, "change-3");
     assert.equal(change?.selector, "layout[Standard]:nth-match(4)");
@@ -227,7 +236,26 @@ describe("invoke / JSON / path", () => {
 
   it("compacts the selector for the status bar", () => {
     const record = resolveSelection(tokens, "tok-2", "", true, baseCtx)!;
-    assert.equal(compactSelector(record), "inset[Tabular]:nth-match(1) [2,3] +");
+    assert.equal(
+      compactSelector(record),
+      "inset[Tabular]:nth-match(1) inset[Text]:nth-match(2) layout[Plain Layout] +",
+    );
+  });
+
+  it("does not append leftover coords to the status line (DL138 J3)", () => {
+    const leftover: LiveSelectionRecord = {
+      file: "/tmp/doc.lyx",
+      diskHash: "abc",
+      stale: false,
+      mode: "tracked",
+      selector: "inset[Tabular]:nth-match(1)",
+      coords: { row: 2, column: 3 },
+      selectedText: "",
+      changeId: null,
+      multi: false,
+      capturedAt: "2026-08-24T12:00:00.000Z",
+    };
+    assert.equal(compactSelector(leftover), "inset[Tabular]:nth-match(1)");
   });
 
   it("declares the LM tool in package.json", () => {
