@@ -94,7 +94,7 @@ Two supporting surfaces share the same change index:
 
 Selecting in Live (caret or highlight) captures a **read-first** pointer for the
 lq agent. It does **not** jump the `.lyx` editor and is **not** a mutation
-selector. The same record is published on three buses:
+selector. The same record is published on two buses:
 
 ```json
 {
@@ -113,40 +113,17 @@ selector. The same record is published on three buses:
 
 | Bus | How |
 | --- | --- |
-| **VS Code Chat** | Language-model tool `#lyxSelection` (`get_live_selection`). The chip is a hint; `invoke()` returns the record (or `no Live selection`). |
-| **MCP** | Stdio server `out/mcpServer.js`, tool `get_live_selection`. Reads the JSON file (or `LQ_LIVE_SELECTION_PATH`). |
-| **File** | Workspace `.lq/live-selection.json` (gitignored), or the extension globalStorage when there is no workspace folder. |
+| **VS Code Chat** | Language-model tool `#lyxSelection`. The chip is a hint; `invoke()` returns the in-memory record (or `no Live selection`). |
+| **File** | Workspace `.lq/live-selection.json` (gitignored), or the extension globalStorage when there is no workspace folder. Other agents `Read` this path. |
+
+**Hint the agent** after you select in Live (the status bar compact selector confirms a pointer). Do not rely on the webview highlight becoming editor `@selection`.
+
+| Chat | What to type |
+| --- | --- |
+| **VS Code Chat** | `#lyxSelection` |
+| **Other sidebars** (Claude Code, Cursor, Cline, …) | `@.lq/live-selection.json` — type `@` then the path if the picker skips gitignored files |
 
 `stale: true` means the editor buffer has unsaved edits — inspect only until save. `coords` is `{row, column}` (1-based) for table cells. `multi: true` means the highlight crossed owners; v1 still sends the **anchor** owner’s selector plus the full `selectedText`.
-
-Copy-paste MCP snippet (do **not** commit `mcp.json` into a user repo unless they ask). VS Code `.vscode/mcp.json`:
-
-```json
-{
-  "servers": {
-    "lyx-preview": {
-      "type": "stdio",
-      "command": "node",
-      "args": ["<absolute-path-to-lyx_preview>/out/mcpServer.js"]
-    }
-  }
-}
-```
-
-Cursor `mcp.json`:
-
-```json
-{
-  "mcpServers": {
-    "lyx-preview": {
-      "command": "node",
-      "args": ["<absolute-path-to-lyx_preview>/out/mcpServer.js"]
-    }
-  }
-}
-```
-
-Optional: set `LQ_LIVE_SELECTION_PATH` to the JSON file when the MCP cwd is not the workspace root.
 
 ## Use
 

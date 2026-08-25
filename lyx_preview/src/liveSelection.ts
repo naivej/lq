@@ -1,4 +1,4 @@
-/** Read-first Live selection record (DL134). One payload for LM, MCP, and JSON. */
+/** Read-first Live selection record (DL134). One payload for LM tool and JSON. */
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -7,8 +7,6 @@ import type { LiveToken } from "./previewSession";
 export const NO_LIVE_SELECTION = "no Live selection";
 export const LM_TOOL_NAME = "lyx-preview_get_live_selection";
 export const LM_TOOL_REF = "lyxSelection";
-export const MCP_TOOL_NAME = "get_live_selection";
-export const LIVE_SELECTION_ENV = "LQ_LIVE_SELECTION_PATH";
 export const LIVE_SELECTION_FILENAME = "live-selection.json";
 
 export type LiveViewMode = "original" | "tracked" | "clean";
@@ -178,20 +176,16 @@ export function compactSelector(record: LiveSelectionRecord): string {
 }
 
 export function resolveLiveSelectionPath(opts: {
-  env?: NodeJS.ProcessEnv;
   workspaceFolder?: string;
   globalStoragePath?: string;
-  cwd?: string;
 }): string {
-  const override = opts.env?.[LIVE_SELECTION_ENV]?.trim();
-  if (override) return override;
   if (opts.workspaceFolder) {
     return join(opts.workspaceFolder, ".lq", LIVE_SELECTION_FILENAME);
   }
   if (opts.globalStoragePath) {
     return join(opts.globalStoragePath, LIVE_SELECTION_FILENAME);
   }
-  return join(opts.cwd ?? process.cwd(), ".lq", LIVE_SELECTION_FILENAME);
+  return join(process.cwd(), ".lq", LIVE_SELECTION_FILENAME);
 }
 
 export function parseLiveSelectionJson(raw: string): LiveSelectionRecord | undefined {

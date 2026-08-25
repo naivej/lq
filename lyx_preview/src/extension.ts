@@ -364,7 +364,6 @@ export function activate(context: vscode.ExtensionContext): void {
   let persistTimer: ReturnType<typeof setTimeout> | undefined;
   const selectionPath = (): string =>
     resolveLiveSelectionPath({
-      env: process.env,
       workspaceFolder: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
       globalStoragePath: context.globalStorageUri.fsPath,
     });

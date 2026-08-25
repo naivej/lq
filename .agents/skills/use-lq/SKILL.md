@@ -1,6 +1,6 @@
 ---
 name: use-lq
-description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). When Live Preview has a pointer (#lyxSelection, MCP get_live_selection, or .lq/live-selection.json), extract its selector and read that node first. Use headless LyX to create, import, or export the documents, and open the LyX GUI to establish a LyXServer connection.
+description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use when a selection of a .lyx preview is explicitly given (as #lyxSelection or @.lq/live-selection.json). Use headless LyX to create, import, or export the documents, and open the LyX GUI to establish a LyXServer connection.
 allowed-tools: Bash(lq *)
 ---
 
@@ -22,7 +22,21 @@ Run the same sequence for every task:
 2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, optional `layoutsDir` overlay, `refresh` — plus `layoutSearch` (order) and `layoutRoots` (paths) when writing config. Change configuration only with authorization. See the state-scope note below.
 3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → count (`--count`) → text-only on the narrowed result. Done when you can see the exact node(s) you will touch.
 
-   **Live pointer.** If the human selected in Live Preview, get that record first: call `get_live_selection` when it is in the catalog (VS Code LM `#lyxSelection` **or** MCP `get_live_selection`); otherwise Read `.lq/live-selection.json` if the file exists. Extract `selector` and run `lq read <file> "<selector>"` — do **not** pass the JSON or bundle as the CLI selector. Use `selectedText` to pin `--find`; use `coords` only to disambiguate table cells. **Stale gate:** `stale: true` → inspect only until the human saves and a new pointer lands; `stale: false` → the pointer matches the saved file, then `--count` before mutating that file. The pointer is a read reference, not a mutation selector.
+   **Live pointer.** The user may read `.lyx` from a preview. When a selection of the preview is explicitly given (as `#lyxSelection` or `@.lq/live-selection.json`), read it to understand the context:
+
+   | Field | How to read it |
+   |---|---|
+   | `file` | Absolute path of the `.lyx` that is rendered in preview. |
+   | `diskHash` | SHA-256 of the saved bytes the preview was rendered from. Snapshot identity only. |
+   | `stale` | `true` → inspect only until the user saves and a new pointer lands. `false` → pointer matches saved bytes. |
+   | `mode` | Preview shows `original` (before changes) / `tracked` (with tracked changes) / `clean` (after accepting all changes). |
+   | `selector` | Owner selector for `lq read` |
+   | `coords` | `{row, column}` 1-based table cell, else `null`. |
+   | `selectedText` | Highlighted phrase for `--find`, empty if caret-only. |
+   | `changeId` | `change-N` when the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this Live render |
+   | `multi` | `true` if the selection crossed owners; v1 still sends the **anchor** owner's selector plus the full `selectedText`. |
+   | `capturedAt` | ISO-8601 of last capture. The record survives leaving the preview and may be leftover. Do not read the record because it exists. If `file` / `selectedText` / `capturedAt` do not match this request, ignore the pointer and zoom in as usual. | 
+
 4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not.
 5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.
 6. **Mutate minimally.** Every match is edited — `insert` duplicates its payload per match, broad `set`/`delete` can rewrite the document. Prefer a unique anchor and the smallest scale that expresses the workflow.

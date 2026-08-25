@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
-  LIVE_SELECTION_ENV,
   LM_TOOL_NAME,
   LM_TOOL_REF,
   LiveSelectionStore,
@@ -135,11 +134,7 @@ describe("invoke / JSON / path", () => {
     }
   });
 
-  it("prefers LQ_LIVE_SELECTION_PATH then workspace .lq/", () => {
-    assert.equal(
-      resolveLiveSelectionPath({ env: { [LIVE_SELECTION_ENV]: "/tmp/custom.json" } }),
-      "/tmp/custom.json",
-    );
+  it("prefers workspace .lq/ then globalStorage", () => {
     assert.equal(
       resolveLiveSelectionPath({ workspaceFolder: "/ws" }),
       join("/ws", ".lq", "live-selection.json"),
