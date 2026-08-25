@@ -22,20 +22,23 @@ Run the same sequence for every task:
 2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, optional `layoutsDir` overlay, `refresh` — plus `layoutSearch` (order) and `layoutRoots` (paths) when writing config. Change configuration only with authorization. See the state-scope note below.
 3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → count (`--count`) → text-only on the narrowed result. Done when you can see the exact node(s) you will touch.
 
-   **Live pointer.** The user may read `.lyx` from a preview. When a selection of the preview is explicitly given (as `#lyxSelection` or `@.lq/live-selection.json`), read it to understand the context:
+   **Live pointer.** The user may read `.lyx` from a preview. When a **Live selection** is explicitly given (as `#lyxSelection` or `@.lq/live-selection.json`), read it to understand the context. A selection is a caret or a highlight in Live; a highlight is a range with non-empty `selectedText`.
 
    | Field | How to read it |
    |---|---|
-   | `file` | Absolute path of the `.lyx` that is rendered in preview. |
-   | `diskHash` | SHA-256 of the saved bytes the preview was rendered from. Snapshot identity only. |
-   | `stale` | `true` → inspect only until the user saves and a new pointer lands. `false` → pointer matches saved bytes. |
+   | `file` | Absolute path of the `.lyx` to `lq read` / mutate. Usually the previewed buffer; when the selection is inside an **included child** document, this is the **child** path (not the master). |
+   | `diskHash` | SHA-256 of the saved bytes of **`file`** (the edit target). Snapshot identity only. |
+   | `stale` | `true` → inspect only until the user saves **`file`** and a new pointer lands. `false` → pointer matches that file's saved bytes. Master dirtiness alone does not stale a child pointer. |
    | `mode` | Preview shows `original` (before changes) / `tracked` (with tracked changes) / `clean` (after accepting all changes). |
-   | `selector` | Owner selector for `lq read` |
+   | `selector` | Owner selector for `lq read <file> "<selector>"` on **`file`**. |
    | `coords` | `{row, column}` 1-based table cell, else `null`. |
-   | `selectedText` | Highlighted phrase for `--find`, empty if caret-only. |
+   | `selectedText` | Phrase from a highlight, for `--find`; empty if caret-only. |
    | `changeId` | `change-N` when the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this Live render |
-   | `multi` | `true` if the selection crossed owners; v1 still sends the **anchor** owner's selector plus the full `selectedText`. |
-   | `capturedAt` | ISO-8601 of last capture. The record survives leaving the preview and may be leftover. Do not read the record because it exists. If `file` / `selectedText` / `capturedAt` do not match this request, ignore the pointer and zoom in as usual. | 
+   | `multi` | `true` if a highlight crossed owners; v1 still sends the **anchor** owner's selector plus the full `selectedText`. |
+   | `via` | Optional. Present when `file` is an included child shown in another document's preview: `{ file, selector }` names the **parent** `.lyx` and the `inset[CommandInset include]:nth-match(N)` (or `input`) that inlined the child. Use for context only — mutate `file`, not `via`, unless the user asked to change the Include itself. |
+   | `capturedAt` | ISO-8601 of last capture. The record survives leaving the preview and may be leftover. Do not read the record because it exists. If `file` / `selectedText` / `capturedAt` do not match this request, ignore the pointer and zoom in as usual. |
+
+   When `via` is present: the preview was the parent; the words live in the child. Edit the child with `lq read` / mutate on `file` + `selector`. Keep `via` in mind if numbering, Include order, or the master document matters to the task.
 
 4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not.
 5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.

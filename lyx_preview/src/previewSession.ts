@@ -17,10 +17,22 @@ export interface LiveTokenCoords {
   column: number;
 }
 
+/** Provenance when the owner lives in an included child `.lyx` (DL136). */
+export interface LiveTokenVia {
+  file: string;
+  selector: string;
+}
+
 /** Read-first lq bundle: selector path plus optional cell coords. Not a mutation selector. */
 export interface LiveTokenBundle {
   selector: string;
   coords?: LiveTokenCoords;
+  /** Edit-target file when different from the previewed master (included child). */
+  file?: string;
+  /** SHA-256 of `file` when `file` is set. */
+  diskHash?: string;
+  /** Master/parent Include that inlined this owner. */
+  via?: LiveTokenVia;
 }
 
 /** One mapped Live owner (HTML id/`data-ref` equals token id). */
@@ -232,6 +244,26 @@ export function parseLiveStdout(stdout: string): LiveRender {
     const b = t.bundle as Record<string, unknown>;
     if (typeof b.selector !== "string" || b.selector.length === 0) {
       throw new AdapterError("CONTRACT", "token.bundle.selector must be a non-empty string.");
+    }
+    if ("file" in b && b.file !== undefined && b.file !== null) {
+      if (typeof b.file !== "string" || b.file.length === 0) {
+        throw new AdapterError("CONTRACT", "token.bundle.file must be a non-empty string when present.");
+      }
+      if (typeof b.diskHash !== "string" || b.diskHash.length === 0) {
+        throw new AdapterError("CONTRACT", "token.bundle.diskHash must be a non-empty string when file is set.");
+      }
+    }
+    if ("via" in b && b.via !== undefined && b.via !== null) {
+      if (typeof b.via !== "object") {
+        throw new AdapterError("CONTRACT", "token.bundle.via must be an object when present.");
+      }
+      const v = b.via as Record<string, unknown>;
+      if (typeof v.file !== "string" || v.file.length === 0) {
+        throw new AdapterError("CONTRACT", "token.bundle.via.file must be a non-empty string.");
+      }
+      if (typeof v.selector !== "string" || v.selector.length === 0) {
+        throw new AdapterError("CONTRACT", "token.bundle.via.selector must be a non-empty string.");
+      }
     }
     if ("coords" in b && b.coords !== undefined && b.coords !== null) {
       if (typeof b.coords !== "object") {

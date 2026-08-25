@@ -92,38 +92,46 @@ Two supporting surfaces share the same change index:
 
 ## Live selection (read pointer)
 
-Selecting in Live (caret or highlight) captures a **read-first** pointer for the
-lq agent. It does **not** jump the `.lyx` editor and is **not** a mutation
-selector. The same record is published on two buses:
+A **Live selection** is a caret or a highlight in the preview. A **highlight** is a
+range with non-empty `selectedText`; a **caret** leaves `selectedText` empty.
+Either captures a **read-first** pointer for the lq agent. It does **not** jump
+the `.lyx` editor and is **not** a mutation selector. The same record is
+published on two buses:
 
 ```json
 {
-  "file": "<absolute path>",
-  "diskHash": "<sha256 of rendered saved bytes>",
+  "file": "<absolute path of edit target>",
+  "diskHash": "<sha256 of that file's saved bytes>",
   "stale": false,
   "mode": "tracked",
   "selector": "layout[Standard]:nth-match(12)",
   "coords": null,
-  "selectedText": "the highlighted phrase, or empty if caret-only",
+  "selectedText": "phrase from a highlight, or empty if caret-only",
   "changeId": null,
   "multi": false,
-  "capturedAt": "<ISO-8601>"
+  "capturedAt": "<ISO-8601>",
+  "via": {
+    "file": "<parent .lyx when file is an included child>",
+    "selector": "inset[CommandInset include]:nth-match(1)"
+  }
 }
 ```
+
+`via` is omitted for ordinary same-file selections. When present, `file` is the **child** document and `via` names the Include in the previewed parent (DL136).
 
 | Bus | How |
 | --- | --- |
 | **VS Code Chat** | Language-model tool `#lyxSelection`. The chip is a hint; `invoke()` returns the in-memory record (or `no Live selection`). |
 | **File** | Workspace `.lq/live-selection.json` (gitignored), or the extension globalStorage when there is no workspace folder. Other agents `Read` this path. |
 
-**Hint the agent** after you select in Live (the status bar compact selector confirms a pointer). Do not rely on the webview highlight becoming editor `@selection`.
+**Hint the agent** after you select in Live (the status bar compact selector confirms a pointer). Do not rely on the webview selection becoming editor `@selection`.
 
 | Chat | What to type |
 | --- | --- |
 | **VS Code Chat** | `#lyxSelection` |
 | **Other sidebars** (Claude Code, Cursor, Cline, …) | `@.lq/live-selection.json` — type `@` then the path if the picker skips gitignored files |
 
-`stale: true` means the editor buffer has unsaved edits — inspect only until save. `coords` is `{row, column}` (1-based) for table cells. `multi: true` means the highlight crossed owners; v1 still sends the **anchor** owner’s selector plus the full `selectedText`.
+`stale: true` means the editor buffer has unsaved edits — inspect only until save. `coords` is `{row, column}` (1-based) for table cells. `multi: true` means a highlight crossed owners; v1 still sends the **anchor** owner’s selector plus the full `selectedText`.
 
 ## Use
 

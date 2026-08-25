@@ -676,8 +676,10 @@ export const HELP_PAGES: HelpPage[] = [
           "                 author, raw timestamp ts, anchorId (change-N on the\n" +
           "                 <ins>/<del> wrapper), and a collapsed text snippet.\n" +
           "  tokens         Read-first mapping tokens: each has id (equals the HTML\n" +
-          "                 id/data-ref) and bundle {selector, optional coords}. The\n" +
-          "                 selector is a read reference, not a mutation selector.\n" +
+          "                 id/data-ref) and bundle {selector, optional coords,\n" +
+          "                 optional file+diskHash+via when the owner is an included\n" +
+          "                 child .lyx}. The selector is a read reference for bundle.file\n" +
+          "                 when set, else for source.path — not a mutation selector.\n" +
           "  warnings       Non-fatal messages from the CLI envelope.\n\n" +
           "A parse or file error is the usual {code, message} JSON object and a\n" +
           "non-zero exit. A missing or unresolvable textclass layout is reported as\n" +

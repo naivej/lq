@@ -96,6 +96,86 @@ describe("resolveSelection / store", () => {
     assert.equal(store.get()?.stale, true);
   });
 
+  it("resolves included-child tokens to child file + via (DL136)", () => {
+    const foreign: LiveToken[] = [
+      {
+        id: "tok-9",
+        bundle: {
+          selector: "layout[Standard]:nth-match(1)",
+          file: "/tmp/DummyDocument1.lyx",
+          diskHash: "childhash",
+          via: { file: "/tmp/doc.lyx", selector: "inset[CommandInset include]:nth-match(1)" },
+        },
+      },
+    ];
+    const record = resolveSelection(foreign, "tok-9", "dummy", false, {
+      ...baseCtx,
+      stale: true,
+    });
+    assert.equal(record?.file, "/tmp/DummyDocument1.lyx");
+    assert.equal(record?.diskHash, "childhash");
+    assert.equal(record?.stale, false);
+    assert.deepEqual(record?.via, {
+      file: "/tmp/doc.lyx",
+      selector: "inset[CommandInset include]:nth-match(1)",
+    });
+  });
+
+  it("markStale skips foreign child pointers (DL136 J3)", () => {
+    const store = new LiveSelectionStore();
+    store.set({
+      file: "/tmp/DummyDocument1.lyx",
+      diskHash: "childhash",
+      stale: false,
+      mode: "tracked",
+      selector: "layout[Standard]:nth-match(1)",
+      coords: null,
+      selectedText: "x",
+      changeId: null,
+      multi: false,
+      capturedAt: "2026-08-24T12:00:00.000Z",
+      via: { file: "/tmp/doc.lyx", selector: "inset[CommandInset include]:nth-match(1)" },
+    });
+    store.markStale("/tmp/doc.lyx");
+    assert.equal(store.get()?.stale, false);
+    store.markStale("/tmp/DummyDocument1.lyx");
+    assert.equal(store.get()?.stale, true);
+  });
+
+  it("rematch keeps child file when preview master changes hash (DL136)", () => {
+    const previous = resolveSelection(
+      [{
+        id: "tok-9",
+        bundle: {
+          selector: "layout[Standard]:nth-match(1)",
+          file: "/tmp/DummyDocument1.lyx",
+          diskHash: "childhash",
+          via: { file: "/tmp/doc.lyx", selector: "inset[CommandInset include]:nth-match(1)" },
+        },
+      }],
+      "tok-9",
+      "hi",
+      false,
+      baseCtx,
+    )!;
+    const nextTokens: LiveToken[] = [
+      {
+        id: "tok-99",
+        bundle: {
+          selector: "layout[Standard]:nth-match(1)",
+          file: "/tmp/DummyDocument1.lyx",
+          diskHash: "childhash",
+          via: { file: "/tmp/doc.lyx", selector: "inset[CommandInset include]:nth-match(1)" },
+        },
+      },
+    ];
+    const next = rematchSelection(previous, nextTokens, "/tmp/doc.lyx", "master-new", true);
+    assert.equal(next.file, "/tmp/DummyDocument1.lyx");
+    assert.equal(next.diskHash, "childhash");
+    assert.equal(next.stale, false);
+    assert.equal(next.via?.selector, "inset[CommandInset include]:nth-match(1)");
+  });
+
   it("rematch after save updates diskHash and keeps selector", () => {
     const previous: LiveSelectionRecord = resolveSelection(tokens, "tok-1", "hi", false, baseCtx)!;
     const nextTokens: LiveToken[] = [

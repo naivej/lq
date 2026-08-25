@@ -338,6 +338,35 @@ Deno.test("Live mapping - my_template footnote/note phrases round-trip via query
   assertPhraseMapsToQuery(response.html, validated.tokens, ast, "Details about me");
 });
 
+Deno.test("Live mapping - included child .lyx tokens point at child file (DL136)", async () => {
+  const master = fromFileUrl(new URL("./fixtures/Help/EmbeddedObjects.lyx", import.meta.url));
+  const text = await Deno.readTextFile(master);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(master, ast, text);
+  const validated = validateLiveResponse(response);
+  assertEquals(
+    validated.tokens.filter((t) => /CommandInset include.*layout\[/.test(t.bundle.selector)).length,
+    0,
+    "must not nest child layouts under Include",
+  );
+  const phrase = "This is a small dummy child document";
+  const id = closestDataRef(response.html, phrase);
+  const token = validated.tokens.find((t) => t.id === id);
+  assert(token, `token for ${id}`);
+  assert(token.bundle.file, "foreign file set");
+  assert(token.bundle.file.replaceAll("\\", "/").endsWith("/DummyDocument1.lyx"));
+  assert(token.bundle.diskHash && token.bundle.diskHash.length === 64);
+  assert(token.bundle.via, "via provenance set");
+  assertEquals(token.bundle.via!.selector, "inset[CommandInset include]:nth-match(1)");
+  assert(token.bundle.via!.file.replaceAll("\\", "/").endsWith("/EmbeddedObjects.lyx"));
+  const childAst = parse(await Deno.readTextFile(token.bundle.file!));
+  const matches = query(childAst, token.bundle.selector);
+  assert(matches.some((n) => nodeHasPhrase(n, phrase)), "child query owns phrase");
+  const viaHits = query(ast, token.bundle.via!.selector);
+  assertEquals(viaHits.length, 1);
+  assert(viaHits[0]?.type === "block" && (viaHits[0].args ?? "").startsWith("CommandInset include"));
+});
+
 Deno.test("Live mapping - footnote phrases round-trip on synthetic insets (DL135)", async () => {
   for (
     const [name, phrases] of [

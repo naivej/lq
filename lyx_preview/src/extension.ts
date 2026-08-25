@@ -112,7 +112,7 @@ class LivePreviewPanel {
       this.document = change.document;
       if (change.contentChanges.length === 0) return;
       this.session.markStale();
-      const staleRecord = this.host.selection.markStale();
+      const staleRecord = this.host.selection.markStale(this.filePath);
       this.publishSelection(staleRecord);
       // DL132 P2: update the stale banner without rebuilding the whole webview.
       if (this.webviewReady) {

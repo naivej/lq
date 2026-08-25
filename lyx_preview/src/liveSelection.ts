@@ -2,7 +2,7 @@
 
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import type { LiveToken } from "./previewSession";
+import type { LiveToken, LiveTokenVia } from "./previewSession";
 
 export const NO_LIVE_SELECTION = "no Live selection";
 export const LM_TOOL_NAME = "lyx-preview_get_live_selection";
@@ -28,6 +28,8 @@ export interface LiveSelectionRecord {
   changeId: string | null;
   multi: boolean;
   capturedAt: string;
+  /** Present when `file` is an included child shown via a parent Include (DL136). */
+  via?: LiveTokenVia;
 }
 
 export interface SelectMessage {
@@ -48,6 +50,11 @@ export function parseSelectMessage(msg: unknown): SelectMessage | undefined {
   };
 }
 
+function sameFsPath(a: string, b: string): boolean {
+  const norm = (p: string) => p.replaceAll("\\", "/").toLowerCase();
+  return norm(a) === norm(b);
+}
+
 export function resolveSelection(
   tokens: LiveToken[],
   id: string,
@@ -63,10 +70,15 @@ export function resolveSelection(
 ): LiveSelectionRecord | undefined {
   const token = tokens.find((t) => t.id === id);
   if (!token) return undefined;
-  return {
-    file: ctx.file,
-    diskHash: ctx.diskHash,
-    stale: ctx.stale,
+  const foreign = typeof token.bundle.file === "string" && token.bundle.file.length > 0;
+  const file = foreign ? token.bundle.file! : ctx.file;
+  const diskHash = foreign ? (token.bundle.diskHash ?? ctx.diskHash) : ctx.diskHash;
+  // J3: stale tracks the edit-target file. Master dirtiness does not stale a child pointer.
+  const stale = foreign ? false : ctx.stale;
+  const record: LiveSelectionRecord = {
+    file,
+    diskHash,
+    stale,
     mode: ctx.mode,
     selector: token.bundle.selector,
     coords: token.bundle.coords ?? null,
@@ -75,6 +87,10 @@ export function resolveSelection(
     multi,
     capturedAt: ctx.capturedAt ?? new Date().toISOString(),
   };
+  if (token.bundle.via) {
+    record.via = { file: token.bundle.via.file, selector: token.bundle.via.selector };
+  }
+  return record;
 }
 
 function coordsKey(coords: LiveSelectionCoords | null | undefined): string {
@@ -82,31 +98,45 @@ function coordsKey(coords: LiveSelectionCoords | null | undefined): string {
   return `${coords.row}:${coords.column}`;
 }
 
+function tokenEditFile(token: LiveToken, previewFile: string): string {
+  return token.bundle.file ?? previewFile;
+}
+
 export function rematchSelection(
   previous: LiveSelectionRecord,
   tokens: LiveToken[],
-  file: string,
-  diskHash: string,
+  previewFile: string,
+  previewDiskHash: string,
   stale: boolean,
 ): LiveSelectionRecord {
   const match = previous.changeId
     ? tokens.find((t) => t.id === previous.changeId)
     : tokens.find((t) =>
+      tokenEditFile(t, previewFile) === previous.file &&
       t.bundle.selector === previous.selector &&
       coordsKey(t.bundle.coords) === coordsKey(previous.coords)
     );
   if (!match) {
-    return { ...previous, file, diskHash, stale: true };
+    return { ...previous, stale: true };
   }
-  return {
+  const foreign = typeof match.bundle.file === "string" && match.bundle.file.length > 0;
+  const file = foreign ? match.bundle.file! : previewFile;
+  const diskHash = foreign ? (match.bundle.diskHash ?? previous.diskHash) : previewDiskHash;
+  const next: LiveSelectionRecord = {
     ...previous,
     file,
     diskHash,
-    stale,
+    stale: foreign ? false : stale,
     selector: match.bundle.selector,
     coords: match.bundle.coords ?? null,
     changeId: match.id.startsWith("change-") ? match.id : null,
   };
+  if (match.bundle.via) {
+    next.via = { file: match.bundle.via.file, selector: match.bundle.via.selector };
+  } else {
+    delete next.via;
+  }
+  return next;
 }
 
 export class LiveSelectionStore {
@@ -138,8 +168,16 @@ export class LiveSelectionStore {
     return this.record;
   }
 
-  markStale(): LiveSelectionRecord | undefined {
-    if (this.record) this.record = { ...this.record, stale: true };
+  /**
+   * Mark stale when the previewed master buffer is dirty.
+   * Foreign (included-child) pointers are left alone (DL136 J3).
+   */
+  markStale(previewFile?: string): LiveSelectionRecord | undefined {
+    if (!this.record) return undefined;
+    if (previewFile && !sameFsPath(this.record.file, previewFile)) {
+      return this.record;
+    }
+    this.record = { ...this.record, stale: true };
     return this.record;
   }
 
@@ -172,6 +210,7 @@ export function compactSelector(record: LiveSelectionRecord): string {
   let text = record.selector;
   if (record.coords) text += ` [${record.coords.row},${record.coords.column}]`;
   if (record.multi) text += " +";
+  if (record.via) text += " via";
   return text;
 }
 
@@ -211,7 +250,15 @@ export function parseLiveSelectionJson(raw: string): LiveSelectionRecord | undef
     coords = { row: c.row, column: c.column };
   }
   const changeId = o.changeId === null ? null : typeof o.changeId === "string" ? o.changeId : null;
-  return {
+  let via: LiveTokenVia | undefined;
+  if (o.via !== null && o.via !== undefined) {
+    if (typeof o.via !== "object") return undefined;
+    const v = o.via as Record<string, unknown>;
+    if (typeof v.file !== "string" || v.file.length === 0) return undefined;
+    if (typeof v.selector !== "string" || v.selector.length === 0) return undefined;
+    via = { file: v.file, selector: v.selector };
+  }
+  const record: LiveSelectionRecord = {
     file: o.file,
     diskHash: o.diskHash,
     stale: o.stale,
@@ -223,6 +270,8 @@ export function parseLiveSelectionJson(raw: string): LiveSelectionRecord | undef
     multi: o.multi,
     capturedAt: o.capturedAt,
   };
+  if (via) record.via = via;
+  return record;
 }
 
 export async function writeLiveSelectionFile(

@@ -7,6 +7,7 @@
 import type { BlockNode, DocumentNode, Node } from "./ast.ts";
 import { parse } from "./parser.ts";
 import { hashFile } from "./cache.ts";
+import { createHash } from "node:crypto";
 import {
   advanceTraversalState,
   createTraversalState,
@@ -71,10 +72,22 @@ export interface LiveTokenCoords {
   column: number;
 }
 
+/** Provenance when the owner lives in an included child `.lyx` (DL136). */
+export interface LiveTokenVia {
+  file: string;
+  selector: string;
+}
+
 /** Read-first lq bundle: selector path plus optional cell coords. Not a mutation selector. */
 export interface LiveTokenBundle {
   selector: string;
   coords?: LiveTokenCoords;
+  /** Edit-target file when different from the previewed master (included child). */
+  file?: string;
+  /** SHA-256 of `file` when `file` is set. */
+  diskHash?: string;
+  /** Master/parent Include that inlined this owner. */
+  via?: LiveTokenVia;
 }
 
 /** One mapped Live owner (HTML id equals token id). */
@@ -329,6 +342,26 @@ export function validateLiveResponse(value: unknown): LivePreviewResponse {
     if (typeof b.selector !== "string" || b.selector.length === 0) {
       throw new LiveContractError("token.bundle.selector must be a non-empty string.");
     }
+    if ("file" in b && b.file !== undefined && b.file !== null) {
+      if (typeof b.file !== "string" || b.file.length === 0) {
+        throw new LiveContractError("token.bundle.file must be a non-empty string when present.");
+      }
+      if (typeof b.diskHash !== "string" || b.diskHash.length === 0) {
+        throw new LiveContractError("token.bundle.diskHash must be a non-empty string when file is set.");
+      }
+    }
+    if ("via" in b && b.via !== undefined && b.via !== null) {
+      if (typeof b.via !== "object") {
+        throw new LiveContractError("token.bundle.via must be an object when present.");
+      }
+      const v = b.via as Record<string, unknown>;
+      if (typeof v.file !== "string" || v.file.length === 0) {
+        throw new LiveContractError("token.bundle.via.file must be a non-empty string.");
+      }
+      if (typeof v.selector !== "string" || v.selector.length === 0) {
+        throw new LiveContractError("token.bundle.via.selector must be a non-empty string.");
+      }
+    }
     if ("coords" in b && b.coords !== undefined && b.coords !== null) {
       if (typeof b.coords !== "object") {
         throw new LiveContractError("token.bundle.coords must be an object when present.");
@@ -440,6 +473,18 @@ interface RenderCtx {
   currentInsetSelector?: string;
   /** CST node for `currentInsetSelector` (nested layout paths, DL135). */
   currentInsetNode?: BlockNode;
+  /**
+   * Foreign include frame (DL136): deepest included `.lyx` owns emitted tokens.
+   * `queryIndex` is swapped to the child's; master inset prefix is cleared.
+   */
+  foreign?: {
+    file: string;
+    diskHash: string;
+    via: LiveTokenVia;
+    queryIndex: Map<BlockNode, { tag: "layout" | "inset"; name: string; globalN: number }>;
+  };
+  /** HTML id/data-ref values already claimed (DL136 J6). */
+  usedTokenIds: Set<string>;
   bibitem: number;
   includeStack: string[];
   subeq: { parent: number; child: number } | null;
@@ -817,15 +862,21 @@ function descendantLayoutsNamed(inset: BlockNode, name: string): BlockNode[] {
   return out;
 }
 
+function activeQueryIndex(
+  ctx: RenderCtx,
+): Map<BlockNode, { tag: "layout" | "inset"; name: string; globalN: number }> {
+  return ctx.foreign?.queryIndex ?? ctx.queryIndex;
+}
+
 function insetOwnerSelector(ctx: RenderCtx, block: BlockNode): string {
-  const rec = ctx.queryIndex.get(block);
+  const rec = activeQueryIndex(ctx).get(block);
   const kind = rec?.name ?? insetKind(block);
   const n = rec?.globalN ?? 1;
   return `inset[${kind}]:nth-match(${n})`;
 }
 
 function layoutOwnerSelector(ctx: RenderCtx, node: BlockNode, name: string): string {
-  const rec = ctx.queryIndex.get(node);
+  const rec = activeQueryIndex(ctx).get(node);
   const globalN = rec?.globalN ?? 1;
   const inset = ctx.currentInsetNode;
   const kind = inset ? insetKind(inset) : "";
@@ -841,22 +892,49 @@ function layoutOwnerSelector(ctx: RenderCtx, node: BlockNode, name: string): str
   return `layout[${name}]:nth-match(${globalN})`;
 }
 
+function cloneTokenBundle(bundle: LiveTokenBundle): LiveTokenBundle {
+  const out: LiveTokenBundle = { selector: bundle.selector };
+  if (bundle.coords) out.coords = { ...bundle.coords };
+  if (bundle.file) out.file = bundle.file;
+  if (bundle.diskHash) out.diskHash = bundle.diskHash;
+  if (bundle.via) out.via = { file: bundle.via.file, selector: bundle.via.selector };
+  return out;
+}
+
 function emitToken(
   ctx: RenderCtx,
   id: string,
   selector: string,
   coords?: LiveTokenCoords,
 ): void {
-  ctx.tokens.push({
-    id,
-    bundle: coords ? { selector, coords } : { selector },
-  });
+  ctx.usedTokenIds.add(id);
+  const bundle: LiveTokenBundle = coords ? { selector, coords } : { selector };
+  if (ctx.foreign) {
+    bundle.file = ctx.foreign.file;
+    bundle.diskHash = ctx.foreign.diskHash;
+    bundle.via = { ...ctx.foreign.via };
+  }
+  ctx.tokens.push({ id, bundle });
 }
 
+function hashTextSync(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex");
+}
+
+/** Prefer `existing` when unique; otherwise allocate `tok-N` (DL136 J6). */
 function takeOwnerId(ctx: RenderCtx, existing?: string): string {
-  if (existing) return existing;
+  if (existing && !ctx.usedTokenIds.has(existing)) {
+    ctx.usedTokenIds.add(existing);
+    return existing;
+  }
   ctx.tokSeq += 1;
-  return `tok-${ctx.tokSeq}`;
+  let id = `tok-${ctx.tokSeq}`;
+  while (ctx.usedTokenIds.has(id)) {
+    ctx.tokSeq += 1;
+    id = `tok-${ctx.tokSeq}`;
+  }
+  ctx.usedTokenIds.add(id);
+  return id;
 }
 
 function mappingAttrs(id: string): string {
@@ -1323,6 +1401,7 @@ export async function renderLiveHtml(
     tokens: [],
     queryIndex: buildQueryIndex(ast.children),
     tokSeq: 0,
+    usedTokenIds: new Set(),
     subeq: null,
     bibitem: 0,
     includeStack: [],
@@ -1343,9 +1422,7 @@ export async function renderLiveHtml(
       .map((e) => ({ ...e })),
     tokens: ctx.tokens.map((t) => ({
       id: t.id,
-      bundle: t.bundle.coords
-        ? { selector: t.bundle.selector, coords: { ...t.bundle.coords } }
-        : { selector: t.bundle.selector },
+      bundle: cloneTokenBundle(t.bundle),
     })),
   };
 }
@@ -1521,7 +1598,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
         const number = headings.next(item.layout, layout.level, hasStartOfAppendix(item.node));
         noteChapterHeading(ctx, layout, number);
         const text = headingPlainText(item.node);
-        const id = sectionId(number, text);
+        const id = takeOwnerId(ctx, sectionId(number, text));
         emitToken(ctx, id, selector);
         const chunk =
           `<section${mappingAttrs(id)}><${layout.tag}>${number}${renderLayoutInline(item.node, ctx, false, outerState)}</${layout.tag}>`;
@@ -1617,6 +1694,7 @@ function snapshotCounters(ctx: RenderCtx) {
     currentLayoutSelector: ctx.currentLayoutSelector,
     currentInsetSelector: ctx.currentInsetSelector,
     currentInsetNode: ctx.currentInsetNode,
+    usedTokenIds: new Set(ctx.usedTokenIds),
   };
 }
 
@@ -1639,6 +1717,7 @@ function restoreCounters(ctx: RenderCtx, snap: ReturnType<typeof snapshotCounter
   ctx.currentLayoutSelector = snap.currentLayoutSelector;
   ctx.currentInsetSelector = snap.currentInsetSelector;
   ctx.currentInsetNode = snap.currentInsetNode;
+  ctx.usedTokenIds = snap.usedTokenIds;
 }
 
 /** True when HTML is only Newpage/Separator/VSpace chrome (no reader prose). */
@@ -3546,11 +3625,38 @@ function renderInclude(block: BlockNode, ctx: RenderCtx): string {
   if (!base.toLowerCase().endsWith(".lyx")) return "";
   if (ctx.includeStack.includes(resolved)) return "";
   try {
-    const ast = parse(Deno.readTextFileSync(resolved));
+    const childText = Deno.readTextFileSync(resolved);
+    const childAst = parse(childText);
+    const includeSelector = ctx.currentInsetSelector ?? insetOwnerSelector(ctx, block);
+    const parentFile = ctx.foreign?.file ?? ctx.filePath;
+    if (!parentFile) return "";
+    const via: LiveTokenVia = { file: parentFile, selector: includeSelector };
+    const childFile = path.resolve(resolved);
+    const childHash = hashTextSync(childText);
+    const childIndex = buildQueryIndex(childAst.children);
+
     ctx.includeStack.push(resolved);
+    const prevForeign = ctx.foreign;
+    const prevInset = ctx.currentInsetSelector;
+    const prevInsetNode = ctx.currentInsetNode;
+    const prevLayout = ctx.currentLayoutSelector;
+    ctx.foreign = {
+      file: childFile,
+      diskHash: childHash,
+      via,
+      queryIndex: childIndex,
+    };
+    // Child layouts are not CST descendants of Include — clear master inset prefix (DL136).
+    ctx.currentInsetSelector = undefined;
+    ctx.currentInsetNode = undefined;
+    ctx.currentLayoutSelector = undefined;
     try {
-      return renderFlowItems(flattenFlow(findBody(ast), 0), ctx);
+      return renderFlowItems(flattenFlow(findBody(childAst), 0), ctx);
     } finally {
+      ctx.foreign = prevForeign;
+      ctx.currentInsetSelector = prevInset;
+      ctx.currentInsetNode = prevInsetNode;
+      ctx.currentLayoutSelector = prevLayout;
       ctx.includeStack.pop();
     }
   } catch {
@@ -3560,6 +3666,7 @@ function renderInclude(block: BlockNode, ctx: RenderCtx): string {
 
 function resolveGraphicPath(filename: string, ctx: RenderCtx): string {
   const tries: string[] = [];
+  if (ctx.foreign?.file) tries.push(path.resolve(path.dirname(ctx.foreign.file), filename));
   if (ctx.filePath) tries.push(path.resolve(path.dirname(ctx.filePath), filename));
   if (ctx.systemDocDir) tries.push(path.resolve(ctx.systemDocDir, filename));
   for (const p of tries) {
@@ -3897,9 +4004,13 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
   if (subtype === "toc") return renderToc(ctx);
   if (subtype === "label") {
     if (!name) return "";
-    const id = xmlId(name);
-    if (ctx.currentInsetSelector) emitToken(ctx, id, ctx.currentInsetSelector);
-    return `<a${mappingAttrs(id)}></a>`;
+    const preferred = xmlId(name);
+    if (ctx.currentInsetSelector) {
+      const id = takeOwnerId(ctx, preferred);
+      emitToken(ctx, id, ctx.currentInsetSelector);
+      return `<a${mappingAttrs(id)}></a>`;
+    }
+    return `<a id="${escapeLiveHtml(preferred)}"></a>`;
   }
   if (subtype === "nomenclature_print") return "";
   if (subtype === "index_print") return renderIndex(ctx, findProperty(block, "name") || "Index");
