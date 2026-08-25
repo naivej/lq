@@ -11,11 +11,6 @@ export const LIVE_SELECTION_FILENAME = "live-selection.json";
 
 export type LiveViewMode = "original" | "tracked" | "clean";
 
-export interface LiveSelectionCoords {
-  row: number;
-  column: number;
-}
-
 /** Published pointer. Not a mutation selector. */
 export interface LiveSelectionRecord {
   file: string;
@@ -23,7 +18,6 @@ export interface LiveSelectionRecord {
   stale: boolean;
   mode: LiveViewMode;
   selector: string;
-  coords: LiveSelectionCoords | null;
   selectedText: string;
   changeId: string | null;
   multi: boolean;
@@ -81,7 +75,6 @@ export function resolveSelection(
     stale,
     mode: ctx.mode,
     selector: token.bundle.selector,
-    coords: token.bundle.coords ?? null,
     selectedText,
     changeId: id.startsWith("change-") ? id : null,
     multi,
@@ -91,11 +84,6 @@ export function resolveSelection(
     record.via = { file: token.bundle.via.file, selector: token.bundle.via.selector };
   }
   return record;
-}
-
-function coordsKey(coords: LiveSelectionCoords | null | undefined): string {
-  if (!coords) return "";
-  return `${coords.row}:${coords.column}`;
 }
 
 function tokenEditFile(token: LiveToken, previewFile: string): string {
@@ -113,8 +101,7 @@ export function rematchSelection(
     ? tokens.find((t) => t.id === previous.changeId)
     : tokens.find((t) =>
       tokenEditFile(t, previewFile) === previous.file &&
-      t.bundle.selector === previous.selector &&
-      coordsKey(t.bundle.coords) === coordsKey(previous.coords)
+      t.bundle.selector === previous.selector
     );
   if (!match) {
     return { ...previous, stale: true };
@@ -128,7 +115,6 @@ export function rematchSelection(
     diskHash,
     stale: foreign ? false : stale,
     selector: match.bundle.selector,
-    coords: match.bundle.coords ?? null,
     changeId: match.id.startsWith("change-") ? match.id : null,
   };
   if (match.bundle.via) {
@@ -241,13 +227,6 @@ export function parseLiveSelectionJson(raw: string): LiveSelectionRecord | undef
   if (typeof o.selector !== "string" || o.selector.length === 0) return undefined;
   if (typeof o.selectedText !== "string") return undefined;
   if (typeof o.multi !== "boolean" || typeof o.capturedAt !== "string") return undefined;
-  let coords: LiveSelectionCoords | null = null;
-  if (o.coords !== null && o.coords !== undefined) {
-    if (typeof o.coords !== "object") return undefined;
-    const c = o.coords as Record<string, unknown>;
-    if (typeof c.row !== "number" || typeof c.column !== "number") return undefined;
-    coords = { row: c.row, column: c.column };
-  }
   const changeId = o.changeId === null ? null : typeof o.changeId === "string" ? o.changeId : null;
   let via: LiveTokenVia | undefined;
   if (o.via !== null && o.via !== undefined) {
@@ -263,7 +242,6 @@ export function parseLiveSelectionJson(raw: string): LiveSelectionRecord | undef
     stale: o.stale,
     mode: o.mode,
     selector: o.selector,
-    coords,
     selectedText: o.selectedText,
     changeId,
     multi: o.multi,

@@ -22,23 +22,20 @@ Run the same sequence for every task:
 2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, optional `layoutsDir` overlay, `refresh` — plus `layoutSearch` (order) and `layoutRoots` (paths) when writing config. Change configuration only with authorization. See the state-scope note below.
 3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → count (`--count`) → text-only on the narrowed result. Done when you can see the exact node(s) you will touch.
 
-   **Live pointer.** The user may read `.lyx` from a preview. When a **Live selection** is explicitly given (as `#lyxSelection` or `@.lq/live-selection.json`), read it to understand the context. A selection is a caret or a highlight in Live; a highlight is a range with non-empty `selectedText`.
+   **Live pointer.** The user may read `.lyx` from a preview and select text in that preview. When a preview selection is explicitly given (`#lyxSelection` or `@.lq/live-selection.json`), read it to understand the context.
 
    | Field | How to read it |
    |---|---|
-   | `file` | Absolute path of the `.lyx` to `lq read` / mutate. Usually the previewed buffer; when the selection is inside an **included child** document, this is the **child** path (not the master). |
-   | `diskHash` | SHA-256 of the saved bytes of **`file`** (the edit target). Snapshot identity only. |
-   | `stale` | `true` → inspect only until the user saves **`file`** and a new pointer lands. `false` → pointer matches that file's saved bytes. Master dirtiness alone does not stale a child pointer. |
-   | `mode` | Preview shows `original` (before changes) / `tracked` (with tracked changes) / `clean` (after accepting all changes). |
-   | `selector` | Owner for `lq read <file> "<selector>"` on **`file`**. A table-cell highlight is a nested layout path (`inset[Tabular]:nth-match(N) inset[Text]:nth-match(k) layout[Name]`), not the Tabular inset. |
-   | `coords` | Ignore for targeting. New cell tokens set this to `null`; there is no CLI coords flag. |
-   | `selectedText` | Highlight spelling from Live HTML, empty if caret-only. **Confirm it (or a CST equivalent) in `lq read` of `selector` before `--find`.** Live is a projection: heading numbers (`1 Figures` vs `Figures`), SpecialChar (`LyX` vs `\SpecialChar LyX`), resolved hrefs vs `inset[CommandInset href]`. If the phrase is missing, inspect default `lq read` `data` (not only `--text-only` on a coarse inset) and `--find` the CST form, or drop `--find` and edit the owner another way. |
-   | `changeId` | `change-N` when the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this Live render |
-   | `multi` | `true` if a highlight crossed owners; v1 still sends the **anchor** owner's selector plus the full `selectedText`. |
-   | `via` | Optional. Present when `file` is an included child shown in another document's preview: `{ file, selector }` names the **parent** `.lyx` and the `inset[CommandInset include]:nth-match(N)` (or `input`) that inlined the child. Use for context only — mutate `file`, not `via`, unless the user asked to change the Include itself. |
-   | `capturedAt` | ISO-8601 of last capture. The record survives leaving the preview and may be leftover. Do not read the record because it exists. If `file` / `selectedText` / `capturedAt` do not match this request, ignore the pointer and zoom in as usual. |
-
-   When `via` is present: the preview was the parent; the words live in the child. Edit the child with `lq read` / mutate on `file` + `selector`. Keep `via` in mind if numbering, Include order, or the master document matters to the task.
+   | `file` | The target `.lyx`, or its child when the highlight is inside an Include. |
+   | `diskHash` | SHA-256 of `file`'s saved bytes. Snapshot identity. |
+   | `stale` | `true` → inspect only until `file` is saved. A child pointer does not stale with the master. |
+   | `mode` | `original` (before changes) / `tracked` (with tracked changes) / `clean` (after accepting all changes) shown in preview. |
+   | `selector` | Owner for `lq read <file> "<selector>"`. Nested when the highlight is inside an inset. |
+   | `selectedText` | Highlight from preview; empty if caret. Confirm in `lq read` before `--find` — Live spelling can differ from CST. |
+   | `changeId` | `change-N` if the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this Live render |
+   | `multi` | Highlight crossed owners; `selector` is the anchor. |
+   | `via` | Present when `file` is an included child shown in another document's preview. Use for Context only. |
+   | `capturedAt` | Last capture. The record survives leaving the preview and may be leftover. Do not read the record just because it exists. |
 
 4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not.
 5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.

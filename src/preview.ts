@@ -66,22 +66,15 @@ export const LIVE_DEFERRED_FIELDS = [
   "mode",
 ] as const;
 
-/** Table-cell coordinates on a mapped owner (1-based). Leftover JSON may still carry these; new cell tokens do not (DL138). */
-export interface LiveTokenCoords {
-  row: number;
-  column: number;
-}
-
 /** Provenance when the owner lives in an included child `.lyx` (DL136). */
 export interface LiveTokenVia {
   file: string;
   selector: string;
 }
 
-/** Read-first lq bundle: selector path plus optional leftover cell coords. Not a mutation selector. */
+/** Read-first lq bundle: selector path. Not a mutation selector. */
 export interface LiveTokenBundle {
   selector: string;
-  coords?: LiveTokenCoords;
   /** Edit-target file when different from the previewed master (included child). */
   file?: string;
   /** SHA-256 of `file` when `file` is set. */
@@ -362,18 +355,8 @@ export function validateLiveResponse(value: unknown): LivePreviewResponse {
         throw new LiveContractError("token.bundle.via.selector must be a non-empty string.");
       }
     }
-    if ("coords" in b && b.coords !== undefined && b.coords !== null) {
-      if (typeof b.coords !== "object") {
-        throw new LiveContractError("token.bundle.coords must be an object when present.");
-      }
-      const c = b.coords as Record<string, unknown>;
-      if (typeof c.row !== "number" || !Number.isInteger(c.row) || c.row < 1) {
-        throw new LiveContractError("token.bundle.coords.row must be a positive integer.");
-      }
-      if (typeof c.column !== "number" || !Number.isInteger(c.column) || c.column < 1) {
-        throw new LiveContractError("token.bundle.coords.column must be a positive integer.");
-      }
-    }
+    // DL138 J3 override: leftover coords are ignored, not part of the contract.
+    if ("coords" in b) delete b.coords;
   }
   if (!Array.isArray(obj.diagnostics)) {
     throw new LiveContractError("diagnostics must be an array.");
@@ -957,7 +940,6 @@ function layoutOwnerSelector(ctx: RenderCtx, node: BlockNode, name: string): str
 
 function cloneTokenBundle(bundle: LiveTokenBundle): LiveTokenBundle {
   const out: LiveTokenBundle = { selector: bundle.selector };
-  if (bundle.coords) out.coords = { ...bundle.coords };
   if (bundle.file) out.file = bundle.file;
   if (bundle.diskHash) out.diskHash = bundle.diskHash;
   if (bundle.via) out.via = { file: bundle.via.file, selector: bundle.via.selector };

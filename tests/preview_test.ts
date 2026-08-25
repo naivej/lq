@@ -163,12 +163,21 @@ Deno.test("Live contract - deferred fields are rejected", () => {
     ...base,
     tokens: [
       { id: "tok-1", bundle: { selector: "layout[Standard]:nth-match(1)" } },
+    ],
+  });
+  const leftoverCoords = validateLiveResponse({
+    ...base,
+    tokens: [
       {
         id: "cell-1",
-        bundle: { selector: "inset[Tabular]:nth-match(1)", coords: { row: 1, column: 2 } },
+        bundle: {
+          selector: "inset[Tabular]:nth-match(1) inset[Text]:nth-match(1) layout[Plain Layout]",
+          coords: { row: 1, column: 2 },
+        },
       },
     ],
   });
+  assertEquals("coords" in leftoverCoords.tokens[0]!.bundle, false);
   assertThrows(
     () =>
       validateLiveResponse({
@@ -306,7 +315,7 @@ Deno.test("Live mapping - table cells publish nested layout paths (DL138)", asyn
   const ast = parse(text);
   const { response } = await buildLiveResponse(file, ast, text);
   const validated = validateLiveResponse(response);
-  assertEquals(validated.tokens.filter((t) => t.bundle.coords).length, 0);
+  assertEquals(validated.tokens.filter((t) => "coords" in t.bundle).length, 0);
   const tds = [...response.html.matchAll(/<td\b([^>]*)>/g)];
   assert(tds.length >= 4, "2x2 table should emit four cells");
   for (const td of tds) {
@@ -344,7 +353,7 @@ Deno.test("Live mapping - Intro table phrase is a cell layout (DL138)", async ()
   assert(!/^inset\[Tabular\]:nth-match\(\d+\)$/.test(sel));
   const token = validated.tokens.find((t) => t.bundle.selector === sel);
   assert(token);
-  assertEquals(token.bundle.coords, undefined);
+  assertEquals("coords" in token.bundle, false);
   const matches = query(ast, sel);
   assert(
     matches.some((n) => extractAllText(n).includes(phrase)),

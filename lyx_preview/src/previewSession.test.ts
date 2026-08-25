@@ -76,6 +76,13 @@ describe("parseLiveStdout", () => {
     }));
     assert.equal(render.tokens.length, 1);
     assert.equal(render.capabilities.mapping, true);
+    const leftover = parseLiveStdout(validRender({
+      tokens: [{
+        id: "cell-1",
+        bundle: { selector: "layout[Standard]:nth-match(1)", coords: { row: 1, column: 2 } },
+      }],
+    }));
+    assert.equal("coords" in leftover.tokens[0]!.bundle, false);
     assert.throws(
       () => parseLiveStdout(validRender({ tokens: [{ id: "tok-1", bundle: { selector: "" } }] })),
       (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",

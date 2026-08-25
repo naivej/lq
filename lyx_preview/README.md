@@ -105,7 +105,6 @@ published on two buses:
   "stale": false,
   "mode": "tracked",
   "selector": "layout[Standard]:nth-match(12)",
-  "coords": null,
   "selectedText": "phrase from a highlight, or empty if caret-only",
   "changeId": null,
   "multi": false,
@@ -131,7 +130,7 @@ published on two buses:
 | **VS Code Chat** | `#lyxSelection` |
 | **Other sidebars** (Claude Code, Cursor, Cline, …) | `@.lq/live-selection.json` — type `@` then the path if the picker skips gitignored files |
 
-`stale: true` means the editor buffer has unsaved edits — inspect only until save. `coords` is unused for targeting (null on new tokens; leftover `{row, column}` may still appear in old JSON). `multi: true` means a highlight crossed owners; v1 still sends the **anchor** owner’s selector plus the full `selectedText`. Table-cell `selector` is the cell’s layout path (`inset[Tabular] … inset[Text] … layout[…]`), not the Tabular inset.
+`stale: true` means the editor buffer has unsaved edits — inspect only until save. `multi: true` means a highlight crossed owners; v1 still sends the **anchor** owner’s selector plus the full `selectedText`. Table-cell `selector` is the cell’s layout path (`inset[Tabular] … inset[Text] … layout[…]`), not the Tabular inset.
 
 ## Use
 

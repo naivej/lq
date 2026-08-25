@@ -11,6 +11,7 @@ import {
   compactSelector,
   formatLiveSelectionJson,
   invokeLiveSelection,
+  parseLiveSelectionJson,
   parseSelectMessage,
   readLiveSelectionFile,
   rematchSelection,
@@ -64,7 +65,6 @@ describe("resolveSelection / store", () => {
       stale: false,
       mode: "tracked",
       selector: "layout[Standard]:nth-match(12)",
-      coords: null,
       selectedText: "the phrase",
       changeId: null,
       multi: false,
@@ -72,9 +72,9 @@ describe("resolveSelection / store", () => {
     });
   });
 
-  it("leaves coords null for table cells and sets changeId for change owners", () => {
+  it("sets changeId for change owners and omits coords", () => {
     const cell = resolveSelection(tokens, "tok-2", "", false, baseCtx);
-    assert.equal(cell?.coords, null);
+    assert.equal("coords" in (cell ?? {}), false);
     assert.equal(
       cell?.selector,
       "inset[Tabular]:nth-match(1) inset[Text]:nth-match(2) layout[Plain Layout]",
@@ -138,7 +138,6 @@ describe("resolveSelection / store", () => {
       stale: false,
       mode: "tracked",
       selector: "layout[Standard]:nth-match(1)",
-      coords: null,
       selectedText: "x",
       changeId: null,
       multi: false,
@@ -242,20 +241,22 @@ describe("invoke / JSON / path", () => {
     );
   });
 
-  it("does not append leftover coords to the status line (DL138 J3)", () => {
-    const leftover: LiveSelectionRecord = {
-      file: "/tmp/doc.lyx",
-      diskHash: "abc",
-      stale: false,
-      mode: "tracked",
-      selector: "inset[Tabular]:nth-match(1)",
-      coords: { row: 2, column: 3 },
-      selectedText: "",
-      changeId: null,
-      multi: false,
-      capturedAt: "2026-08-24T12:00:00.000Z",
-    };
-    assert.equal(compactSelector(leftover), "inset[Tabular]:nth-match(1)");
+  it("ignores leftover coords in disk JSON (DL138 J3 override)", () => {
+    const record = parseLiveSelectionJson(`{
+      "file": "/tmp/doc.lyx",
+      "diskHash": "abc",
+      "stale": false,
+      "mode": "tracked",
+      "selector": "inset[Tabular]:nth-match(1)",
+      "coords": { "row": 2, "column": 3 },
+      "selectedText": "",
+      "changeId": null,
+      "multi": false,
+      "capturedAt": "2026-08-24T12:00:00.000Z"
+    }`)!;
+    assert.equal("coords" in record, false);
+    assert.equal(compactSelector(record), "inset[Tabular]:nth-match(1)");
+    assert.equal(formatLiveSelectionJson(record).includes("coords"), false);
   });
 
   it("declares the LM tool in package.json", () => {

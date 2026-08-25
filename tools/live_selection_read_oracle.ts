@@ -45,7 +45,6 @@ type LiveRecord = {
   stale: boolean;
   mode: "original" | "tracked" | "clean";
   selector: string;
-  coords: { row: number; column: number } | null;
   selectedText: string;
   changeId: string | null;
   multi: boolean;
@@ -335,13 +334,6 @@ function parseLiveSelectionJson(raw: string): LiveRecord | undefined {
   if (typeof o.multi !== "boolean" || typeof o.capturedAt !== "string") {
     return undefined;
   }
-  let coords: LiveRecord["coords"] = null;
-  if (o.coords !== null && o.coords !== undefined) {
-    if (typeof o.coords !== "object") return undefined;
-    const c = o.coords as Record<string, unknown>;
-    if (typeof c.row !== "number" || typeof c.column !== "number") return undefined;
-    coords = { row: c.row, column: c.column };
-  }
   const changeId = o.changeId === null
     ? null
     : typeof o.changeId === "string"
@@ -361,7 +353,6 @@ function parseLiveSelectionJson(raw: string): LiveRecord | undefined {
     stale: o.stale,
     mode: o.mode,
     selector: o.selector,
-    coords,
     selectedText: o.selectedText,
     changeId,
     multi: o.multi,
@@ -384,7 +375,6 @@ function resolveRecord(
     stale: foreign ? false : false,
     mode: ctx.mode,
     selector: token.bundle.selector,
-    coords: token.bundle.coords ?? null,
     selectedText,
     changeId: token.id.startsWith("change-") ? token.id : null,
     multi,

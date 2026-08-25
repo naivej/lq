@@ -11,22 +11,15 @@ export const LIVE_CAPABILITIES = {
   sourceReveal: false,
 } as const;
 
-/** Table-cell coordinates on a mapped owner (1-based, DL134). */
-export interface LiveTokenCoords {
-  row: number;
-  column: number;
-}
-
 /** Provenance when the owner lives in an included child `.lyx` (DL136). */
 export interface LiveTokenVia {
   file: string;
   selector: string;
 }
 
-/** Read-first lq bundle: selector path plus optional cell coords. Not a mutation selector. */
+/** Read-first lq bundle: selector path. Not a mutation selector. */
 export interface LiveTokenBundle {
   selector: string;
-  coords?: LiveTokenCoords;
   /** Edit-target file when different from the previewed master (included child). */
   file?: string;
   /** SHA-256 of `file` when `file` is set. */
@@ -265,18 +258,8 @@ export function parseLiveStdout(stdout: string): LiveRender {
         throw new AdapterError("CONTRACT", "token.bundle.via.selector must be a non-empty string.");
       }
     }
-    if ("coords" in b && b.coords !== undefined && b.coords !== null) {
-      if (typeof b.coords !== "object") {
-        throw new AdapterError("CONTRACT", "token.bundle.coords must be an object when present.");
-      }
-      const coords = b.coords as Record<string, unknown>;
-      if (typeof coords.row !== "number" || !Number.isInteger(coords.row) || coords.row < 1) {
-        throw new AdapterError("CONTRACT", "token.bundle.coords.row must be a positive integer.");
-      }
-      if (typeof coords.column !== "number" || !Number.isInteger(coords.column) || coords.column < 1) {
-        throw new AdapterError("CONTRACT", "token.bundle.coords.column must be a positive integer.");
-      }
-    }
+    // DL138 J3 override: leftover coords are ignored, not part of the contract.
+    if ("coords" in b) delete b.coords;
   }
   return obj as unknown as LiveRender;
 }
