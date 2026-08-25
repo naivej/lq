@@ -9,11 +9,15 @@ import { assert, assertEquals, assertMatch, assertStringIncludes, assertThrows }
 import { fromFileUrl, join } from "@std/path";
 import { parse } from "../src/parser.ts";
 import { hashText } from "../src/cache.ts";
+import type { Node } from "../src/ast.ts";
+import { query } from "../src/query.ts";
+import { concatenateTextNodes } from "../src/text_utils.ts";
 import {
   LIVE_CAPABILITIES,
   LIVE_CONTRACT,
   LIVE_DEFERRED_FIELDS,
   type LiveNavigate,
+  type LiveToken,
   buildLiveResponse,
   detectLineEnding,
   escapeLiveHtml,
@@ -26,6 +30,7 @@ import {
 import { runCliRaw, runCliTest } from "./helpers.ts";
 
 const SYNTHETIC = fromFileUrl(new URL("./fixtures/Synthetic/", import.meta.url));
+const FIXTURES = fromFileUrl(new URL("./fixtures/", import.meta.url));
 const HELP_DIR = fromFileUrl(new URL("./fixtures/Help/", import.meta.url));
 
 function syntheticPath(name: string): string {
@@ -205,6 +210,69 @@ function stripMappingAttrs(html: string): string {
     .replace(/\s+id="tok-\d+"/g, "");
 }
 
+/** Innermost data-ref ancestor of a phrase in Live HTML (webview closest("[data-ref]")). */
+function closestDataRef(html: string, phrase: string): string {
+  assert(html.includes(phrase), `phrase not in Live HTML: ${JSON.stringify(phrase)}`);
+  type El = { tag: string; id?: string; parent?: El };
+  const root: El = { tag: "root" };
+  const stack: El[] = [root];
+  const re = /<([a-zA-Z0-9]+)([^>]*)\/?>|<\/([a-zA-Z0-9]+)>|([^<]+)/g;
+  const VOID = new Set(["br", "img", "hr"]);
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    if (m[1]) {
+      const tag = m[1].toLowerCase();
+      const attrs = m[2] ?? "";
+      const id = attrs.match(/\bdata-ref="([^"]*)"/)?.[1];
+      const el: El = { tag, id, parent: stack[stack.length - 1] };
+      if (!/\/\s*$/.test(attrs) && !VOID.has(tag)) stack.push(el);
+    } else if (m[3]) {
+      const want = m[3].toLowerCase();
+      for (let i = stack.length - 1; i > 0; i--) {
+        if (stack[i].tag === want) {
+          stack.length = i;
+          break;
+        }
+      }
+    } else if (m[4]?.includes(phrase)) {
+      let cur: El | undefined = stack[stack.length - 1];
+      while (cur) {
+        if (cur.id) return cur.id;
+        cur = cur.parent;
+      }
+    }
+  }
+  throw new Error(`no data-ref ancestor for ${JSON.stringify(phrase)}`);
+}
+
+function nodeHasPhrase(node: Node, phrase: string): boolean {
+  if (node.type !== "block") return false;
+  const { fullText } = concatenateTextNodes(node.children, {
+    includeDeleted: true,
+    recurseLayouts: true,
+    topLevelIsLayout: node.tag === "layout",
+    skipInvisibleNotes: false,
+  });
+  return fullText.includes(phrase);
+}
+
+function assertPhraseMapsToQuery(
+  html: string,
+  tokens: LiveToken[],
+  ast: ReturnType<typeof parse>,
+  phrase: string,
+): string {
+  const id = closestDataRef(html, phrase);
+  const token = tokens.find((t) => t.id === id);
+  assert(token, `no token for data-ref ${id} (phrase ${JSON.stringify(phrase)})`);
+  const matches = query(ast, token.bundle.selector);
+  assert(
+    matches.some((n) => nodeHasPhrase(n, phrase)),
+    `selector ${JSON.stringify(token.bundle.selector)} from ${id} does not contain ${JSON.stringify(phrase)}`,
+  );
+  return token.bundle.selector;
+}
+
 Deno.test("Live mapping - headings_paragraphs tokens match HTML ids (DL134)", async () => {
   const file = syntheticPath("headings_paragraphs.lyx");
   const text = await Deno.readTextFile(file);
@@ -250,9 +318,46 @@ Deno.test("Live mapping - review_changes.lyx emits change-N tokens (DL134)", asy
   assert(changeTokens.length >= 1, "change regions should be mapped");
   for (const t of changeTokens) {
     assertStringIncludes(response.html, `id="${t.id}"`);
-    assert(t.bundle.selector.startsWith("layout["));
+    assert(t.bundle.selector.includes("layout[") || t.bundle.selector.includes("inset["));
   }
   assert(validated.changes.every((c) => changeTokens.some((t) => t.id === c.anchorId)));
+});
+
+Deno.test("Live mapping - my_template footnote/note phrases round-trip via query (DL135)", async () => {
+  const file = `${FIXTURES}my_template.lyx`;
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  const foot = assertPhraseMapsToQuery(response.html, validated.tokens, ast, "A footnote.");
+  assert(
+    foot.includes("inset[Foot]") && foot.includes("layout[Plain Layout]"),
+    `body footnote inner should be a nested path, got ${foot}`,
+  );
+  assertPhraseMapsToQuery(response.html, validated.tokens, ast, "I like to use lyx note");
+  assertPhraseMapsToQuery(response.html, validated.tokens, ast, "Details about me");
+});
+
+Deno.test("Live mapping - footnote phrases round-trip on synthetic insets (DL135)", async () => {
+  for (
+    const [name, phrases] of [
+      ["disclosure_notes.lyx", ["Selectable footnote body.", "private note body"]],
+      ["table_figure_foot_math.lyx", ["Footnote body."]],
+      ["disclosure_collapsibles.lyx", [
+        "Author footnote body (click the star).",
+        "Body footnote content.",
+      ]],
+    ] as const
+  ) {
+    const file = syntheticPath(name);
+    const text = await Deno.readTextFile(file);
+    const ast = parse(text);
+    const { response } = await buildLiveResponse(file, ast, text);
+    const validated = validateLiveResponse(response);
+    for (const phrase of phrases) {
+      assertPhraseMapsToQuery(response.html, validated.tokens, ast, phrase);
+    }
+  }
 });
 
 Deno.test("Live mapping - no-change HTML is additive-only (DL134)", async () => {

@@ -30,7 +30,7 @@ Run the same sequence for every task:
    | `diskHash` | SHA-256 of the saved bytes the preview was rendered from. Snapshot identity only. |
    | `stale` | `true` → inspect only until the user saves and a new pointer lands. `false` → pointer matches saved bytes. |
    | `mode` | Preview shows `original` (before changes) / `tracked` (with tracked changes) / `clean` (after accepting all changes). |
-   | `selector` | Owner selector for `lq read` |
+   | `selector` | Owner selector for `lq read` (may be a descendant path such as `inset[Foot]:nth-match(2) layout[Plain Layout]`). Pass the whole string as one argument. |
    | `coords` | `{row, column}` 1-based table cell, else `null`. |
    | `selectedText` | Highlighted phrase for `--find`, empty if caret-only. |
    | `changeId` | `change-N` when the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this Live render |

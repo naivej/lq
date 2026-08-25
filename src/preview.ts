@@ -430,14 +430,16 @@ interface RenderCtx {
   authorSlots: Map<number, number>;
   /** Read-first mapping tokens (DL134). */
   tokens: LiveToken[];
-  /** layout:<name> / inset:<kind> → nth-match counter (query document order). */
-  matchCounts: Map<string, number>;
+  /** Query-order nth-match for every layout/inset CST node (DL135). */
+  queryIndex: Map<BlockNode, { tag: "layout" | "inset"; name: string; globalN: number }>;
   /** Next `tok-N` id for owners without a pre-existing HTML id. */
   tokSeq: number;
   /** Selector of the layout currently being rendered (change-region owner). */
   currentLayoutSelector?: string;
   /** Selector of the inset currently being rendered (disclosure / cell owner). */
   currentInsetSelector?: string;
+  /** CST node for `currentInsetSelector` (nested layout paths, DL135). */
+  currentInsetNode?: BlockNode;
   bibitem: number;
   includeStack: string[];
   subeq: { parent: number; child: number } | null;
@@ -762,19 +764,81 @@ function xmlId(name: string): string {
   return name.replace(/[^A-Za-z0-9]/g, "_");
 }
 
-function nextMatch(ctx: RenderCtx, kind: "layout" | "inset", name: string): number {
-  const key = `${kind}:${name}`;
-  const n = (ctx.matchCounts.get(key) ?? 0) + 1;
-  ctx.matchCounts.set(key, n);
-  return n;
+/** Same args rule as `query()`: exact trim, or first word equals the selector argument. */
+function argsMatchSelector(nodeArgs: string | undefined, argExact: string): boolean {
+  if (nodeArgs === undefined) return false;
+  const trimmed = nodeArgs.trim();
+  const first = trimmed.split(/\s+/)[0] ?? "";
+  return trimmed === argExact || first === argExact;
 }
 
-function layoutSelector(ctx: RenderCtx, name: string): string {
-  return `layout[${name}]:nth-match(${nextMatch(ctx, "layout", name)})`;
+function buildQueryIndex(
+  root: Node[],
+): Map<BlockNode, { tag: "layout" | "inset"; name: string; globalN: number }> {
+  const blocks: BlockNode[] = [];
+  const collect = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type !== "block") continue;
+      if (n.tag === "layout" || n.tag === "inset") blocks.push(n);
+      collect(n.children);
+    }
+  };
+  collect(root);
+  const map = new Map<BlockNode, { tag: "layout" | "inset"; name: string; globalN: number }>();
+  for (const node of blocks) {
+    const name = (node.args ?? "").trim();
+    const tag = node.tag as "layout" | "inset";
+    let n = 0;
+    for (const other of blocks) {
+      if (other.tag !== tag) continue;
+      if (!argsMatchSelector(other.args, name)) continue;
+      n++;
+      if (other === node) break;
+    }
+    map.set(node, { tag, name, globalN: n });
+  }
+  return map;
 }
 
-function insetSelector(ctx: RenderCtx, kind: string): string {
-  return `inset[${kind}]:nth-match(${nextMatch(ctx, "inset", kind)})`;
+function isPathPrefixInset(kind: string): boolean {
+  return kind !== "Tabular" && !kind.startsWith("Tabular ");
+}
+
+function descendantLayoutsNamed(inset: BlockNode, name: string): BlockNode[] {
+  const out: BlockNode[] = [];
+  const walk = (nodes: Node[]) => {
+    for (const n of nodes) {
+      if (n.type !== "block") continue;
+      if (n.tag === "layout" && argsMatchSelector(n.args, name)) out.push(n);
+      walk(n.children);
+    }
+  };
+  walk(inset.children);
+  return out;
+}
+
+function insetOwnerSelector(ctx: RenderCtx, block: BlockNode): string {
+  const rec = ctx.queryIndex.get(block);
+  const kind = rec?.name ?? insetKind(block);
+  const n = rec?.globalN ?? 1;
+  return `inset[${kind}]:nth-match(${n})`;
+}
+
+function layoutOwnerSelector(ctx: RenderCtx, node: BlockNode, name: string): string {
+  const rec = ctx.queryIndex.get(node);
+  const globalN = rec?.globalN ?? 1;
+  const inset = ctx.currentInsetNode;
+  const kind = inset ? insetKind(inset) : "";
+  if (inset && isPathPrefixInset(kind)) {
+    const prefix = insetOwnerSelector(ctx, inset);
+    const same = descendantLayoutsNamed(inset, name);
+    const innerN = same.indexOf(node) + 1;
+    const layoutPart = same.length > 1 && innerN > 0
+      ? `layout[${name}]:nth-match(${innerN})`
+      : `layout[${name}]`;
+    return `${prefix} ${layoutPart}`;
+  }
+  return `layout[${name}]:nth-match(${globalN})`;
 }
 
 function emitToken(
@@ -799,9 +863,9 @@ function mappingAttrs(id: string): string {
   return ` id="${escapeLiveHtml(id)}" data-ref="${escapeLiveHtml(id)}"`;
 }
 
-/** Count this layout for nth-match (even when HTML is skipped) and run `fn` as its owner. */
-function withLayout(ctx: RenderCtx, name: string, fn: (selector: string) => string): string {
-  const selector = layoutSelector(ctx, name);
+/** Bind this layout as the current owner (query-order selector, DL135) and run `fn`. */
+function withLayout(ctx: RenderCtx, item: FlowItem, fn: (selector: string) => string): string {
+  const selector = layoutOwnerSelector(ctx, item.node, item.layout);
   const prev = ctx.currentLayoutSelector;
   ctx.currentLayoutSelector = selector;
   try {
@@ -1257,7 +1321,7 @@ export async function renderLiveHtml(
     changeSeq: 0,
     authorSlots: new Map(),
     tokens: [],
-    matchCounts: new Map(),
+    queryIndex: buildQueryIndex(ast.children),
     tokSeq: 0,
     subeq: null,
     bibitem: 0,
@@ -1424,12 +1488,11 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
     const item = items[i];
     const layout = role(item.layout, ctx);
     if (layout.kind === "omit") {
-      layoutSelector(ctx, item.layout);
       i++;
       continue;
     }
     if (layout.kind === "title") {
-      html += withLayout(ctx, item.layout, (selector) => {
+      html += withLayout(ctx, item, (selector) => {
         const id = takeOwnerId(ctx);
         emitToken(ctx, id, selector);
         return `<h1 class="title"${mappingAttrs(id)}>${renderLayoutInline(item.node, ctx, true, outerState)}</h1>`;
@@ -1438,7 +1501,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
       continue;
     }
     if (layout.kind === "front") {
-      html += withLayout(ctx, item.layout, (selector) => {
+      html += withLayout(ctx, item, (selector) => {
         const id = takeOwnerId(ctx);
         emitToken(ctx, id, selector);
         return `<div class="${layoutSlug(item.layout)}"${mappingAttrs(id)}>${renderLayoutInline(item.node, ctx, true, outerState)}</div>`;
@@ -1453,7 +1516,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
       continue;
     }
     if (layout.kind === "heading") {
-      html += withLayout(ctx, item.layout, (selector) => {
+      html += withLayout(ctx, item, (selector) => {
         closeSections(layout.level);
         const number = headings.next(item.layout, layout.level, hasStartOfAppendix(item.node));
         noteChapterHeading(ctx, layout, number);
@@ -1487,7 +1550,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
       continue;
     }
     if (item.layout === "Initial") {
-      html += withLayout(ctx, item.layout, (selector) => {
+      html += withLayout(ctx, item, (selector) => {
         const id = takeOwnerId(ctx);
         emitToken(ctx, id, selector);
         const inner = renderInitial(item.node, ctx);
@@ -1497,7 +1560,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
       i++;
       continue;
     }
-    html += withLayout(ctx, item.layout, (selector) => {
+    html += withLayout(ctx, item, (selector) => {
       const inner = renderLayoutInline(item.node, ctx, false, outerState);
       if (inner.trim().length === 0) return "";
       // Promote bare figures (and DL131 disclosed floats) out of Standard wrappers.
@@ -1549,11 +1612,11 @@ function snapshotCounters(ctx: RenderCtx) {
     layoutCounters: new Map(ctx.layoutCounters),
     floatTypeCounts: new Map(ctx.floatTypeCounts),
     subeq: ctx.subeq ? { ...ctx.subeq } : null,
-    matchCounts: new Map(ctx.matchCounts),
     tokens: ctx.tokens.slice(),
     tokSeq: ctx.tokSeq,
     currentLayoutSelector: ctx.currentLayoutSelector,
     currentInsetSelector: ctx.currentInsetSelector,
+    currentInsetNode: ctx.currentInsetNode,
   };
 }
 
@@ -1571,11 +1634,11 @@ function restoreCounters(ctx: RenderCtx, snap: ReturnType<typeof snapshotCounter
   ctx.layoutCounters = snap.layoutCounters;
   ctx.floatTypeCounts = snap.floatTypeCounts;
   ctx.subeq = snap.subeq;
-  ctx.matchCounts = snap.matchCounts;
   ctx.tokens = snap.tokens;
   ctx.tokSeq = snap.tokSeq;
   ctx.currentLayoutSelector = snap.currentLayoutSelector;
   ctx.currentInsetSelector = snap.currentInsetSelector;
+  ctx.currentInsetNode = snap.currentInsetNode;
 }
 
 /** True when HTML is only Newpage/Separator/VSpace chrome (no reader prose). */
@@ -1671,14 +1734,13 @@ function renderList(
     if (item.depth === depth) {
       if (item.layout !== first.layout) {
         if (isSkippableFlow(item, ctx)) {
-          layoutSelector(ctx, item.layout);
           i++;
           continue;
         }
         break;
       }
       if (first.layout === "Description" || spec.tag === "dl") {
-        html += withLayout(ctx, item.layout, (selector) => {
+        html += withLayout(ctx, item, (selector) => {
           const { label, rest } = splitDescription(item.node, ctx);
           const id = takeOwnerId(ctx);
           emitToken(ctx, id, selector);
@@ -1687,7 +1749,6 @@ function renderList(
         i++;
         while (i < items.length && items[i].depth > depth) {
           if (isSkippableFlow(items[i], ctx)) {
-            layoutSelector(ctx, items[i].layout);
             i++;
             continue;
           }
@@ -1698,7 +1759,7 @@ function renderList(
         }
         html += "</dd>";
       } else {
-        html += withLayout(ctx, item.layout, (selector) => {
+        html += withLayout(ctx, item, (selector) => {
           const id = takeOwnerId(ctx);
           emitToken(ctx, id, selector);
           return `<${spec.item}${mappingAttrs(id)}>${renderLayoutInline(item.node, ctx)}`;
@@ -1706,7 +1767,6 @@ function renderList(
         i++;
         while (i < items.length && items[i].depth > depth) {
           if (isSkippableFlow(items[i], ctx)) {
-            layoutSelector(ctx, items[i].layout);
             i++;
             continue;
           }
@@ -1718,7 +1778,6 @@ function renderList(
         html += `</${spec.item}>`;
       }
     } else if (isSkippableFlow(item, ctx)) {
-      layoutSelector(ctx, item.layout);
       i++;
     } else if (isListLayout(item.layout, ctx)) {
       const [nested, next] = nestFrom(i);
@@ -1749,7 +1808,7 @@ function renderEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string, n
   }
   let html = `<${spec.tag}${cls}>`;
   while (i < items.length && items[i].layout === first.layout && items[i].depth === first.depth) {
-    html += withLayout(ctx, items[i].layout, (selector) => {
+    html += withLayout(ctx, items[i], (selector) => {
       const id = takeOwnerId(ctx);
       emitToken(ctx, id, selector);
       return `<${spec.item}${mappingAttrs(id)}>${renderLayoutInline(items[i].node, ctx)}</${spec.item}>`;
@@ -1830,7 +1889,7 @@ function renderAbstract(items: FlowItem[], start: number, ctx: RenderCtx): [stri
   let i = start;
   let html = `<div class="abstract"><span class="abstract_label">Abstract</span>`;
   while (i < items.length && items[i].layout === "Abstract" && items[i].depth === items[start].depth) {
-    html += withLayout(ctx, items[i].layout, (selector) => {
+    html += withLayout(ctx, items[i], (selector) => {
       const id = takeOwnerId(ctx);
       emitToken(ctx, id, selector);
       return `<div class="abstract_item"${mappingAttrs(id)}>${renderLayoutInline(items[i].node, ctx, true)}</div>`;
@@ -2122,11 +2181,14 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   }
   const kind = insetKind(block);
   const prevInset = ctx.currentInsetSelector;
-  ctx.currentInsetSelector = insetSelector(ctx, kind);
+  const prevNode = ctx.currentInsetNode;
+  ctx.currentInsetNode = block;
+  ctx.currentInsetSelector = insetOwnerSelector(ctx, block);
   try {
     return renderInsetBody(block, kind, parentState, ctx);
   } finally {
     ctx.currentInsetSelector = prevInset;
+    ctx.currentInsetNode = prevNode;
   }
 }
 
@@ -3616,7 +3678,7 @@ function renderBibEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string
   let html = `<div class="bibliography"><h2 class="bibliography">${escapeLiveHtml(title)}</h2>`;
   let i = start;
   while (i < items.length && items[i].layout === "Bibliography" && items[i].depth === items[start].depth) {
-    html += withLayout(ctx, items[i].layout, (selector) => {
+    html += withLayout(ctx, items[i], (selector) => {
       const id = takeOwnerId(ctx);
       emitToken(ctx, id, selector);
       return `<div class="bibitem"${mappingAttrs(id)}>${renderLayoutInline(items[i].node, ctx)}</div>`;
