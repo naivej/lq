@@ -2,6 +2,4 @@ bin
 deno.lock
 cov
 audit
-.lq/cache
-.lq/undo
-.lq/live-selection.json
+.lq
