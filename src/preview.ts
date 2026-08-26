@@ -2351,11 +2351,19 @@ function renderInset(block: BlockNode, parentState: TraversalState, ctx: RenderC
   ctx.currentInsetNode = block;
   ctx.currentInsetSelector = insetOwnerSelector(ctx, block);
   try {
-    return renderInsetBody(block, kind, parentState, ctx);
+    return renderInsetBody(block, kind, parentState, ctx, prevNode);
   } finally {
     ctx.currentInsetSelector = prevInset;
     ctx.currentInsetNode = prevNode;
   }
+}
+
+/** Owners that should prefix Caption layout paths (DL142 J1 A / J2 A). */
+function isCaptionOwnerInset(kind: string): boolean {
+  return kind === "Tabular" || kind.startsWith("Tabular ") ||
+    kind.startsWith("Float ") ||
+    kind.startsWith("Wrap ") ||
+    kind === "listings" || kind.startsWith("listings ");
 }
 
 function renderInsetBody(
@@ -2363,6 +2371,7 @@ function renderInsetBody(
   kind: string,
   parentState: TraversalState,
   ctx: RenderCtx,
+  ownerParent?: BlockNode,
 ): string {
   if (kind === "ERT") {
     // DL131 Live-only: native LyXHTML omits ERT; Live shows escaped TeX in a chip.
@@ -2471,6 +2480,23 @@ function renderInsetBody(
   if (kind === "Graphics") return renderGraphics(block, ctx);
   if (kind === "Caption" || kind.startsWith("Caption ")) {
     const type = captionTypeFromKind(kind);
+    const nested = flattenFlow(block.children, 0);
+    // DL142: under Tabular/Float/Wrap/listings, publish owner→Caption→layout
+    // (not global Caption nth-match). Else keep renderInsetLayouts path.
+    if (
+      ownerParent && isCaptionOwnerInset(insetKind(ownerParent)) &&
+      nested.length > 0
+    ) {
+      const inner = nested.map((item) =>
+        withCaptionLayout(ctx, ownerParent, block, item, (selector) => {
+          const id = takeOwnerId(ctx);
+          emitToken(ctx, id, selector);
+          const body = renderLayoutInline(item.node, ctx, false, parentState);
+          return `<div class="${layoutSlug(item.layout)}"${mappingAttrs(id)}>${body}</div>`;
+        })
+      ).join("");
+      return `<span class="float-caption-${escapeLiveHtml(type)}">${inner}</span>`;
+    }
     const inner = renderInsetLayouts(block, parentState, ctx);
     return `<span class="float-caption-${escapeLiveHtml(type)}">${inner}</span>`;
   }

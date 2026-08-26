@@ -371,6 +371,27 @@ Deno.test("Live mapping - Description dd values publish the layout path (DL141)"
   );
 });
 
+Deno.test("Live mapping - longtable Caption is owner-prefixed (DL142)", async () => {
+  const file = fromFileUrl(new URL("./fixtures/Help/EmbeddedObjects.lyx", import.meta.url));
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  const phrase = "Multi-page table with caption";
+  const sel = assertPhraseMapsToQuery(response.html, validated.tokens, ast, phrase);
+  assertMatch(sel, /inset\[Tabular/);
+  assertMatch(sel, /inset\[Caption/);
+  assertMatch(sel, /layout\[/);
+  assert(
+    !/^inset\[Caption/.test(sel),
+    `Caption must not stay document-global: ${sel}`,
+  );
+  assert(
+    query(ast, sel).some((n) => extractAllText(n).includes(phrase)),
+    `--text-only of ${sel} should contain ${JSON.stringify(phrase)}`,
+  );
+});
+
 Deno.test("Live mapping - table cells publish nested layout paths (DL138)", async () => {
   const file = syntheticPath("table_figure_foot_math.lyx");
   const text = await Deno.readTextFile(file);
