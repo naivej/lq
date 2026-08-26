@@ -173,6 +173,27 @@ describe("resolveSelection / store", () => {
     assert.equal(store.get()?.stale, true);
   });
 
+  it("markStale folds case only on Windows (DL148)", () => {
+    const store = new LiveSelectionStore();
+    store.set({
+      file: "C:/Docs/A.LYX",
+      diskHash: "h",
+      stale: false,
+      mode: "tracked",
+      selector: "layout[Standard]:nth-match(1)",
+      selectedText: "",
+      changeId: null,
+      multi: false,
+      capturedAt: "2026-08-24T12:00:00.000Z",
+    });
+    store.markStale("c:/docs/a.lyx");
+    if (process.platform === "win32") {
+      assert.equal(store.get()?.stale, true);
+    } else {
+      assert.equal(store.get()?.stale, false);
+    }
+  });
+
   it("rematch keeps child file when preview master changes hash (DL136)", () => {
     const previous = resolveSelection(
       [{

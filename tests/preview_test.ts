@@ -22,6 +22,7 @@ import {
   buildLiveResponse,
   detectLineEnding,
   escapeLiveHtml,
+  findMagick,
   formatSem,
   normalizeReaderHtml,
   renderLiveHtml,
@@ -2050,5 +2051,33 @@ Deno.test("Live CSP floor - restrictive policy string has no remote sources", ()
     assertStringIncludes(csp, "default-src 'none'");
     assert(/script-src ('none'|'nonce-[^']+')/.test(csp), "script-src must be none or nonce-only");
     assert(!/https?:\/\//.test(csp), "CSP must not allow remote http(s) URLs");
+  }
+});
+
+Deno.test("findMagick discovers magick on PATH when bundled is absent (DL148)", () => {
+  const dir = Deno.makeTempDirSync({ prefix: "lq-magick-" });
+  const stubName = Deno.build.os === "windows" ? "magick.exe" : "magick";
+  const stub = join(dir, stubName);
+  Deno.writeFileSync(stub, new Uint8Array(0));
+  const prevPath = Deno.env.get("PATH");
+  const prevMagick = Deno.env.get("MAGICK_BINARY");
+  const prevLocal = Deno.env.get("LOCALAPPDATA");
+  try {
+    Deno.env.delete("MAGICK_BINARY");
+    Deno.env.delete("LOCALAPPDATA");
+    Deno.env.set("PATH", dir);
+    assertEquals(findMagick(undefined), stub);
+  } finally {
+    if (prevPath === undefined) Deno.env.delete("PATH");
+    else Deno.env.set("PATH", prevPath);
+    if (prevMagick === undefined) Deno.env.delete("MAGICK_BINARY");
+    else Deno.env.set("MAGICK_BINARY", prevMagick);
+    if (prevLocal === undefined) Deno.env.delete("LOCALAPPDATA");
+    else Deno.env.set("LOCALAPPDATA", prevLocal);
+    try {
+      Deno.removeSync(dir, { recursive: true });
+    } catch {
+      // ignore cleanup races
+    }
   }
 });

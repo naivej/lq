@@ -3060,7 +3060,24 @@ function fileExists(p: string): boolean {
   }
 }
 
-function findMagick(layoutsDir?: string): string | undefined {
+/** Absolute path of `command` on PATH, if any. */
+function findOnPath(command: string): string | undefined {
+  const pathVar = Deno.env.get("PATH") ?? "";
+  const names = Deno.build.os === "windows"
+    ? [`${command}.exe`, command]
+    : [command];
+  for (const dir of pathVar.split(path.DELIMITER)) {
+    if (!dir) continue;
+    for (const name of names) {
+      const candidate = path.join(dir, name);
+      if (fileExists(candidate)) return candidate;
+    }
+  }
+  return undefined;
+}
+
+/** Resolve ImageMagick (`magick`). Exported for discovery tests (DL148). */
+export function findMagick(layoutsDir?: string): string | undefined {
   const env = Deno.env.get("MAGICK_BINARY");
   if (env && fileExists(env)) return env;
   const candidates: string[] = [];
@@ -3078,7 +3095,7 @@ function findMagick(layoutsDir?: string): string | undefined {
   for (const c of candidates) {
     if (fileExists(c)) return c;
   }
-  return undefined;
+  return findOnPath("magick");
 }
 
 const WEB_IMAGE = /\.(png|jpe?g|gif|webp|svg|bmp)$/i;

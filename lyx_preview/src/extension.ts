@@ -1,6 +1,7 @@
 import { basename, dirname } from "node:path";
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
+import { normalizeFsPath, sameFsPath } from "./fsPath";
 import {
   AdapterError,
   PreviewSession,
@@ -330,16 +331,6 @@ class LivePreviewPanel {
     void vscode.commands.executeCommand("setContext", "lyxPreview.liveOpen", false);
     for (const d of this.disposables) d.dispose();
   }
-}
-
-function normalizeFsPath(p: string): string {
-  return p.replace(/\\/g, "/");
-}
-
-function sameFsPath(a: string, b: string): boolean {
-  const na = normalizeFsPath(a);
-  const nb = normalizeFsPath(b);
-  return process.platform === "win32" ? na.toLowerCase() === nb.toLowerCase() : na === nb;
 }
 
 function rewriteLocalImages(html: string, webview: vscode.Webview): string {

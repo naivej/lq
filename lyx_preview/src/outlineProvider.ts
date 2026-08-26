@@ -1,5 +1,6 @@
 /** Outline + navigate cache shared by Live preview and Explorer LyX Outline tree. */
 
+import { normalizeFsPath, sameFsPath } from "./fsPath";
 import type { LiveChangeEntry, LiveNavigate, LiveOutlineEntry } from "./previewSession";
 import { emptyNavigate } from "./previewSession";
 
@@ -13,16 +14,6 @@ const cacheByPath = new Map<string, CachedNav>();
 
 /** Bound on the module-level outline cache (DL132 P7). */
 const MAX_CACHE_ENTRIES = 32;
-
-function normalizeFsPath(p: string): string {
-  return p.replace(/\\/g, "/");
-}
-
-function sameFsPath(a: string, b: string): boolean {
-  const na = normalizeFsPath(a);
-  const nb = normalizeFsPath(b);
-  return process.platform === "win32" ? na.toLowerCase() === nb.toLowerCase() : na === nb;
-}
 
 function lookup(filePath: string): CachedNav | undefined {
   const key = normalizeFsPath(filePath);

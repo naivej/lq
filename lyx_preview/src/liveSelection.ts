@@ -2,6 +2,7 @@
 
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { sameFsPath } from "./fsPath";
 import type { LiveToken, LiveTokenVia } from "./previewSession";
 
 export const NO_LIVE_SELECTION = "no Preview selection";
@@ -46,10 +47,6 @@ export function parseSelectMessage(msg: unknown): SelectMessage | undefined {
   };
 }
 
-function sameFsPath(a: string, b: string): boolean {
-  const norm = (p: string) => p.replaceAll("\\", "/").toLowerCase();
-  return norm(a) === norm(b);
-}
 
 /**
  * CommandInset tokens whose Live pretty text is absent from `--text-only`
