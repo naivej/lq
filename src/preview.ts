@@ -1004,11 +1004,33 @@ function activeQueryIndex(
   return ctx.foreign?.queryIndex ?? ctx.queryIndex;
 }
 
+/**
+ * Selector-facing inset name. Formula often stores TeX in `args`
+ * (`Formula $...$`); brackets/`:` there break `query()` parsing (DL137 revisit).
+ */
+function insetSelectorKind(block: BlockNode): string {
+  const kind = insetKind(block);
+  if (kind === "Formula" || kind.startsWith("Formula")) return "Formula";
+  return kind;
+}
+
 function insetOwnerSelector(ctx: RenderCtx, block: BlockNode): string {
+  const kind = insetSelectorKind(block);
+  // Formula: recompute query-order index among all Formula* (first-word match).
+  if (kind === "Formula") {
+    let n = 0;
+    for (const [node, rec] of activeQueryIndex(ctx)) {
+      if (rec.tag !== "inset") continue;
+      if (!argsMatchSelector(node.args, "Formula")) continue;
+      n++;
+      if (node === block) break;
+    }
+    return `inset[Formula]:nth-match(${n || 1})`;
+  }
   const rec = activeQueryIndex(ctx).get(block);
-  const kind = rec?.name ?? insetKind(block);
+  const name = rec?.name ?? kind;
   const n = rec?.globalN ?? 1;
-  return `inset[${kind}]:nth-match(${n})`;
+  return `inset[${name}]:nth-match(${n})`;
 }
 
 function layoutOwnerSelector(ctx: RenderCtx, node: BlockNode, name: string): string {

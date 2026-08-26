@@ -427,6 +427,11 @@ Deno.test("Live mapping - Formula/Graphics/ref tokens are object insets (DL144 F
   const validated = validateLiveResponse(response);
   const formula = validated.tokens.find((t) => /^inset\[Formula/.test(t.bundle.selector));
   assert(formula, "expected a Formula mapping token");
+  assert(
+    !/\$|\[|\]/.test(formula.bundle.selector),
+    `Formula selector must not embed TeX: ${formula.bundle.selector}`,
+  );
+  assertMatch(formula.bundle.selector, /^inset\[Formula\]:nth-match\(\d+\)$/);
   assertEquals(query(ast, formula.bundle.selector).length >= 1, true);
   const graphics = validated.tokens.find((t) => /inset\[Graphics\]/.test(t.bundle.selector));
   assert(graphics, "expected a Graphics mapping token");

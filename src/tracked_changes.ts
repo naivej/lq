@@ -264,7 +264,19 @@ export function extractAllText(node: Node, maxLen = Infinity, inMarker = false):
   }
   if (node.type === "block") {
     if (node.tag === "inset") {
-      const label = " inset[" + (node.args || "").trim() + "] ";
+      const args = (node.args || "").trim();
+      // ERT stores TeX as opaque text children (not nested layout blocks). When
+      // the match *is* the ERT, surface that payload for --text-only / owns checks
+      // (DL137 revisit after Live maps the ERT chip body).
+      if (args === "ERT" || args.startsWith("ERT ")) {
+        let raw = "";
+        for (const child of node.children) {
+          if (child.type === "text") raw += child.text;
+          if (raw.length >= maxLen) break;
+        }
+        return raw.substring(0, maxLen);
+      }
+      const label = " inset[" + args + "] ";
       return label.substring(0, maxLen);
     }
     let result = "";

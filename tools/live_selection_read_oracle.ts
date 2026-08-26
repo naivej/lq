@@ -90,6 +90,11 @@ function nodePhraseText(node: Node): string {
   if (node.type === "property") return `${node.key} ${node.value ?? ""}`;
   if (node.type !== "block") return "";
   const args = (node.args ?? "").trim();
+  // ERT payload is opaque text children — concatenateTextNodes does not collect
+  // inset metadata text; use extractAllText (DL137 revisit).
+  if (node.tag === "inset" && (args === "ERT" || args.startsWith("ERT "))) {
+    return extractAllText(node).replace(/\s+/g, " ").trim();
+  }
   let nested = "";
   if (node.tag === "layout" || node.tag === "inset") {
     const { fullText } = concatenateTextNodes(node.children, {
@@ -113,12 +118,14 @@ function formatTextOnly(nodes: Node[]): string {
       : "";
     let text: string;
     if (node.type === "block" && node.tag === "inset") {
-      text = node.children
-        .filter((c): c is BlockNode => c.type === "block" && c.tag === "layout")
-        .map((c) =>
+      const layouts = node.children.filter((c): c is BlockNode =>
+        c.type === "block" && c.tag === "layout"
+      );
+      text = layouts.length > 0
+        ? layouts.map((c) =>
           "layout[" + ((c.args || "").trim()) + "] " + extractAllText(c).trim()
-        )
-        .join("\n");
+        ).join("\n")
+        : extractAllText(node).trim();
     } else {
       text = extractAllText(node).trim();
     }

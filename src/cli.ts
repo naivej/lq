@@ -1493,14 +1493,20 @@ function foldNegativeDepth(args: string[]): string[] {
         if (node.type === "block" && node.tag === "inset") {
           // Direct inset match (e.g. lq read ... "inset[Foot]" --text-only):
           // extract from nested layouts so the user sees the inset's content.
-          text = node.children
-            .filter(c => c.type === "block" && c.tag === "layout")
-            .map(c => {
+          // ERT (and similar) store payload as opaque text children with no
+          // real layout blocks — fall back to extractAllText on the inset.
+          const layouts = node.children.filter((c) =>
+            c.type === "block" && c.tag === "layout"
+          );
+          if (layouts.length > 0) {
+            text = layouts.map((c) => {
               const layout = c as BlockNode;
               return "layout[" + ((layout.args || "").trim()) + "] " +
                 extractAllText(layout).trim();
-            })
-            .join("\n");
+            }).join("\n");
+          } else {
+            text = extractAllText(node).trim();
+          }
         } else {
           text = extractAllText(node).trim();
         }
