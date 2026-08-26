@@ -3,8 +3,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import * as vscode from "vscode";
 
-export { runLivePreview } from "./lqRunner";
-
 /**
  * Development preference: binaries produced by `deno task build` in the lq
  * repo. Consulted first so a freshly built lq always wins over configured or

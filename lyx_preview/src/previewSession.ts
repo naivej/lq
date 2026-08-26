@@ -131,8 +131,8 @@ export class AdapterError extends Error {
   }
 }
 
-/** Field names later milestones may add. `tokens` is on the wire (DL134); `mapping` remains an unused field name. */
-const DEFERRED = ["mapping", "editTargets", "reviewRegions", "mode"];
+/** Top-level response keys not yet on the wire. Must be omitted. */
+const DEFERRED = ["editTargets", "reviewRegions", "mode"];
 
 export function parseLiveStdout(stdout: string): LiveRender {
   let parsed: unknown;

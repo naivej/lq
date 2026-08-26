@@ -55,12 +55,8 @@ export const LIVE_CAPABILITIES = {
   sourceReveal: false,
 } as const;
 
-/** @deprecated Alias — prefer LIVE_CAPABILITIES. */
-export const LIVE_UNAVAILABLE_CAPABILITIES = LIVE_CAPABILITIES;
-
-/** Fields later milestones may add. Must not appear on the wire yet. */
+/** Top-level response keys not yet on the wire. Must be omitted. */
 export const LIVE_DEFERRED_FIELDS = [
-  "mapping",
   "editTargets",
   "reviewRegions",
   "mode",
@@ -3826,35 +3822,6 @@ function listingLanguage(params: string): string {
   const raw = listingParam(params, "language");
   const dialect = /^\[([^\]]*)\](.*)$/.exec(raw);
   return (dialect ? dialect[2] || dialect[1] : raw).trim();
-}
-
-function listingCode(block: BlockNode): string {
-  const lines: string[] = [];
-  const walk = (nodes: Node[]) => {
-    for (const n of nodes) {
-      if (n.type !== "block") continue;
-      if (n.tag === "layout") {
-        let line = "";
-        const lineWalk = (kids: Node[]) => {
-          for (const k of kids) {
-            if (k.type === "text") line += k.text;
-            else if (k.type === "property" && k.key === "backslash") line += "\\";
-            else if (k.type === "block") {
-              if (k.tag === "inset" && insetKind(k).startsWith("Caption")) continue;
-              lineWalk(k.children);
-            }
-          }
-        };
-        lineWalk(n.children);
-        lines.push(line.replace(/\s+$/, ""));
-        continue;
-      }
-      if (n.tag === "inset" && insetKind(n).startsWith("Caption")) continue;
-      walk(n.children);
-    }
-  };
-  walk(block.children);
-  return lines.join("\n").replace(/^\n+/, "").replace(/\n+$/, "");
 }
 
 function listingLineText(layout: BlockNode): string {

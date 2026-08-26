@@ -65,7 +65,7 @@ describe("parseLiveStdout", () => {
       (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",
     );
     assert.throws(
-      () => parseLiveStdout(validRender({ mapping: {} })),
+      () => parseLiveStdout(validRender({ reviewRegions: [] })),
       (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",
     );
   });
