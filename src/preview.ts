@@ -1964,13 +1964,19 @@ function renderEnv(items: FlowItem[], start: number, ctx: RenderCtx): [string, n
   const cls = ` class="${layoutSlug(first.layout)}"`;
   let i = start;
   if (spec.item === "NONE") {
-    let body = "";
+    // DL143 J1 B: each layout line gets its own mapped owner inside one <pre>.
+    const lines: string[] = [];
     while (i < items.length && items[i].layout === first.layout && items[i].depth === first.depth) {
-      if (body) body += "\n";
-      body += renderLayoutInline(items[i].node, ctx);
+      const item = items[i];
+      lines.push(withLayout(ctx, item, (selector) => {
+        const id = takeOwnerId(ctx);
+        emitToken(ctx, id, selector);
+        const body = renderLayoutInline(item.node, ctx);
+        return `<span${mappingAttrs(id)}>${body}</span>`;
+      }));
       i++;
     }
-    return [`<${spec.tag}${cls}>${body}</${spec.tag}>`, i];
+    return [`<${spec.tag}${cls}>${lines.join("\n")}</${spec.tag}>`, i];
   }
   let html = `<${spec.tag}${cls}>`;
   while (i < items.length && items[i].layout === first.layout && items[i].depth === first.depth) {

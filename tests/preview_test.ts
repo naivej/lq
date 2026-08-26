@@ -338,20 +338,6 @@ Deno.test("Live mapping - heading data-ref is on the heading tag not section (DL
   assertMatch(bodySel, /^layout\[Standard\]/);
 });
 
-Deno.test("Live mapping - unmapped body chrome does not steal the heading (DL140)", async () => {
-  // LyX-Code <pre> stays unmapped until DL143; must not closest() onto a heading.
-  const file = fromFileUrl(new URL("./fixtures/Help/Additional.lyx", import.meta.url));
-  const text = await Deno.readTextFile(file);
-  const { response } = await buildLiveResponse(file, parse(text), text);
-  const phrase = "\\usepackage{indentfirst}";
-  assertStringIncludes(response.html, phrase);
-  assertThrows(
-    () => closestDataRef(response.html, phrase),
-    Error,
-    "no data-ref ancestor",
-  );
-});
-
 Deno.test("Live mapping - Description dd values publish the layout path (DL141)", async () => {
   const file = fromFileUrl(new URL("./fixtures/Help/EmbeddedObjects.lyx", import.meta.url));
   const text = await Deno.readTextFile(file);
@@ -369,6 +355,41 @@ Deno.test("Live mapping - Description dd values publish the layout path (DL141)"
     query(ast, sel).some((n) => extractAllText(n).includes(phrase)),
     `--text-only of ${sel} should contain ${JSON.stringify(phrase)}`,
   );
+});
+
+Deno.test("Live mapping - LyX-Code lines publish layout paths (DL143)", async () => {
+  const file = fromFileUrl(new URL("./fixtures/Help/Additional.lyx", import.meta.url));
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  // Live HTML shows "\usepackage…"; CST stores a backslash property + "usepackage…".
+  const phrase = "\\usepackage{indentfirst}";
+  assertStringIncludes(response.html, phrase);
+  const id = closestDataRef(response.html, phrase);
+  const token = validated.tokens.find((t) => t.id === id);
+  assert(token, `no token for data-ref ${id}`);
+  const sel = token.bundle.selector;
+  assertMatch(sel, /^layout\[LyX-Code\]/);
+  assert(
+    !/layout\[(Chapter|Section|Subsection|Subsubsection)/.test(sel),
+    `LyX-Code must not steal heading: ${sel}`,
+  );
+  const matches = query(ast, sel);
+  assertEquals(matches.length >= 1, true);
+  assert(
+    matches.some((n) => extractAllText(n).includes("usepackage{indentfirst}")),
+    `--text-only of ${sel} should contain usepackage{indentfirst}`,
+  );
+  // J1 B: consecutive LyX-Code layouts in one <pre> get distinct token selectors.
+  const preBlock = [...response.html.matchAll(/<pre class="lyx_code">([\s\S]*?)<\/pre>/g)]
+    .map((m) => m[1])
+    .find((body) => (body.match(/data-ref="/g) ?? []).length >= 2);
+  if (preBlock) {
+    const ids = [...preBlock.matchAll(/data-ref="([^"]+)"/g)].map((m) => m[1]);
+    const sels = ids.map((id) => validated.tokens.find((t) => t.id === id)?.bundle.selector);
+    assertEquals(new Set(sels).size >= 2, true, "multi-layout lyx_code run needs distinct selectors");
+  }
 });
 
 Deno.test("Live mapping - longtable Caption is owner-prefixed (DL142)", async () => {
