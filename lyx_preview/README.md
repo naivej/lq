@@ -1,48 +1,73 @@
 # LyX Preview
 
-This extension is a VS Code companion of `lq`, a CLI for agent to parse, query, and mutate LyX documents.
-This extension render LyX in VS Code webview that
-- Look fimilarly as LyX GUI.
-- Refreshes when save or when the file changes on disk while the editor buffer is not dirty. 
-- Enable VS Code webview find widget
-- Use LyX Outline panel under Explorer to jump to section, figures, tables, equations, tracked changes, and more, in both the raw file and preview.
-- Generate .json from preview selection that an agent can read using `lq` to understand the context.
-- Tracked change author and timestemp, as well as the selector for hilighted text are shown in the status bar.
+A VS Code companion extension for [`lq`](https://github.com/naivej/lq)—the standalone CLI for querying, inspecting, and mutating LyX documents.
+
+LyX Preview renders a read-only live preview of saved `.lyx` files directly inside a VS Code webview, combining visual feedback, outline navigation, and AI-assisted workflows.
+
+---
+
+## Features
+
+- **LyX-Familiar Appearance:** Renders layouts, sections, formatting, tables, images, and math with styling faithful to the LyX editor.
+- **Instant Live Refresh:** Automatically updates whenever the `.lyx` file is saved or modified on disk (when the editor buffer is clean).
+- **LyX Outline View:** Dedicated panel under the Explorer sidebar to navigate the Table of Contents, figures, tables, equations, tracked changes, footnotes, and labels/references across both the raw `.lyx` buffer and the preview.
+- **Tracked-Change Views:** Toggle between **Tracked** (markups shown), **Original** (pre-change), and **Clean** (post-change/accepted) views from the title bar.
+- **Agent Context Sharing:**
+  - Selecting text or constructs in the preview generates a temporary `live-selection.json` sidecar next to the previewed `.lyx` file for AI agents using `lq`.
+  - Integrates with VS Code Language Model Tools via `#lyxSelection`.
+- **Status Bar Inspection:** Displays active CST selectors, tracked-change author/timestamp metadata, and selection details in the VS Code status bar.
+- **Built-in Webview Search:** Full support for standard search (`Ctrl+F` / `Cmd+F`) inside the preview panel.
+
+---
 
 ## Getting Started
-1. Download [lq](https://github.com/naivej/lq) and install `use-lq` skill for your agent. The extension find `lq` binary from 
-  1. `~\Github\lq_dev\lq\bin\lq*` for development convenience
-  2. Setting `lyx-preview.lqPath`
-  3. `PATH`
-2. Install this extension
-3. Open a `.lyx` file and click the blue L icon from the title bar to open preview
-4. If the document has tracked changes, use the yellow L icon from the title bar to select original / tracked/ clean view
-5. Drag select in preview, then share the context with agent by `@live-selection.json` (written next to the previewed `.lyx`) or hint VS Code language model tool `#lyxselection`.
 
+### 1. Prerequisites
+Install [`lq`](https://github.com/naivej/lq) and the `use-lq` skill for your AI agent.
 
-## Relation with LyXHTML
+The extension resolves the `lq` executable in the following order:
+1. Local development build: `~/Github/lq_dev/lq/bin/lq*`
+2. Custom setting: `lyx-preview.lqPath`
+3. System `PATH`
 
-Live aims for the same **reader-facing** shape as LyX’s native **LyXHTML** export (`File → Export → LyXHTML`, or `lyx -e xhtml`): semantic structure (headings/sections, lists, floats, footnotes), escaped prose, and MathML-ish math — not a typeset PDF and not File → Export → HTML (the LaTeX→htlatex/TeX4ht path).
+### 2. Open Preview
+1. Open any `.lyx` file in VS Code.
+2. Click the **LyX Preview** icon (blue **L**) in the editor title bar, or run `LyX Preview: Open LyX Preview` from the Command Palette.
 
-| | **LyXHTML (LyX)** | **Live (lq + this extension)** |
-| --- | --- | --- |
-| **Engine** | LyX C++ (`output_xhtml.cpp`) walks LyX’s in-memory document | **lq** parses the `.lyx` file into a **CST** (concrete syntax tree), then projects that tree to HTML |
-| **Needs LyX to render?** | Yes (export) | **No** — only the saved file + `lq` |
-| **Similarity** | Ground-truth reader markup for acceptance tests | Same *kind* of result: structural/semantic HTML a reader can scan |
-| **Differences** | Uses LyX layout HTML keys, native inset `xhtml()`, full MathML pipeline, page-oriented details (`magicparlabel-*`, real page refs when exported) | CST-driven; layout HTML keys from install/user-dir/LocalLayout when available; lq TeX→MathML subset (+ document preamble `\newcommand`); Info icons from LyX `images/` when present; shortcuts from system+user bind; page chrome omitted; ERT/Phantom/Index and private notes appear as Live-only chips/disclosures; `pageref` shows target number/name, not a PDF page |
-| **Role here** | Development **oracle** for parity checks | **Shipped** preview — never runs LyXHTML export in the extension |
+### 3. Tracked Changes View
+When reviewing documents with revision marks, click the **Tracked-change view** icon (yellow **L**) in the preview title bar to switch views:
+- **Tracked** *(default)*: Displays insertions with blue underline and deletions with red strikethrough.
+- **Original**: Displays the document text prior to tracked modifications.
+- **Clean**: Displays the document with all pending tracked changes accepted.
 
-So: Live is **inspired by and checked against** LyXHTML, but it is **not** “embed LyXHTML in the webview.” It re-reads source through lq’s CST so preview stays fast, offline, and aligned with later source-aware features (outline, mapping, Review) that a one-shot export cannot own.
+### 4. Share Selection with an AI Agent
+- Select text or constructs inside the preview.
+- Share the context with your agent by referencing `@live-selection.json` or mentioning `#lyxSelection` in VS Code chat.
 
-### Deliberate differences (not bugs)
+---
 
-| If you see… | Why |
+## Relationship with LyXHTML
+
+LyX Preview is **inspired by and verified against** LyX's native LyXHTML export, but it does **not** execute headless LyX processes to render HTML:
+1. **Fast & Independent:** `lq` parses `.lyx` directly into a Concrete Syntax Tree (CST) and renders semantic HTML in milliseconds without requiring LyX to be installed or running.
+2. **Editor-Focused Semantics:** While native LyXHTML targets a PDF-like reading layout, LyX Preview is tailored for reviewing. This introduces intentional differences:
+
+| What you see in Preview | Explanation |
 | --- | --- |
-| `pageref` text is a section/figure number, not a printed page | Live has no PDF pagination; tooltip notes this |
-| FormulaMacro uses like `\qG` still look like raw commands | Macro *insets* are omitted (like native); call sites are not expanded yet |
-| Math looks close but not identical to LyX’s MathML | lq owns a TeX→MathML subset; not LyX’s converter |
-| No fancy layout CSS / page header chrome | Semantic HTML only; page chrome omitted on purpose |
-| ERT / Phantom / Index as click chips | Live-only plain-text markers (native LyXHTML still omits them) |
-| Footnotes / Notes / Boxes / Greyedout start collapsed | **Click** the label to expand/collapse (not hover) so you can select text inside |
-| `Note` / `Comment` appear in Live | Live-only: private notes are shown behind a click disclosure (not in LyXHTML/PDF) |
-| Info icon is ▣ instead of a toolbar PNG | LyX image tree missing or icon name unresolved; themed SVGZ/PNG used when found |
+| `pageref` shows a section or figure number | No PDF pagination exists in HTML; a tooltip explains the reference. |
+| Formula macros (e.g. `\qG`) appear as raw commands | Macro *insets* are omitted (matching native LyX); call sites are not expanded inline. |
+| Math formatting is close but not identical to LyX MathML | Rendered via `lq`'s built-in TeX→MathML engine (with preamble `\newcommand` support) rather than LyX's internal converter. |
+| Minimal layout chrome / no print page headers | Deliberately uses clean semantic HTML rather than print-emulating page margins. |
+| Clickable chips for ERT, Phantom, Index | Preview-only interactive markers (omitted in native LyXHTML/PDF). |
+| Collapsed Footnotes, Notes, Boxes, and Greyedout blocks | Click the label disclosure to expand/collapse and select content inside. |
+| `Note` and `Comment` insets are visible | Preview-only: private notes are accessible via click disclosure (omitted in exported PDF/LyXHTML). |
+
+---
+
+## Configuration
+
+| Setting | Default | Description |
+| --- | --- | --- |
+| `lyx-preview.lqPath` | `""` | Custom path to the `lq` executable. |
+| `lyx-preview.timeoutMs` | `30000` | Milliseconds to wait for preview generation before terminating the process. |
+
