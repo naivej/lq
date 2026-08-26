@@ -452,6 +452,8 @@ interface RenderCtx {
   tokSeq: number;
   /** Selector of the layout currently being rendered (change-region owner). */
   currentLayoutSelector?: string;
+  /** CST node for `currentLayoutSelector` (DL144 Flex enclosing-layout paths). */
+  currentLayoutNode?: BlockNode;
   /** Selector of the inset currently being rendered (disclosure chip owner). */
   currentInsetSelector?: string;
   /** CST node for `currentInsetSelector` (nested layout paths, DL135). */
@@ -899,12 +901,15 @@ function withCellLayout(
   fn: (selector: string) => string,
 ): string {
   const selector = cellLayoutSelector(ctx, tabular, textInset, item.node, item.layout);
-  const prev = ctx.currentLayoutSelector;
+  const prevSel = ctx.currentLayoutSelector;
+  const prevNode = ctx.currentLayoutNode;
   ctx.currentLayoutSelector = selector;
+  ctx.currentLayoutNode = item.node;
   try {
     return fn(selector);
   } finally {
-    ctx.currentLayoutSelector = prev;
+    ctx.currentLayoutSelector = prevSel;
+    ctx.currentLayoutNode = prevNode;
   }
 }
 
@@ -937,12 +942,59 @@ function withCaptionLayout(
   fn: (selector: string) => string,
 ): string {
   const selector = captionLayoutSelector(ctx, owner, captionInset, item.node, item.layout);
-  const prev = ctx.currentLayoutSelector;
+  const prevSel = ctx.currentLayoutSelector;
+  const prevNode = ctx.currentLayoutNode;
   ctx.currentLayoutSelector = selector;
+  ctx.currentLayoutNode = item.node;
   try {
     return fn(selector);
   } finally {
-    ctx.currentLayoutSelector = prev;
+    ctx.currentLayoutSelector = prevSel;
+    ctx.currentLayoutNode = prevNode;
+  }
+}
+
+/**
+ * DL144 J3 B: enclosing layout → Flex → layout.
+ * Flex :nth-match is scoped under the enclosing layout node (not document-global),
+ * so `query()` descendant steps resolve.
+ */
+function flexLayoutSelector(
+  ctx: RenderCtx,
+  flexInset: BlockNode,
+  layoutNode: BlockNode,
+  name: string,
+): string {
+  const flexKind = insetKind(flexInset);
+  const same = descendantLayoutsNamed(flexInset, name);
+  const layoutPart = scopedNthMatch("layout", name, layoutNode, same);
+  const parentSel = ctx.currentLayoutSelector;
+  const parentNode = ctx.currentLayoutNode;
+  if (parentSel && parentNode && !/\binset\[Flex\b/.test(parentSel)) {
+    const flexes = descendantInsetsNamed(parentNode, flexKind);
+    const flexPart = scopedNthMatch("inset", flexKind, flexInset, flexes);
+    return `${parentSel} ${flexPart} ${layoutPart}`;
+  }
+  const flexSel = insetOwnerSelector(ctx, flexInset);
+  return `${flexSel} ${layoutPart}`;
+}
+
+function withFlexLayout(
+  ctx: RenderCtx,
+  flexInset: BlockNode,
+  item: FlowItem,
+  fn: (selector: string) => string,
+): string {
+  const selector = flexLayoutSelector(ctx, flexInset, item.node, item.layout);
+  const prevSel = ctx.currentLayoutSelector;
+  const prevNode = ctx.currentLayoutNode;
+  ctx.currentLayoutSelector = selector;
+  ctx.currentLayoutNode = item.node;
+  try {
+    return fn(selector);
+  } finally {
+    ctx.currentLayoutSelector = prevSel;
+    ctx.currentLayoutNode = prevNode;
   }
 }
 
@@ -1026,12 +1078,15 @@ function mappingAttrs(id: string): string {
 /** Bind this layout as the current owner (query-order selector, DL135) and run `fn`. */
 function withLayout(ctx: RenderCtx, item: FlowItem, fn: (selector: string) => string): string {
   const selector = layoutOwnerSelector(ctx, item.node, item.layout);
-  const prev = ctx.currentLayoutSelector;
+  const prevSel = ctx.currentLayoutSelector;
+  const prevNode = ctx.currentLayoutNode;
   ctx.currentLayoutSelector = selector;
+  ctx.currentLayoutNode = item.node;
   try {
     return fn(selector);
   } finally {
-    ctx.currentLayoutSelector = prev;
+    ctx.currentLayoutSelector = prevSel;
+    ctx.currentLayoutNode = prevNode;
   }
 }
 
@@ -1776,6 +1831,7 @@ function snapshotCounters(ctx: RenderCtx) {
     tokens: ctx.tokens.slice(),
     tokSeq: ctx.tokSeq,
     currentLayoutSelector: ctx.currentLayoutSelector,
+    currentLayoutNode: ctx.currentLayoutNode,
     currentInsetSelector: ctx.currentInsetSelector,
     currentInsetNode: ctx.currentInsetNode,
     usedTokenIds: new Set(ctx.usedTokenIds),
@@ -1799,6 +1855,7 @@ function restoreCounters(ctx: RenderCtx, snap: ReturnType<typeof snapshotCounter
   ctx.tokens = snap.tokens;
   ctx.tokSeq = snap.tokSeq;
   ctx.currentLayoutSelector = snap.currentLayoutSelector;
+  ctx.currentLayoutNode = snap.currentLayoutNode;
   ctx.currentInsetSelector = snap.currentInsetSelector;
   ctx.currentInsetNode = snap.currentInsetNode;
   ctx.usedTokenIds = snap.usedTokenIds;
@@ -2456,7 +2513,22 @@ function renderInsetBody(
     // Inside a Nomenclature they carry the description and render as a nested
     // expandable box (disclosure_collapsibles corpus).
     if (ctx.inNomencl) {
-      return wrapDisclosure(ctx, "argument", "Argument", renderInsetLayouts(block, parentState, ctx));
+      // DL144 F5: Nomencl → Argument → layout (reuse caption two-hop helper).
+      const nested = flattenFlow(block.children, 0);
+      const ownerOk = ownerParent &&
+        (insetKind(ownerParent) === "Nomenclature" ||
+          insetKind(ownerParent).startsWith("Nomenclature "));
+      const inner = ownerOk && nested.length > 0
+        ? nested.map((item) =>
+          withCaptionLayout(ctx, ownerParent!, block, item, (selector) => {
+            const id = takeOwnerId(ctx);
+            emitToken(ctx, id, selector);
+            const body = renderLayoutInline(item.node, ctx, false, parentState);
+            return `<div class="${layoutSlug(item.layout)}"${mappingAttrs(id)}>${body}</div>`;
+          })
+        ).join("")
+        : renderInsetLayouts(block, parentState, ctx);
+      return wrapDisclosure(ctx, "argument", "Argument", inner);
     }
     return "";
   }
@@ -2481,9 +2553,9 @@ function renderInsetBody(
     return renderListings(block, parentState, ctx);
   }
   if (kind === "External" || kind.startsWith("External ")) {
-    return renderGraphics(block, ctx);
+    return renderGraphics(block, ctx, ownerParent);
   }
-  if (kind === "Graphics") return renderGraphics(block, ctx);
+  if (kind === "Graphics") return renderGraphics(block, ctx, ownerParent);
   if (kind === "Caption" || kind.startsWith("Caption ")) {
     const type = captionTypeFromKind(kind);
     const nested = flattenFlow(block.children, 0);
@@ -2724,9 +2796,17 @@ function renderInsetBody(
 }
 
 function renderFootInner(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
+  // DL144 F1: title Foot inners get nested layout paths (body Foot already uses renderInsetLayouts).
   const nested = flattenFlow(block.children, 0);
   if (nested.length > 0) {
-    return nested.map((item) => renderLayoutInline(item.node, ctx, ctx.inTitle, parentState)).join("");
+    return nested.map((item) =>
+      withLayout(ctx, item, (selector) => {
+        const id = takeOwnerId(ctx);
+        emitToken(ctx, id, selector);
+        const inner = renderLayoutInline(item.node, ctx, ctx.inTitle, parentState);
+        return `<div class="${layoutSlug(item.layout)}"${mappingAttrs(id)}>${inner}</div>`;
+      })
+    ).join("");
   }
   return renderChildren(block.children, enterTraversalState(parentState), ctx);
 }
@@ -2807,16 +2887,26 @@ function renderFormulaNavigate(block: BlockNode, ctx: RenderCtx, deleted = false
       });
     }
   }
+  // DL144 F4: map the Formula inset (navigate id may share the element).
+  let mapId: string | undefined;
+  if (ctx.currentInsetSelector) {
+    mapId = ids[0] ? takeOwnerId(ctx, ids[0]) : takeOwnerId(ctx);
+    emitToken(ctx, mapId, ctx.currentInsetSelector);
+  }
   if (ids.length === 1) {
-    html = html.replace('<span class="formula"', `<span class="formula" id="${escapeLiveHtml(ids[0]!)}"`);
+    const id = mapId ?? ids[0]!;
+    const ref = mapId ? mappingAttrs(id) : ` id="${escapeLiveHtml(id)}"`;
+    html = html.replace('<span class="formula"', `<span class="formula"${ref}`);
   } else if (ids.length > 1) {
     let n = 0;
     html = html.replace(/<span class="formula-row"/g, () => {
       const id = ids[n++];
-      return id
-        ? `<span class="formula-row" id="${escapeLiveHtml(id)}"`
-        : `<span class="formula-row"`;
+      if (!id) return `<span class="formula-row"`;
+      if (n === 1 && mapId) return `<span class="formula-row"${mappingAttrs(mapId)}`;
+      return `<span class="formula-row" id="${escapeLiveHtml(id)}"`;
     });
+  } else if (mapId) {
+    html = html.replace('<span class="formula"', `<span class="formula"${mappingAttrs(mapId)}`);
   }
   return html;
 }
@@ -3058,17 +3148,22 @@ function renderTabular(block: BlockNode, parentState: TraversalState, ctx: Rende
 function renderFlexInline(block: BlockNode, ctx: RenderCtx): string {
   const nested = flattenFlow(block.children, 0);
   if (nested.length === 0) return escapeLiveHtml(collectVisibleText(block));
-  return nested.map((item) => renderLayoutInline(item.node, ctx)).join("");
+  // DL144 F2: map Flex inners (enclosing layout → Flex → layout when possible).
+  return nested.map((item) =>
+    withFlexLayout(ctx, block, item, (selector) => {
+      const id = takeOwnerId(ctx);
+      emitToken(ctx, id, selector);
+      return `<span${mappingAttrs(id)}>${renderLayoutInline(item.node, ctx)}</span>`;
+    })
+  ).join("");
 }
 
 function renderBox(block: BlockNode, kind: string, parentState: TraversalState, ctx: RenderCtx): string {
   const variant = kind.slice("Box ".length).trim() || "Boxed";
   const width = widthToCss(findProperty(block, "width"));
   const style = width && width !== "100%" ? ` style="width: ${escapeLiveHtml(width)}"` : "";
-  const nested = flattenFlow(block.children, 0);
-  const inner = nested.length <= 1
-    ? (nested[0] ? renderLayoutInline(nested[0].node, ctx) : "")
-    : renderInsetLayouts(block, parentState, ctx);
+  // DL144 F1: always nest layout paths (single-child used to skip withLayout).
+  const inner = renderInsetLayouts(block, parentState, ctx);
   const box = `<div class="${escapeLiveHtml(variant)}"${style}>${inner}</div>`;
   return wrapDisclosure(ctx, `box ${layoutSlug(variant)}`, "Box", box);
 }
@@ -3707,13 +3802,43 @@ function listingCode(block: BlockNode): string {
   return lines.join("\n").replace(/^\n+/, "").replace(/\n+$/, "");
 }
 
+function listingLineText(layout: BlockNode): string {
+  let line = "";
+  const lineWalk = (kids: Node[]) => {
+    for (const k of kids) {
+      if (k.type === "text") line += k.text;
+      else if (k.type === "property" && k.key === "backslash") line += "\\";
+      else if (k.type === "block") {
+        if (k.tag === "inset" && insetKind(k).startsWith("Caption")) continue;
+        lineWalk(k.children);
+      }
+    }
+  };
+  lineWalk(layout.children);
+  return line.replace(/\s+$/, "");
+}
+
 function renderListings(block: BlockNode, parentState: TraversalState, ctx: RenderCtx): string {
   const lang = listingLanguage(findProperty(block, "lstparams") ?? "");
   const inline = (findProperty(block, "inline") ?? "").toLowerCase() === "true";
   const captions = captionBlocks(block);
   const captionHtml = captions.map((c) => renderCaptionInline(c, ctx, parentState)).join("");
   const cls = lang ? `listings ${escapeLiveHtml(lang)}` : "listings";
-  const code = `<code class="${cls}">${escapeLiveHtml(listingCode(block))}</code>`;
+  // DL144 F3 J4 B: map each code Plain Layout under the listings inset.
+  const lines: string[] = [];
+  for (const item of flattenFlow(block.children, 0)) {
+    const onlyCaption = collectBlocks(
+      item.node,
+      (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"),
+    ).length > 0 && listingLineText(item.node).trim() === "";
+    if (onlyCaption) continue;
+    lines.push(withLayout(ctx, item, (selector) => {
+      const id = takeOwnerId(ctx);
+      emitToken(ctx, id, selector);
+      return `<span${mappingAttrs(id)}>${escapeLiveHtml(listingLineText(item.node))}</span>`;
+    }));
+  }
+  const code = `<code class="${cls}">${lines.join("\n")}</code>`;
   if (inline) return code;
   let html = `<div class="float-listings">`;
   if (captionHtml) {
@@ -3836,7 +3961,24 @@ function graphicBoxStyle(block: BlockNode, ctx: RenderCtx): string {
   return styles.length ? ` style="${escapeLiveHtml(styles.join("; "))}"` : "";
 }
 
-function renderGraphics(block: BlockNode, ctx: RenderCtx): string {
+function graphicsOwnerSelector(
+  ctx: RenderCtx,
+  block: BlockNode,
+  ownerParent?: BlockNode,
+): string {
+  const kind = insetKind(block);
+  if (
+    ownerParent &&
+    (insetKind(ownerParent).startsWith("Float ") || insetKind(ownerParent).startsWith("Wrap "))
+  ) {
+    const pool = descendantInsetsNamed(ownerParent, kind);
+    const part = scopedNthMatch("inset", kind, block, pool);
+    return `${insetOwnerSelector(ctx, ownerParent)} ${part}`;
+  }
+  return insetOwnerSelector(ctx, block);
+}
+
+function renderGraphics(block: BlockNode, ctx: RenderCtx, ownerParent?: BlockNode): string {
   const filename = findProperty(block, "filename") ?? "";
   const base = filename.split(/[/\\]/).pop() ?? filename;
   let src = "";
@@ -3856,7 +3998,13 @@ function renderGraphics(block: BlockNode, ctx: RenderCtx): string {
   }
   const srcAttr = src ? ` src="${escapeLiveHtml(src)}"` : "";
   const fpAttr = filepath && !src.startsWith("data:") ? ` data-filepath="${escapeLiveHtml(filepath)}"` : "";
-  return `<img${srcAttr}${fpAttr}${graphicBoxStyle(block, ctx)} data-filename="${escapeLiveHtml(base)}" alt="${escapeLiveHtml(base)}">`;
+  // DL144 F4: map Graphics/External (Float/Wrap-prefixed when nested).
+  let map = "";
+  const sel = graphicsOwnerSelector(ctx, block, ownerParent);
+  const id = takeOwnerId(ctx);
+  emitToken(ctx, id, sel);
+  map = mappingAttrs(id);
+  return `<img${srcAttr}${fpAttr}${graphicBoxStyle(block, ctx)}${map} data-filename="${escapeLiveHtml(base)}" alt="${escapeLiveHtml(base)}">`;
 }
 
 function lastName(part: string): string {
@@ -4122,11 +4270,20 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
   const name = findProperty(block, "name") ?? "";
   const key = findProperty(block, "key") ?? "";
   const command = findProperty(block, "LatexCommand") ?? subtype;
+  const mapCmd = (): string => {
+    if (!ctx.currentInsetSelector) return "";
+    const id = takeOwnerId(ctx);
+    emitToken(ctx, id, ctx.currentInsetSelector);
+    return mappingAttrs(id);
+  };
   if (subtype === "citation") {
     const keys = (key || name).split(",").map((s) => s.trim()).filter(Boolean);
-    return keys.map((k) => {
+    // DL144 F4: one token for the CommandInset (first cite anchor carries it).
+    const map = mapCmd();
+    return keys.map((k, i) => {
       const text = formatInlineCite(command, [k], ctx.bib);
-      return `<a class="citation" href="#LyXCite-${escapeLiveHtml(xmlId(k))}">${escapeLiveHtml(text)}</a>`;
+      const attrs = i === 0 ? map : "";
+      return `<a class="citation"${attrs} href="#LyXCite-${escapeLiveHtml(xmlId(k))}">${escapeLiveHtml(text)}</a>`;
     }).join("; ");
   }
   if (
@@ -4150,7 +4307,7 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
     const title = (command === "pageref" || command === "vpageref" || subtype === "pageref" || subtype === "vpageref")
       ? ` title="page reference (Live shows target number/name, not a page)"`
       : "";
-    return `<a class="ref" href="#${escapeLiveHtml(id)}"${title}>${escapeLiveHtml(text)}</a>`;
+    return `<a class="ref"${mapCmd()} href="#${escapeLiveHtml(id)}"${title}>${escapeLiveHtml(text)}</a>`;
   }
   if (subtype === "bibtex") return renderBibliography(ctx);
   if (subtype === "toc") return renderToc(ctx);
@@ -4171,7 +4328,7 @@ function renderCommandInset(block: BlockNode, kind: string, ctx: RenderCtx): str
   if (subtype === "href") {
     const target = findProperty(block, "target") ?? name;
     const label = name || target;
-    return `<a class="href" href="${escapeLiveHtml(target)}">${escapeLiveHtml(label)}</a>`;
+    return `<a class="href"${mapCmd()} href="${escapeLiveHtml(target)}">${escapeLiveHtml(label)}</a>`;
   }
   if (subtype === "include") return renderInclude(block, ctx);
   if (subtype === "bibitem") {

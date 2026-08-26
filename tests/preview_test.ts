@@ -357,6 +357,86 @@ Deno.test("Live mapping - Description dd values publish the layout path (DL141)"
   );
 });
 
+Deno.test("Live mapping - title Foot and Box inners are nested layouts (DL144 F1)", async () => {
+  const file = fromFileUrl(new URL("./fixtures/my_template.lyx", import.meta.url));
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  const footSel = assertPhraseMapsToQuery(response.html, validated.tokens, ast, "Details about me");
+  assertMatch(footSel, /inset\[Foot/);
+  assertMatch(footSel, /layout\[/);
+  assert(!/^inset\[Foot[^\]]*\]:nth-match\(\d+\)$/.test(footSel));
+
+  const boxFile = syntheticPath("disclosure_collapsibles.lyx");
+  const boxText = await Deno.readTextFile(boxFile);
+  const boxAst = parse(boxText);
+  const boxLive = await buildLiveResponse(boxFile, boxAst, boxText);
+  const boxVal = validateLiveResponse(boxLive.response);
+  const boxSel = assertPhraseMapsToQuery(
+    boxLive.response.html,
+    boxVal.tokens,
+    boxAst,
+    "Boxed inset body",
+  );
+  assertMatch(boxSel, /inset\[Box/);
+  assertMatch(boxSel, /layout\[/);
+});
+
+Deno.test("Live mapping - Flex Code uses enclosing layout prefix (DL144 F2)", async () => {
+  const file = fromFileUrl(new URL("./fixtures/Help/Customization.lyx", import.meta.url));
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  // Unique inside Customization Live HTML (avoids TOC / repeated LyXDir).
+  const phrase = "lyxrc.defaults";
+  assertStringIncludes(response.html, phrase);
+  const id = closestDataRef(response.html, phrase);
+  const token = validated.tokens.find((t) => t.id === id);
+  assert(token, `no token for ${id}`);
+  const sel = token.bundle.selector;
+  assertMatch(sel, /inset\[Flex Code/);
+  assertMatch(sel, /layout\[/);
+  assertMatch(sel, /^layout\[/); // J3 B: enclosing layout first
+  assert(
+    query(ast, sel).some((n) => extractAllText(n).includes(phrase)),
+    `--text-only of ${sel} should contain ${JSON.stringify(phrase)}`,
+  );
+});
+
+Deno.test("Live mapping - listings code lines are nested layouts (DL144 F3)", async () => {
+  const file = fromFileUrl(new URL("./fixtures/Help/Development.lyx", import.meta.url));
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  const phrase = "++T;";
+  assertStringIncludes(response.html, phrase);
+  const sel = assertPhraseMapsToQuery(response.html, validated.tokens, ast, phrase);
+  assertMatch(sel, /inset\[listings/i);
+  assertMatch(sel, /layout\[/);
+  assert(!/^layout\[Standard\]/.test(sel), `listings must not stay on Standard: ${sel}`);
+});
+
+Deno.test("Live mapping - Formula/Graphics/ref tokens are object insets (DL144 F4)", async () => {
+  const file = fromFileUrl(new URL("./fixtures/my_template.lyx", import.meta.url));
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  const formula = validated.tokens.find((t) => /^inset\[Formula/.test(t.bundle.selector));
+  assert(formula, "expected a Formula mapping token");
+  assertEquals(query(ast, formula.bundle.selector).length >= 1, true);
+  const graphics = validated.tokens.find((t) => /inset\[Graphics\]/.test(t.bundle.selector));
+  assert(graphics, "expected a Graphics mapping token");
+  assertMatch(graphics.bundle.selector, /inset\[(Float|Wrap|Graphics)/);
+  const ref = validated.tokens.find((t) => /CommandInset ref/.test(t.bundle.selector));
+  assert(ref, "expected a CommandInset ref mapping token");
+  const cite = validated.tokens.find((t) => /CommandInset citation/.test(t.bundle.selector));
+  assert(cite, "expected a CommandInset citation mapping token");
+});
+
 Deno.test("Live mapping - LyX-Code lines publish layout paths (DL143)", async () => {
   const file = fromFileUrl(new URL("./fixtures/Help/Additional.lyx", import.meta.url));
   const text = await Deno.readTextFile(file);
@@ -1023,8 +1103,8 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assertStringIncludes(html, "∑");
   assert(!html.includes("\\begin{equation}"), "display math must not dump the TeX environment");
   assert(!html.includes('stretchy="true"'), "\\left/\\right must not emit stretchy fences");
-  assertStringIncludes(html, '<a class="ref" href="#sec_Section_label">1</a>');
-  assertStringIncludes(html, '<a class="ref" href="#subsec_subsec_label">1.1</a>');
+  assertMatch(html, /<a class="ref"[^>]*href="#sec_Section_label"[^>]*>1<\/a>/);
+  assertMatch(html, /<a class="ref"[^>]*href="#subsec_subsec_label"[^>]*>1\.1<\/a>/);
   assertStringIncludes(html, 'id="sec_Section_label"');
   assert(!html.includes("sec:Section_label"), "refs must resolve to numbers, not raw keys");
   assertMatch(html, /<h4\b[^>]*>1\.1\.1 Subsubsection/);
@@ -1293,14 +1373,14 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, '<article class="lyx-live">');
   const unknown = diagnostics.filter((d) => d.code === "UNKNOWN_INSET");
   assertEquals(unknown.map((d) => d.message), []);
-  assertStringIncludes(html, "<sup>a, b</sup>");
-  assertStringIncludes(html, "<sub>3x</sub>");
+  assertMatch(html, /<sup><span[^>]*>[\s\S]*?a, b[\s\S]*?<\/span><\/sup>|<sup>[\s\S]*?a, b[\s\S]*?<\/sup>/);
+  assertMatch(html, /<sub><span[^>]*>3x<\/span><\/sub>|<sub>3x<\/sub>/);
   assertStringIncludes(html, "<hr>");
-  assertStringIncludes(html, '<em class="flex_emph">Emph</em>');
-  assertStringIncludes(html, '<strong class="flex_strong">Strong</strong>');
+  assertMatch(html, /<em class="flex_emph"><span[^>]*>Emph<\/span><\/em>/);
+  assertMatch(html, /<strong class="flex_strong"><span[^>]*>Strong<\/span><\/strong>/);
   assertStringIncludes(html, '<div class="nomencl">');
   assertStringIncludes(html, ">Tab</a></dt>");
-  assertStringIncludes(html, "<dd>Tabulator key</dd>");
+  assertMatch(html, /<dd\b[^>]*>Tabulator key<\/dd>/);
   assert(!html.includes("UNKNOWN_INSET"), "UserGuide must not dump unknown-inset fallbacks");
   assertStringIncludes(html, ">A The User Interface");
   assertStringIncludes(html, ">A.1 The File Menu");
@@ -1605,7 +1685,7 @@ Deno.test("Live renderer - Help Customization.lyx Description Flex Code labels",
   const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
   assertStringIncludes(html, '<article class="lyx-live">');
   assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
-  assertMatch(html, /<dt\b[^>]*><code class="flex_code">Format<\/code><\/dt>/);
+  assertMatch(html, /<dt\b[^>]*><code class="flex_code"><span[^>]*>Format<\/span><\/code><\/dt>/);
   assert(!html.includes("status collapsedFormat"), "Flex Code status must not leak into Description labels");
   assert(
     !html.includes("International Keyboard Support"),
