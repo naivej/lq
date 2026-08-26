@@ -3,9 +3,11 @@
  * `lq read` the published pointer and check the read-back owns the highlight.
  *
  * Selection kinds (Help/*.lyx plus my_template): caret, unique-phrase highlight,
- * include-child (via), table-cell nested layout paths, footnote/note nested paths, headings,
- * lists, frontmatter, formula/caption/float when mapped, multi-owner, first/last
- * token, short unique words.
+ * include-child (via), table-cell nested layout paths, footnote/note nested paths,
+ * headings, lists, frontmatter, formula/caption/float/float-body when mapped,
+ * multi-owner, first/last token, short unique words.
+ * Also reports preview-vs-CST text gaps by kind and unmapped HTML phrases
+ * (no data-ref ancestor — DL140 fail-closed holes).
  *
  * Usage (from lq/):
  *   deno run -A tools/live_selection_read_oracle.ts
@@ -140,8 +142,16 @@ function classifyToken(t: LiveToken): string {
   if (t.id.startsWith("change-")) return "change";
   if (t.bundle.via) return "include-child";
   const s = t.bundle.selector;
+  // Prefer the deepest structural hop (DL138/139 nested paths).
   if (/inset\[Tabular/.test(s) && /inset\[Text\]/.test(s) && /layout\[/.test(s)) {
     return "table-cell";
+  }
+  if (/inset\[Caption/.test(s) && /layout\[/.test(s)) return "caption";
+  if (
+    /inset\[(?:Float|Wrap|listings)\b/.test(s) && /layout\[/.test(s) &&
+    !/inset\[Caption/.test(s)
+  ) {
+    return "float-body";
   }
   const inset = s.match(/inset\[([^\]]+)\]/);
   const layout = s.match(/layout\[([^\]]+)\]/);
@@ -154,7 +164,7 @@ function classifyToken(t: LiveToken): string {
     if (kind.startsWith("Float") || kind.startsWith("Wrap")) return "float";
     if (/^tabular$/i.test(kind) || kind.startsWith("Tabular")) return "tabular";
     if (kind.startsWith("ERT")) return "ert";
-    if (kind.startsWith("Listings")) return "listings";
+    if (kind.startsWith("listings") || kind.startsWith("Listings")) return "listings";
     if (kind.startsWith("CommandInset")) return "command-inset";
     if (kind.startsWith("Graphics") || kind.startsWith("External")) return "graphics";
     if (kind.startsWith("Box")) return "box";
@@ -178,6 +188,59 @@ function classifyToken(t: LiveToken): string {
     return "other-layout";
   }
   return "other";
+}
+
+/** Unique visible phrases (≥minLen) with no `data-ref` ancestor (DL140 fail-closed gaps). */
+function findUnmappedPhrases(html: string, minLen = 12, limit = 40): string[] {
+  const texts: string[] = [];
+  const re = /<([a-zA-Z0-9]+)([^>]*)\/?>|<\/([a-zA-Z0-9]+)>|([^<]+)/g;
+  const VOID = new Set(["br", "img", "hr"]);
+  type El = { tag: string; id?: string; parent?: El };
+  const root: El = { tag: "root" };
+  const stack: El[] = [root];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(html))) {
+    if (m[1]) {
+      const tag = m[1].toLowerCase();
+      const attrs = m[2] ?? "";
+      const id = attrs.match(/\bdata-ref="([^"]*)"/)?.[1];
+      const el: El = { tag, id, parent: stack[stack.length - 1] };
+      if (!/\/\s*$/.test(attrs) && !VOID.has(tag)) stack.push(el);
+    } else if (m[3]) {
+      const want = m[3].toLowerCase();
+      for (let i = stack.length - 1; i > 0; i--) {
+        if (stack[i].tag === want) {
+          stack.length = i;
+          break;
+        }
+      }
+    } else if (m[4]) {
+      const raw = decodeEntities(m[4]).replace(/\s+/g, " ").trim();
+      if (raw.length < minLen) continue;
+      let cur: El | undefined = stack[stack.length - 1];
+      let mapped = false;
+      while (cur) {
+        if (cur.id) {
+          mapped = true;
+          break;
+        }
+        cur = cur.parent;
+      }
+      if (!mapped) texts.push(raw);
+    }
+  }
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const t of texts) {
+    // Prefer a mid-length unique slice for reporting.
+    const slice = t.length > 48 ? t.slice(0, 48) : t;
+    if (seen.has(slice)) continue;
+    if (countOccurrences(html, slice) !== 1) continue;
+    seen.add(slice);
+    out.push(slice);
+    if (out.length >= limit) break;
+  }
+  return out;
 }
 
 function closestDataRef(html: string, phrase: string): string | undefined {
@@ -694,6 +757,8 @@ async function main() {
   const fails: Fail[] = [];
   const gaps: Fail[] = [];
   const samples: Record<string, LiveRecord> = {};
+  const unmappedSamples: { file: string; phrase: string }[] = [];
+  let unmappedTotal = 0;
   let total = 0;
   let ok = 0;
 
@@ -710,6 +775,11 @@ async function main() {
     const tokens = response.tokens;
     const html = stripToc(response.html);
     const byRef = textByDataRef(html);
+    const unmapped = findUnmappedPhrases(html);
+    unmappedTotal += unmapped.length;
+    for (const phrase of unmapped.slice(0, 3)) {
+      unmappedSamples.push({ file, phrase });
+    }
     const astCache: FileAstCache = new Map([[path, ast]]);
     const ctx = {
       file: path,
@@ -947,13 +1017,33 @@ async function main() {
   console.log(
     `\nSummary: ${ok}/${total} cases OK, ${fails.length} failures, ${gaps.length} preview-vs-CST text gaps`,
   );
+
   if (gaps.length > 0) {
-    console.log("\nPreview selectedText not in CST (informational):");
+    const gapByKind = new Map<string, number>();
+    for (const g of gaps) gapByKind.set(g.kind, (gapByKind.get(g.kind) ?? 0) + 1);
+    console.log("\nPreview-vs-CST gaps by kind:");
+    for (const kind of [...gapByKind.keys()].sort()) {
+      console.log(`  ${kind.padEnd(16)} ${String(gapByKind.get(kind)).padStart(4)}`);
+    }
+    console.log("\nPreview selectedText not in CST (informational samples):");
     for (const g of gaps.slice(0, 20)) {
       console.log(`  ~ [${g.kind}] ${g.file} ${JSON.stringify(g.phrase).slice(0, 70)}`);
       console.log(`    selector: ${g.selector}`);
     }
     if (gaps.length > 20) console.log(`  … ${gaps.length - 20} more`);
+  }
+
+  console.log(
+    `\nUnmapped visible phrases (no data-ref ancestor; unique slices): ${unmappedTotal}`,
+  );
+  if (unmappedSamples.length > 0) {
+    console.log("Samples (fail-closed / chrome holes — human highlight publishes nothing):");
+    for (const u of unmappedSamples.slice(0, 24)) {
+      console.log(`  · ${u.file} ${JSON.stringify(u.phrase)}`);
+    }
+    if (unmappedSamples.length > 24) {
+      console.log(`  … ${unmappedSamples.length - 24} more sample slots`);
+    }
   }
   for (const f of fails.slice(0, 40)) {
     console.log(`  ! [${f.kind}/${f.variant}] ${f.file}`);
