@@ -105,6 +105,63 @@ export function renderWebviewHtml(options: {
   function postChangeFocus(id) {
     vscode.postMessage({ type: "changeFocus", id: id || null });
   }
+  /** DL145: selection text aligned with --text-only where possible (SpecialChar / no heading counter / multi clip). */
+  function selectionLqText(sel, owner, multi) {
+    if (!sel || sel.isCollapsed || !sel.rangeCount) return "";
+    var range;
+    try {
+      range = sel.getRangeAt(0).cloneRange();
+    } catch (e) {
+      return String(sel);
+    }
+    if (multi && owner) {
+      try {
+        var ownerRange = document.createRange();
+        ownerRange.selectNodeContents(owner);
+        if (range.compareBoundaryPoints(Range.START_TO_START, ownerRange) < 0) {
+          range.setStart(ownerRange.startContainer, ownerRange.startOffset);
+        }
+        if (range.compareBoundaryPoints(Range.END_TO_END, ownerRange) > 0) {
+          range.setEnd(ownerRange.endContainer, ownerRange.endOffset);
+        }
+      } catch (e2) { /* keep full range */ }
+    }
+    var frag = range.cloneContents();
+    var root = document.createElement("div");
+    root.appendChild(frag);
+    var specialOnly = true;
+    var out = [];
+    function walk(n, useCstSpecial) {
+      if (n.nodeType === 3) {
+        var t = n.textContent || "";
+        if (/\\S/.test(t)) specialOnly = false;
+        out.push(t);
+        return;
+      }
+      if (n.nodeType !== 1) return;
+      var cls = n.classList;
+      if (
+        cls && (
+          cls.contains("heading-number") ||
+          cls.contains("float-caption-prefix") ||
+          cls.contains("layout-label") ||
+          cls.contains("eqno") ||
+          cls.contains("abstract_label")
+        )
+      ) return;
+      if (cls && cls.contains("specialchar")) {
+        out.push(useCstSpecial ? (n.getAttribute("data-lq-text") || "") : (n.textContent || ""));
+        return;
+      }
+      for (var c = n.firstChild; c; c = c.nextSibling) walk(c, useCstSpecial);
+    }
+    walk(root, true);
+    if (specialOnly) return out.join("");
+    out = [];
+    specialOnly = true;
+    walk(root, false);
+    return out.join("");
+  }
   document.addEventListener("selectionchange", function () {
     var sel = window.getSelection();
     if (!sel || !sel.anchorNode) {
@@ -118,14 +175,38 @@ export function renderWebviewHtml(options: {
     if (!owner) return;
     var id = owner.getAttribute("data-ref") || owner.id;
     if (!id) return;
-    var text = sel.isCollapsed ? "" : String(sel);
     var multi = false;
     if (!sel.isCollapsed && sel.focusNode) {
       var focus = sel.focusNode.nodeType === 1 ? sel.focusNode : sel.focusNode.parentElement;
       var other = focus && focus.closest ? focus.closest("[data-ref]") : null;
       multi = !!(other && other !== owner);
     }
+    var text = selectionLqText(sel, owner, multi);
+    // Chip object: selection wholly inside <summary> → empty needle (rebuild inset, don't --find "ERT").
+    if (
+      owner.tagName === "DETAILS" && owner.classList && owner.classList.contains("disclose")
+    ) {
+      var sum = owner.querySelector(":scope > summary");
+      if (
+        sum && sel.anchorNode && sum.contains(sel.anchorNode) &&
+        (!sel.focusNode || sum.contains(sel.focusNode))
+      ) {
+        text = "";
+      }
+    }
     vscode.postMessage({ type: "select", id: id, selectedText: text, multi: multi });
+  });
+  // Click chip (summary) publishes object select even when toggle steals text selection.
+  document.addEventListener("click", function (ev) {
+    var t = ev.target;
+    if (!t || !t.closest) return;
+    var details = t.closest("details.disclose");
+    if (!details) return;
+    var sum = details.querySelector(":scope > summary");
+    if (!sum || !(t === sum || sum.contains(t))) return;
+    var oid = details.getAttribute("data-ref") || details.id;
+    if (!oid) return;
+    vscode.postMessage({ type: "select", id: oid, selectedText: "", multi: false });
   });
   window.addEventListener("blur", function () {
     postChangeFocus(null);
@@ -449,6 +530,23 @@ h2.bibliography, h2.bibtex { font-size: 1.3em; }
 div.bibitem, div.bibtexentry { margin: 0.6em 0 0.6em 2em; text-indent: -2em; }
 span.bibitemlabel:before, span.bibtexlabel:before { content: "["; }
 span.bibitemlabel:after, span.bibtexlabel:after { content: "] "; }
+/* DL145 J6: render-generated chrome — not editable via lq.
+ * Disclosure <summary> stays selectable so Hosts can object-select the CST inset
+ * (click/highlight chip → rebuild this inset). Summary-only text is forced empty below. */
+h2.toc, h2.tochead, h2.bibliography, h2.bibtex,
+h2.nomencl, h2.index,
+nav.toc, nav.toc.toc-floats,
+div.nomencl, div.index,
+span.bibitemlabel, span.bibtexlabel,
+div.bibtexentry,
+span.heading-number,
+span.float-caption-prefix,
+span.layout-label,
+span.eqno,
+span.abstract_label {
+  -webkit-user-select: none;
+  user-select: none;
+}
 span.ref, span.citation { }
 img { max-width: 100%; height: auto; }
 div.wrap { float: right; margin: 0.4em 0 1em 1em; }

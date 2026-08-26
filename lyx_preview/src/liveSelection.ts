@@ -49,6 +49,15 @@ function sameFsPath(a: string, b: string): boolean {
   return norm(a) === norm(b);
 }
 
+/**
+ * CommandInset tokens whose Live pretty text is absent from `--text-only`
+ * (marker-only). DL145 J2 / 1D-C: force empty selectedText → object read.
+ */
+export function isObjectOnlyCommandInsetSelector(selector: string): boolean {
+  return /inset\[CommandInset\s+(citation|href|ref|pageref|vref|vpageref|formatted|eqref|nameref)\b/i
+    .test(selector);
+}
+
 export function resolveSelection(
   tokens: LiveToken[],
   id: string,
@@ -69,13 +78,14 @@ export function resolveSelection(
   const diskHash = foreign ? (token.bundle.diskHash ?? ctx.diskHash) : ctx.diskHash;
   // J3: stale tracks the edit-target file. Master dirtiness does not stale a child pointer.
   const stale = foreign ? false : ctx.stale;
+  const text = isObjectOnlyCommandInsetSelector(token.bundle.selector) ? "" : selectedText;
   const record: LiveSelectionRecord = {
     file,
     diskHash,
     stale,
     mode: ctx.mode,
     selector: token.bundle.selector,
-    selectedText,
+    selectedText: text,
     changeId: id.startsWith("change-") ? id : null,
     multi,
     capturedAt: ctx.capturedAt ?? new Date().toISOString(),

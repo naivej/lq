@@ -771,6 +771,31 @@ function expandSpecialInText(text: string): string {
   return text.replace(/\\SpecialChar\s+(\S+)/g, (_, name: string) => specialChar(name));
 }
 
+/** Live HTML for a SpecialChar run: glyph display + CST spelling for selection (DL145). */
+function specialCharHtml(name: string): string {
+  const glyph = specialChar(name);
+  const cst = `\\SpecialChar ${name}`;
+  return `<span class="specialchar" data-lq-text="${escapeLiveHtml(cst)}">${escapeLiveHtml(glyph)}</span>`;
+}
+
+/**
+ * Expand `\\SpecialChar name` in a text node to glyph spans; escape the rest.
+ * Selection can read `data-lq-text` for `--text-only` spelling (DL145 1D-B).
+ */
+function textNodeToLiveHtml(text: string): string {
+  let out = "";
+  let last = 0;
+  const re = /\\SpecialChar\s+(\S+)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    out += escapeLiveHtml(text.slice(last, m.index));
+    out += specialCharHtml(m[1]);
+    last = m.index + m[0].length;
+  }
+  out += escapeLiveHtml(text.slice(last));
+  return out;
+}
+
 function layoutSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "") || "standard";
 }
@@ -1761,8 +1786,12 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
         emitToken(ctx, id, selector);
         // DL140 J1 A: map the heading tag only — <section> wraps body until the
         // next heading and must not steal closest("[data-ref]") for unmapped chrome.
+        // DL145 J6 H / J7 A: counter is render-generated — wrap for user-select:none.
+        const numHtml = number
+          ? `<span class="heading-number">${escapeLiveHtml(number)}</span>`
+          : "";
         const chunk =
-          `<section><${layout.tag}${mappingAttrs(id)}>${number}${renderLayoutInline(item.node, ctx, false, outerState)}</${layout.tag}>`;
+          `<section><${layout.tag}${mappingAttrs(id)}>${numHtml}${renderLayoutInline(item.node, ctx, false, outerState)}</${layout.tag}>`;
         openLevels.push(layout.level);
         return chunk;
       });
@@ -2375,8 +2404,9 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
       if (SKIP_LAYOUT_PROPS.has(child.key)) continue;
       if (child.key === "SpecialChar") {
         syncChange();
-        const ch = specialChar(child.value ?? "");
-        html += escapeLiveHtml(ch);
+        const name = child.value ?? "";
+        const ch = specialChar(name);
+        html += specialCharHtml(name);
         addSnippet(ch);
         continue;
       }
@@ -2405,7 +2435,7 @@ function renderChildren(children: Node[], state: TraversalState, ctx: RenderCtx)
     syncChange();
     if (child.type === "text") {
       const text = expandSpecialInText(child.text);
-      html += escapeLiveHtml(text);
+      html += textNodeToLiveHtml(child.text);
       addSnippet(text);
       continue;
     }
@@ -3737,7 +3767,10 @@ function renderCaptionedFloat(
     if (captions.length > 0) {
       const cap = captions.map((c) => renderCaptionInline(c, ctx, parentState)).join("");
       // Number once per float; only the first caption block gets the prefix.
-      const usePrefix = prefix && html.indexOf("<figcaption") === -1 ? prefix : "";
+      // DL145: "Figure 1: " is render chrome (like heading-number) — non-select.
+      const usePrefix = prefix && html.indexOf("<figcaption") === -1
+        ? `<span class="float-caption-prefix">${escapeLiveHtml(prefix)}</span>`
+        : "";
       html += `<figcaption${captionClassAttr(captions)}>${usePrefix}${cap}</figcaption>`;
       continue;
     }
@@ -3865,8 +3898,11 @@ function renderListings(block: BlockNode, parentState: TraversalState, ctx: Rend
   let html = `<div class="float-listings">`;
   if (captionHtml) {
     const deleted = parentState.deletedDepth > 0 || parentState.outerDeletedDepth > 0;
-    const prefix = listingTakesNumber(block)
+    const prefixRaw = listingTakesNumber(block)
       ? floatCaptionPrefix("listing", takeFloatNumber(ctx, "listing", deleted))
+      : "";
+    const prefix = prefixRaw
+      ? `<span class="float-caption-prefix">${escapeLiveHtml(prefixRaw)}</span>`
       : "";
     html += `<div class="listings-caption"${captionClassAttr(captions)}>${prefix}${captionHtml}</div>`;
   }
@@ -3909,7 +3945,10 @@ function renderInclude(block: BlockNode, ctx: RenderCtx): string {
       const lang = listingLanguage(params);
       const cls = lang ? `listings ${escapeLiveHtml(lang)}` : "listings";
       const id = label ? ` id="${escapeLiveHtml(xmlId(label))}"` : "";
-      const prefix = floatCaptionPrefix("listing", num);
+      const prefixRaw = floatCaptionPrefix("listing", num);
+      const prefix = prefixRaw
+        ? `<span class="float-caption-prefix">${escapeLiveHtml(prefixRaw)}</span>`
+        : "";
       let html = `<div class="float-listings"${id}>`;
       if (prefix || caption) {
         html += `<div class="listings-caption">${prefix}${escapeLiveHtml(caption)}</div>`;

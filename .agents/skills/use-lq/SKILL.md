@@ -31,7 +31,7 @@ Run the same sequence for every task:
    | `stale` | `true` → inspect only until `file` is saved. A child pointer does not stale with the master. |
    | `mode` | `original` (before changes) / `tracked` (with tracked changes) / `clean` (after accepting all changes) shown in preview. |
    | `selector` | Owner for `lq read <file> "<selector>"`. Nested when the highlight is inside an inset. |
-   | `selectedText` | Highlight from preview; empty if caret. Confirm in `lq read` before `--find` — Live spelling can differ from CST. |
+   | `selectedText` | Non-empty ⇒ treat as `--text-only` spelling. Empty ⇒ object select. |
    | `changeId` | `change-N` if the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this Live render |
    | `multi` | Highlight crossed owners; `selector` is the anchor. |
    | `via` | Present when `file` is an included child shown in another document's preview. Use for Context only. |

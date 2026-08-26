@@ -11,6 +11,7 @@ import {
   compactSelector,
   formatLiveSelectionJson,
   invokeLiveSelection,
+  isObjectOnlyCommandInsetSelector,
   parseLiveSelectionJson,
   parseSelectMessage,
   readLiveSelectionFile,
@@ -31,6 +32,8 @@ const tokens: LiveToken[] = [
     },
   },
   { id: "change-3", bundle: { selector: "layout[Standard]:nth-match(4)" } },
+  { id: "tok-cite", bundle: { selector: "inset[CommandInset citation]:nth-match(1)" } },
+  { id: "tok-href", bundle: { selector: "layout[Standard]:nth-match(1) inset[CommandInset href]:nth-match(2)" } },
 ];
 
 const baseCtx = {
@@ -70,6 +73,16 @@ describe("resolveSelection / store", () => {
       multi: false,
       capturedAt: "2026-08-24T12:00:00.000Z",
     });
+  });
+
+  it("forces empty selectedText for cite/href CommandInset tokens (DL145 J2)", () => {
+    assert.equal(isObjectOnlyCommandInsetSelector("inset[CommandInset citation]:nth-match(1)"), true);
+    assert.equal(isObjectOnlyCommandInsetSelector("layout[Standard]:nth-match(12)"), false);
+    const cite = resolveSelection(tokens, "tok-cite", "Abernethy et al. (2003)", false, baseCtx);
+    assert.equal(cite?.selectedText, "");
+    assert.equal(cite?.selector, "inset[CommandInset citation]:nth-match(1)");
+    const href = resolveSelection(tokens, "tok-href", "lyx.org", false, baseCtx);
+    assert.equal(href?.selectedText, "");
   });
 
   it("sets changeId for change owners and omits coords", () => {

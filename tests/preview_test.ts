@@ -750,12 +750,27 @@ Deno.test("Live renderer - headings, paragraphs, unicode, empty, emphasis", asyn
   assertEquals(sem.role, "document");
   const dump = formatSem(sem);
   assertStringIncludes(dump, "heading");
-  assertMatch(html, /<h2\b[^>]*>1 Introduction<\/h2>/);
-  assertMatch(html, /<h3\b[^>]*>1.1 Details<\/h3>/);
+  // DL145 J6 H: Live counter wrapped for user-select:none; title stays outside the span.
+  assertMatch(
+    html,
+    /<h2\b[^>]*><span class="heading-number">1 <\/span>Introduction<\/h2>/,
+  );
+  assertMatch(
+    html,
+    /<h3\b[^>]*><span class="heading-number">1\.1 <\/span>Details<\/h3>/,
+  );
   assertStringIncludes(html, "Café naïve");
   assertStringIncludes(html, "𝄞");
   assertStringIncludes(html, "<em>styled</em>");
   assert(!html.includes('<div class="standard"></div>'), "empty Standard paragraphs are omitted like native XHTML");
+});
+
+Deno.test("Live renderer - SpecialChar emits data-lq-text for --text-only selection (DL145)", async () => {
+  const { html } = await renderFile("disclosure_collapsibles.lyx");
+  assertMatch(
+    html,
+    /<span class="specialchar" data-lq-text="\\SpecialChar LyX">LyX<\/span>/,
+  );
 });
 
 Deno.test("Live renderer - lists and quotes", async () => {
@@ -801,7 +816,10 @@ Deno.test("Live renderer - table, figure, footnote, formula", async () => {
   assertStringIncludes(html, "<figcaption");
   assertStringIncludes(html, "Figure 1: ");
   assertStringIncludes(html, 'class="float-caption-Standard"');
-  assert(!/<figcaption[^>]*>Figure 1: <div/.test(html), "caption must stay on one line");
+  assert(
+    !/<figcaption[^>]*>(?:<span class="float-caption-prefix">)?Figure 1: (?:<\/span>)?<div/.test(html),
+    "caption must stay on one line",
+  );
   assertStringIncludes(html, "data-filepath=");
   assertStringIncludes(html, 'src="file:');
 });
@@ -898,12 +916,12 @@ Deno.test("Live renderer - review_changes_counters skips deleted construct numbe
   // Floats: deleted figure/table captions keep the would-be number without
   // consuming it; the next figure/table is also numbered 1.
   // Caption words sit in a mapped <span> (DL139); prefix stays outside.
-  assertMatch(html, /Figure 1:(?: <span[^>]*>)?Deleted figure caption/);
-  assertMatch(html, /Figure 1:(?: <span[^>]*>)?Second figure caption/);
-  assertMatch(html, /Table 1:(?: <span[^>]*>)?Deleted table caption/);
-  assertMatch(html, /Table 1:(?: <span[^>]*>)?Second table caption/);
+  assertMatch(html, /Figure 1: (?:<\/span>)?(?:<span[^>]*>)?Deleted figure caption/);
+  assertMatch(html, /Figure 1: (?:<\/span>)?(?:<span[^>]*>)?Second figure caption/);
+  assertMatch(html, /Table 1: (?:<\/span>)?(?:<span[^>]*>)?Deleted table caption/);
+  assertMatch(html, /Table 1: (?:<\/span>)?(?:<span[^>]*>)?Second table caption/);
   // The deleted float with an equation shows the would-be Figure 2.
-  assertMatch(html, /Figure 2:(?: <span[^>]*>)?Deleted float with equation/);
+  assertMatch(html, /Figure 2: (?:<\/span>)?(?:<span[^>]*>)?Deleted float with equation/);
   // Equations: a deleted row shows # and does not consume; the next is 1.
   assertStringIncludes(html, '<span class="eqno">(#)</span>');
   assertStringIncludes(html, '<span class="eqno">(1)</span>');
@@ -1112,10 +1130,10 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assertMatch(html, /<a class="ref"[^>]*href="#subsec_subsec_label"[^>]*>1\.1<\/a>/);
   assertStringIncludes(html, 'id="sec_Section_label"');
   assert(!html.includes("sec:Section_label"), "refs must resolve to numbers, not raw keys");
-  assertMatch(html, /<h4\b[^>]*>1\.1\.1 Subsubsection/);
+  assertMatch(html, /<h4\b[^>]*>(?:<span class="heading-number">)?1\.1\.1 (?:<\/span>)?Subsubsection/);
   assertStringIncludes(html, 'class="float-table"');
-  assertMatch(html, /Table 1:(?: <span[^>]*>)?Table caption/);
-  assertStringIncludes(html, ">A Appendix");
+  assertMatch(html, /Table 1: (?:<\/span>)?(?:<span[^>]*>)?Table caption/);
+  assertMatch(html, /(?:<span class="heading-number">A <\/span>|>A )Appendix/);
   assertStringIncludes(html, 'href="#LyXCite-Abernethy2003"');
   assertStringIncludes(html, "Abernethy et al.");
   assertStringIncludes(html, "Abernethy, Colin D. et al. (2003)");
@@ -1132,9 +1150,13 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   const capAt = fig.indexOf("<figcaption");
   const tableAt = fig.indexOf("<table");
   assert(capAt !== -1 && tableAt !== -1 && capAt < tableAt, "figure caption must appear above the figure body");
-  assertMatch(fig, /Figure 1:(?: <span[^>]*>)?Figure caption/);
+  assertMatch(fig, /<span class="float-caption-prefix">Figure 1: <\/span>/);
+  assertMatch(fig, /Figure caption/);
   assertStringIncludes(fig, 'class="float-caption-Standard"');
-  assert(!/<figcaption[^>]*>Figure 1: <div/.test(fig), "figure number and caption must be one line");
+  assert(
+    !/<figcaption[^>]*>(?:<span class="float-caption-prefix">)?Figure 1: (?:<\/span>)?<div/.test(fig),
+    "figure number and caption must be one line",
+  );
 });
 
 Deno.test({
@@ -1298,12 +1320,15 @@ Deno.test("Live renderer - Help Additional.lyx numbering, TOC, and SpecialChar",
   const filePath = fromFileUrl(new URL("./fixtures/Help/Additional.lyx", import.meta.url));
   const text = await Deno.readTextFile(filePath);
   const { html, diagnostics } = await renderLiveHtml(parse(text), { filePath });
-  assertStringIncludes(html, "Additional LyX");
-  assertStringIncludes(html, "the LyX");
+  assertMatch(html, /Additional (?:<span class="specialchar"[^>]*>)?LyX(?:<\/span>)?/);
+  assertMatch(html, /the (?:<span class="specialchar"[^>]*>)?LyX(?:<\/span>)?/);
   assertStringIncludes(html, "⇒");
   assert(!html.includes("<h1 class=\"title\">Additional \\SpecialChar"), "title SpecialChar must expand");
   assertStringIncludes(html, "User&#39;s Guide.");
-  assertStringIncludes(html, ">2.1 How LyX Uses LaTeX</");
+  assertMatch(
+    html,
+    /(?:<span class="heading-number">2\.1 <\/span>|>2\.1 )How (?:<span class="specialchar"[^>]*>)?LyX(?:<\/span>)? Uses (?:<span class="specialchar"[^>]*>)?LaTeX(?:<\/span>)?</,
+  );
   assertStringIncludes(html, 'id="sec-2-1"');
   assertStringIncludes(html, "<nav class=\"toc\">");
   assertStringIncludes(html, "href=\"#sec-2-1\"");
@@ -1387,8 +1412,8 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, ">Tab</a></dt>");
   assertMatch(html, /<dd\b[^>]*>Tabulator key<\/dd>/);
   assert(!html.includes("UNKNOWN_INSET"), "UserGuide must not dump unknown-inset fallbacks");
-  assertStringIncludes(html, ">A The User Interface");
-  assertStringIncludes(html, ">A.1 The File Menu");
+  assertMatch(html, /(?:<span class="heading-number">A <\/span>|>A )The User Interface/);
+  assertMatch(html, /(?:<span class="heading-number">A\.1 <\/span>|>A\.1 )The File Menu/);
   assert(!html.includes(">7 The User Interface"), "appendix chapters must not continue arabic numbering");
   const phantomAt = html.indexOf("What is correct English");
   assert(phantomAt !== -1, "UserGuide phantom example missing");
@@ -1476,11 +1501,14 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   );
   assertStringIncludes(html, 'id="LyXCite-lyxcredit"');
   assertStringIncludes(html, '<span class="bibitemlabel">Credits</span>');
-  assertStringIncludes(html, "The LaTeX Companion Second Edition");
+  assertMatch(
+    html,
+    /The (?:<span class="specialchar"[^>]*>)?LaTeX(?:<\/span>)? Companion Second Edition/,
+  );
   assertStringIncludes(html, 'class="bibtex"');
   assertStringIncludes(html, 'id="LyXCite-Mittelbach"');
   assertStringIncludes(html, '<span class="bibtexlabel">1</span>');
-  assertStringIncludes(html, "The LaTeX Companion");
+  assertMatch(html, /The (?:<span class="specialchar"[^>]*>)?LaTeX(?:<\/span>)? Companion/);
   assertStringIncludes(html, '<dt><a class="nomencl" href="#nomencl-');
   assertStringIncludes(html, 'id="nomencl-');
   assertStringIncludes(html, '<a href="#idx-');
@@ -1515,7 +1543,7 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, '<div class="index">');
   assertStringIncludes(html, '<h2 class="index">Index</h2>');
   assertMatch(html, /<li\b[^>]*>Font, Types/);
-  assertStringIncludes(html, ">3.3.4.4 Short Titles</");
+  assertMatch(html, /(?:<span class="heading-number">3\.3\.4\.4 <\/span>|>3\.3\.4\.4 )Short Titles</);
   assert(!html.includes("HeadingsShort Titles"), "short-title Argument must not concatenate onto the long heading in the TOC");
 });
 
@@ -1637,7 +1665,10 @@ Deno.test("Live renderer - Help Intro.lyx TOC, href, quotes, table", async () =>
   const { html, diagnostics } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
   assertStringIncludes(html, '<article class="lyx-live">');
   assertEquals(diagnostics.filter((d) => d.code === "UNKNOWN_INSET").map((d) => d.message), []);
-  assertMatch(html, /<h1 class="title"[^>]*>Introduction to LyX<\/h1>/);
+  assertMatch(
+    html,
+    /<h1 class="title"[^>]*>Introduction to (?:<span class="specialchar"[^>]*>)?LyX(?:<\/span>)?<\/h1>/,
+  );
   assertStringIncludes(html, '<nav class="toc">');
   assertStringIncludes(html, 'class="href"');
   assertStringIncludes(html, "lyx-docs@lists.lyx.org");

@@ -83,6 +83,32 @@ describe("renderWebviewHtml change views", () => {
     assert.match(html, /ins\.change-author-1, del\.change-author-1/);
   });
 
+  it("ships DL145 chrome non-select CSS (J6)", () => {
+    const html = render("tracked");
+    assert.match(html, /span\.heading-number/);
+    assert.match(html, /nav\.toc/);
+    assert.match(html, /div\.bibtexentry/);
+    assert.match(html, /user-select:\s*none/);
+    // Chip summaries are NOT in the non-select list (object-select / rebuild inset).
+    const cssStart = html.indexOf("/* DL145 J6");
+    const cssEnd = html.indexOf("span.ref, span.citation", cssStart);
+    const block = html.slice(cssStart, cssEnd);
+    assert.match(block, /span\.heading-number/);
+    assert.match(block, /span\.float-caption-prefix/);
+    assert.match(block, /span\.layout-label/);
+    assert.match(block, /span\.eqno/);
+    assert.match(block, /span\.abstract_label/);
+    assert.match(block, /div\.nomencl/);
+    assert.match(block, /div\.index/);
+    assert.equal(block.includes("details.disclose > summary"), false);
+  });
+
+  it("posts object select on disclosure summary click (rebuild inset)", () => {
+    const html = render("tracked");
+    assert.match(html, /closest\("details\.disclose"\)/);
+    assert.match(html, /selectedText: ""/);
+  });
+
   it("marks whole-inset disclosures: inserted underline, deleted label strike + open diagonal", () => {
     const html = render("tracked");
     assert.match(html, /ins\.change-inserted details\.disclose > \*/);
