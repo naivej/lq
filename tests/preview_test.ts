@@ -288,6 +288,12 @@ function isTableCellLayoutSelector(sel: string): boolean {
   return /inset\[Tabular/.test(sel) && /inset\[Text\]/.test(sel) && /layout\[/.test(sel);
 }
 
+/** J1 B: Float/Wrap/Listings → Caption → layout. Not a bare float/wrap/listings chip. */
+function isCaptionLayoutSelector(sel: string): boolean {
+  return /inset\[(?:Float|Wrap|listings)\b/.test(sel) && /inset\[Caption/.test(sel) &&
+    /layout\[/.test(sel);
+}
+
 Deno.test("Live mapping - headings_paragraphs tokens match HTML ids (DL134)", async () => {
   const file = syntheticPath("headings_paragraphs.lyx");
   const text = await Deno.readTextFile(file);
@@ -357,6 +363,48 @@ Deno.test("Live mapping - Intro table phrase is a cell layout (DL138)", async ()
   const matches = query(ast, sel);
   assert(
     matches.some((n) => extractAllText(n).includes(phrase)),
+    `--text-only of ${sel} should contain ${JSON.stringify(phrase)}`,
+  );
+});
+
+Deno.test("Live mapping - float caption words publish Caption layout path (DL139)", async () => {
+  const file = syntheticPath("table_figure_foot_math.lyx");
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  const phrase = "A figure caption.";
+  const sel = assertPhraseMapsToQuery(response.html, validated.tokens, ast, phrase);
+  assert(isCaptionLayoutSelector(sel), `expected Float→Caption→layout, got ${sel}`);
+  assert(!/^inset\[Float [^\]]+\]:nth-match\(\d+\)$/.test(sel), `caption words must not stay on chip: ${sel}`);
+  assertEquals(
+    sel,
+    "inset[Float figure]:nth-match(1) inset[Caption Standard] layout[Plain Layout]",
+  );
+  const matches = query(ast, sel);
+  assertEquals(matches.length, 1);
+  assert(
+    matches.some((n) => extractAllText(n).includes(phrase)),
+    `--text-only of ${sel} should contain ${JSON.stringify(phrase)}`,
+  );
+  const chip = validated.tokens.find((t) =>
+    /^inset\[Float figure\]:nth-match\(1\)$/.test(t.bundle.selector)
+  );
+  assert(chip, "float chip token must remain (J2 B)");
+});
+
+Deno.test("Live mapping - EmbeddedObjects float caption is editable (DL139)", async () => {
+  const file = fromFileUrl(new URL("./fixtures/Help/EmbeddedObjects.lyx", import.meta.url));
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  const phrase = "A star in a float.";
+  const sel = assertPhraseMapsToQuery(response.html, validated.tokens, ast, phrase);
+  assert(isCaptionLayoutSelector(sel), `expected Float→Caption→layout, got ${sel}`);
+  assert(!/^inset\[Float [^\]]+\]:nth-match\(\d+\)$/.test(sel));
+  assert(
+    query(ast, sel).some((n) => extractAllText(n).includes(phrase)),
     `--text-only of ${sel} should contain ${JSON.stringify(phrase)}`,
   );
 });
@@ -666,12 +714,13 @@ Deno.test("Live renderer - review_changes_counters skips deleted construct numbe
   assertEquals((html.match(/class="foot_label">2<\/summary>/g) ?? []).length, 3);
   // Floats: deleted figure/table captions keep the would-be number without
   // consuming it; the next figure/table is also numbered 1.
-  assertStringIncludes(html, "Figure 1: Deleted figure caption");
-  assertStringIncludes(html, "Figure 1: Second figure caption");
-  assertStringIncludes(html, "Table 1: Deleted table caption");
-  assertStringIncludes(html, "Table 1: Second table caption");
+  // Caption words sit in a mapped <span> (DL139); prefix stays outside.
+  assertMatch(html, /Figure 1:(?: <span[^>]*>)?Deleted figure caption/);
+  assertMatch(html, /Figure 1:(?: <span[^>]*>)?Second figure caption/);
+  assertMatch(html, /Table 1:(?: <span[^>]*>)?Deleted table caption/);
+  assertMatch(html, /Table 1:(?: <span[^>]*>)?Second table caption/);
   // The deleted float with an equation shows the would-be Figure 2.
-  assertStringIncludes(html, "Figure 2: Deleted float with equation");
+  assertMatch(html, /Figure 2:(?: <span[^>]*>)?Deleted float with equation/);
   // Equations: a deleted row shows # and does not consume; the next is 1.
   assertStringIncludes(html, '<span class="eqno">(#)</span>');
   assertStringIncludes(html, '<span class="eqno">(1)</span>');
@@ -882,7 +931,7 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assert(!html.includes("sec:Section_label"), "refs must resolve to numbers, not raw keys");
   assertStringIncludes(html, "<h4>1.1.1 Subsubsection");
   assertStringIncludes(html, 'class="float-table"');
-  assertStringIncludes(html, "Table 1: Table caption");
+  assertMatch(html, /Table 1:(?: <span[^>]*>)?Table caption/);
   assertStringIncludes(html, ">A Appendix");
   assertStringIncludes(html, 'href="#LyXCite-Abernethy2003"');
   assertStringIncludes(html, "Abernethy et al.");
@@ -900,7 +949,7 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   const capAt = fig.indexOf("<figcaption");
   const tableAt = fig.indexOf("<table");
   assert(capAt !== -1 && tableAt !== -1 && capAt < tableAt, "figure caption must appear above the figure body");
-  assertStringIncludes(fig, "Figure 1: Figure caption");
+  assertMatch(fig, /Figure 1:(?: <span[^>]*>)?Figure caption/);
   assertStringIncludes(fig, 'class="float-caption-Standard"');
   assert(!/<figcaption[^>]*>Figure 1: <div/.test(fig), "figure number and caption must be one line");
 });

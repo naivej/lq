@@ -908,6 +908,44 @@ function withCellLayout(
   }
 }
 
+/**
+ * J1 B: caption layout path is Float/Wrap/listings → that owner's Caption → layout.
+ * Do not call `renderInset(Caption)` from `renderCaptionedFloat` (that emits global
+ * Caption nth-match without the float/wrap/listings prefix).
+ */
+function captionLayoutSelector(
+  ctx: RenderCtx,
+  owner: BlockNode,
+  captionInset: BlockNode,
+  layoutNode: BlockNode,
+  name: string,
+): string {
+  const ownerSel = insetOwnerSelector(ctx, owner);
+  const capKind = insetKind(captionInset);
+  const captions = descendantInsetsNamed(owner, capKind);
+  const capPart = scopedNthMatch("inset", capKind, captionInset, captions);
+  const same = descendantLayoutsNamed(captionInset, name);
+  const layoutPart = scopedNthMatch("layout", name, layoutNode, same);
+  return `${ownerSel} ${capPart} ${layoutPart}`;
+}
+
+function withCaptionLayout(
+  ctx: RenderCtx,
+  owner: BlockNode,
+  captionInset: BlockNode,
+  item: FlowItem,
+  fn: (selector: string) => string,
+): string {
+  const selector = captionLayoutSelector(ctx, owner, captionInset, item.node, item.layout);
+  const prev = ctx.currentLayoutSelector;
+  ctx.currentLayoutSelector = selector;
+  try {
+    return fn(selector);
+  } finally {
+    ctx.currentLayoutSelector = prev;
+  }
+}
+
 function activeQueryIndex(
   ctx: RenderCtx,
 ): Map<BlockNode, { tag: "layout" | "inset"; name: string; globalN: number }> {
@@ -3193,9 +3231,20 @@ function resolveInfoIconDataUri(
 }
 
 function renderCaptionInline(block: BlockNode, ctx: RenderCtx, parentState?: TraversalState): string {
+  const owner = ctx.currentInsetNode;
   const nested = flattenFlow(block.children, 0);
   if (nested.length > 0) {
-    return nested.map((item) => renderLayoutInline(item.node, ctx, false, parentState)).join("");
+    if (!owner) {
+      return nested.map((item) => renderLayoutInline(item.node, ctx, false, parentState)).join("");
+    }
+    return nested.map((item) =>
+      withCaptionLayout(ctx, owner, block, item, (selector) => {
+        const id = takeOwnerId(ctx);
+        emitToken(ctx, id, selector);
+        const inner = renderLayoutInline(item.node, ctx, false, parentState);
+        return `<span${mappingAttrs(id)}>${inner}</span>`;
+      })
+    ).join("");
   }
   return renderChildren(
     block.children,
@@ -3538,7 +3587,13 @@ function renderCaptionedFloat(
       html += `<figcaption${captionClassAttr(captions)}>${usePrefix}${cap}</figcaption>`;
       continue;
     }
-    html += `<div class="float-body">${renderLayoutInline(item.node, ctx, false, parentState)}</div>`;
+    // Body layout under the float inset (no Caption hop). Always map for empty consistency.
+    html += withLayout(ctx, item, (selector) => {
+      const bodyId = takeOwnerId(ctx);
+      emitToken(ctx, bodyId, selector);
+      const inner = renderLayoutInline(item.node, ctx, false, parentState);
+      return `<div class="float-body"${mappingAttrs(bodyId)}>${inner}</div>`;
+    });
   }
   html += "</figure>";
   return html;
