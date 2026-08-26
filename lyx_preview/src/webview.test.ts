@@ -71,7 +71,15 @@ describe("renderWebviewHtml change views", () => {
     assert.match(html, /closest\("\[data-ref\]"\)/);
     assert.match(html, /type: "select"/);
     assert.match(html, /window\.addEventListener\("blur"/);
-    assert.doesNotMatch(html, /blur[\s\S]*type: "select"[\s\S]*null/);
+    assert.doesNotMatch(html, /addEventListener\("blur"[\s\S]*type: "select"/);
+    assert.match(html, /if \(!owner\) return/);
+    assert.match(html, /userSelect === "none"/);
+    assert.match(html, /removeAllRanges\(\)/);
+    assert.match(html, /clickHitsGlyph/);
+    assert.match(html, /suppressSelectUntil/);
+    assert.match(html, /selectGestureFromGlyph/);
+    assert.match(html, /type: "select", id: null/);
+    assert.doesNotMatch(html, /document\.hasFocus\(\)/);
   });
 
   it("ships the three-view CSS", () => {

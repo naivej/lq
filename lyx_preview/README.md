@@ -17,7 +17,7 @@ This extension render LyX in VS Code webview that
 2. Install this extension
 3. Open a `.lyx` file and click the blue L icon from the title bar to open preview
 4. If the document has tracked changes, use the yellow L icon from the title bar to select original / tracked/ clean view
-5. Drag select in preview, then share the context with agent by `@live-selection.json` or (for vscode chat only) `#lyxselection`
+5. Drag select in preview, then share the context with agent by `@live-selection.json` (written next to the previewed `.lyx`) or hint VS Code language model tool `#lyxselection`.
 
 
 ## Relation with LyXHTML

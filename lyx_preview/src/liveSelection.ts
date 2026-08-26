@@ -1,6 +1,6 @@
 /** Read-first Live selection record (DL134). One payload for LM tool and JSON. */
 
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { LiveToken, LiveTokenVia } from "./previewSession";
 
@@ -27,7 +27,8 @@ export interface LiveSelectionRecord {
 }
 
 export interface SelectMessage {
-  id: string;
+  /** `null` = dismiss pointer (J4 C: focused click, no mapped owner). */
+  id: string | null;
   selectedText: string;
   multi: boolean;
 }
@@ -36,6 +37,7 @@ export function parseSelectMessage(msg: unknown): SelectMessage | undefined {
   if (msg === null || typeof msg !== "object") return undefined;
   const m = msg as Record<string, unknown>;
   if (m.type !== "select") return undefined;
+  if (m.id === null) return { id: null, selectedText: "", multi: false };
   if (typeof m.id !== "string" || m.id.length === 0) return undefined;
   return {
     id: m.id,
@@ -209,17 +211,9 @@ export function compactSelector(record: LiveSelectionRecord): string {
   return text;
 }
 
-export function resolveLiveSelectionPath(opts: {
-  workspaceFolder?: string;
-  globalStoragePath?: string;
-}): string {
-  if (opts.workspaceFolder) {
-    return join(opts.workspaceFolder, ".lq", LIVE_SELECTION_FILENAME);
-  }
-  if (opts.globalStoragePath) {
-    return join(opts.globalStoragePath, LIVE_SELECTION_FILENAME);
-  }
-  return join(process.cwd(), ".lq", LIVE_SELECTION_FILENAME);
+/** Sidecar of the previewed `.lyx` (DL146). Not under `.lq`, not globalStorage. */
+export function resolveLiveSelectionPath(previewedLyxPath: string): string {
+  return join(dirname(previewedLyxPath), LIVE_SELECTION_FILENAME);
 }
 
 export function parseLiveSelectionJson(raw: string): LiveSelectionRecord | undefined {
@@ -267,6 +261,37 @@ export async function writeLiveSelectionFile(
 ): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, formatLiveSelectionJson(record), "utf8");
+}
+
+export async function deleteLiveSelectionFile(path: string): Promise<void> {
+  try {
+    await unlink(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return;
+    throw error;
+  }
+}
+
+/** Debounced write; immediate delete. Cancelled timer cannot recreate after delete. */
+export class LiveSelectionPersister {
+  private timer: ReturnType<typeof setTimeout> | undefined;
+
+  constructor(private readonly delayMs = 200) {}
+
+  persist(path: string, record: LiveSelectionRecord | undefined): void {
+    if (this.timer !== undefined) {
+      clearTimeout(this.timer);
+      this.timer = undefined;
+    }
+    if (!record) {
+      void deleteLiveSelectionFile(path);
+      return;
+    }
+    this.timer = setTimeout(() => {
+      this.timer = undefined;
+      void writeLiveSelectionFile(path, record);
+    }, this.delayMs);
+  }
 }
 
 export async function readLiveSelectionFile(path: string): Promise<LiveSelectionRecord | undefined> {

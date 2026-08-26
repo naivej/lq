@@ -1,14 +1,18 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import {
+  LIVE_SELECTION_FILENAME,
   LM_TOOL_NAME,
   LM_TOOL_REF,
+  LiveSelectionPersister,
   LiveSelectionStore,
   NO_LIVE_SELECTION,
   compactSelector,
+  deleteLiveSelectionFile,
   formatLiveSelectionJson,
   invokeLiveSelection,
   isObjectOnlyCommandInsetSelector,
@@ -56,6 +60,11 @@ describe("parseSelectMessage", () => {
     );
     assert.equal(parseSelectMessage({ type: "changeFocus", id: "change-1" }), undefined);
     assert.equal(parseSelectMessage({ type: "select", id: "" }), undefined);
+    assert.deepEqual(parseSelectMessage({ type: "select", id: null }), {
+      id: null,
+      selectedText: "",
+      multi: false,
+    });
   });
 });
 
@@ -105,10 +114,11 @@ describe("resolveSelection / store", () => {
     assert.equal(kept?.selectedText, "hi");
   });
 
-  it("does not clear on blur (no select message)", () => {
+  it("clears the record so invoke reports no selection", () => {
     const store = new LiveSelectionStore();
-    store.applySelect(tokens, "tok-1", "kept", false, baseCtx);
-    assert.equal(store.get()?.selectedText, "kept");
+    store.applySelect(tokens, "tok-1", "hi", false, baseCtx);
+    store.clear();
+    assert.equal(invokeLiveSelection(store.get()), NO_LIVE_SELECTION);
   });
 
   it("marks stale when the buffer is dirty", () => {
@@ -224,7 +234,7 @@ describe("invoke / JSON / path", () => {
     const dir = mkdtempSync(join(tmpdir(), "lyx-sel-"));
     try {
       const record = resolveSelection(tokens, "tok-2", "cell", false, baseCtx)!;
-      const path = join(dir, ".lq", "live-selection.json");
+      const path = join(dir, LIVE_SELECTION_FILENAME);
       await writeLiveSelectionFile(path, record);
       const raw = readFileSync(path, "utf8");
       assert.equal(raw, formatLiveSelectionJson(record));
@@ -235,15 +245,57 @@ describe("invoke / JSON / path", () => {
     }
   });
 
-  it("prefers workspace .lq/ then globalStorage", () => {
+  it("resolves the sidecar next to the previewed lyx, not .lq or globalStorage", () => {
     assert.equal(
-      resolveLiveSelectionPath({ workspaceFolder: "/ws" }),
-      join("/ws", ".lq", "live-selection.json"),
+      resolveLiveSelectionPath("/tmp/doc.lyx"),
+      join(dirname("/tmp/doc.lyx"), LIVE_SELECTION_FILENAME),
     );
     assert.equal(
-      resolveLiveSelectionPath({ globalStoragePath: "/g" }),
-      join("/g", "live-selection.json"),
+      resolveLiveSelectionPath("C:\\docs\\ch.lyx"),
+      join(dirname("C:\\docs\\ch.lyx"), LIVE_SELECTION_FILENAME),
     );
+    const nested = resolveLiveSelectionPath("/ws/book/master.lyx");
+    assert.equal(nested, join(dirname("/ws/book/master.lyx"), LIVE_SELECTION_FILENAME));
+    assert.doesNotMatch(nested, /(?:^|[/\\])\.lq(?:[/\\]|$)/);
+  });
+
+  it("uses the previewed path even when the record file is an include child", () => {
+    const previewed = "/tmp/Help/EmbeddedObjects.lyx";
+    assert.equal(
+      resolveLiveSelectionPath(previewed),
+      join(dirname(previewed), LIVE_SELECTION_FILENAME),
+    );
+  });
+
+  it("deletes the sidecar and treats a missing file as success", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lyx-sel-"));
+    try {
+      const record = resolveSelection(tokens, "tok-1", "hi", false, baseCtx)!;
+      const path = join(dir, LIVE_SELECTION_FILENAME);
+      await writeLiveSelectionFile(path, record);
+      await deleteLiveSelectionFile(path);
+      assert.equal(existsSync(path), false);
+      await deleteLiveSelectionFile(path);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("cancels a debounced write when deleting", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lyx-sel-"));
+    try {
+      const record = resolveSelection(tokens, "tok-1", "hi", false, baseCtx)!;
+      const path = join(dir, LIVE_SELECTION_FILENAME);
+      const persister = new LiveSelectionPersister(40);
+      persister.persist(path, record);
+      persister.persist(path, undefined);
+      await delay(10);
+      assert.equal(existsSync(path), false);
+      await delay(50);
+      assert.equal(existsSync(path), false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("compacts the selector for the status bar", () => {

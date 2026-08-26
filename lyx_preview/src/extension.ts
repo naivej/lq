@@ -26,12 +26,12 @@ import { LyxOutlineTreeProvider } from "./outlineTree";
 import { renderWebviewHtml } from "./webview";
 import {
   LM_TOOL_NAME,
+  LiveSelectionPersister,
   LiveSelectionStore,
   compactSelector,
   invokeLiveSelection,
   parseSelectMessage,
   resolveLiveSelectionPath,
-  writeLiveSelectionFile,
   type LiveSelectionRecord,
 } from "./liveSelection";
 
@@ -41,7 +41,7 @@ export type ChangeViewMode = "original" | "tracked" | "clean";
 
 interface LiveSelectionHost {
   selection: LiveSelectionStore;
-  persistSelection: (record: LiveSelectionRecord) => void;
+  persistSelection: (record: LiveSelectionRecord | undefined, previewFile: string) => void;
   onSelectionChange: (record: LiveSelectionRecord | undefined) => void;
 }
 
@@ -83,6 +83,11 @@ class LivePreviewPanel {
       }
       const select = parseSelectMessage(msg);
       if (select) {
+        if (select.id === null) {
+          this.host.selection.clear();
+          this.publishSelection(undefined);
+          return;
+        }
         const render = this.session.lastValid;
         if (!render) return;
         const record = this.host.selection.applySelect(
@@ -274,7 +279,7 @@ class LivePreviewPanel {
 
   private publishSelection(record: LiveSelectionRecord | undefined): void {
     this.host.onSelectionChange(record);
-    if (record) this.host.persistSelection(record);
+    this.host.persistSelection(record, this.filePath);
   }
 
   private paint(error?: string): void {
@@ -320,6 +325,7 @@ class LivePreviewPanel {
     forgetOutline(this.filePath);
     this.onChangeFocus?.(undefined);
     this.host.selection.clear();
+    this.host.persistSelection(undefined, this.filePath);
     this.host.onSelectionChange(undefined);
     void vscode.commands.executeCommand("setContext", "lyxPreview.liveOpen", false);
     for (const d of this.disposables) d.dispose();
@@ -361,17 +367,12 @@ export function activate(context: vscode.ExtensionContext): void {
   const changeStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   const selectStatus = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 101);
   const selection = new LiveSelectionStore();
-  let persistTimer: ReturnType<typeof setTimeout> | undefined;
-  const selectionPath = (): string =>
-    resolveLiveSelectionPath({
-      workspaceFolder: vscode.workspace.workspaceFolders?.[0]?.uri.fsPath,
-      globalStoragePath: context.globalStorageUri.fsPath,
-    });
-  const persistSelection = (record: LiveSelectionRecord): void => {
-    if (persistTimer) clearTimeout(persistTimer);
-    persistTimer = setTimeout(() => {
-      void writeLiveSelectionFile(selectionPath(), record);
-    }, 200);
+  const persister = new LiveSelectionPersister();
+  const persistSelection = (
+    record: LiveSelectionRecord | undefined,
+    previewFile: string,
+  ): void => {
+    persister.persist(resolveLiveSelectionPath(previewFile), record);
   };
   const onSelectionChange = (record: LiveSelectionRecord | undefined): void => {
     if (!record) {

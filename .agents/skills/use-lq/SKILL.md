@@ -1,6 +1,6 @@
 ---
 name: use-lq
-description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use when a selection of a .lyx preview is explicitly given (as #lyxSelection or @.lq/live-selection.json). Use headless LyX to create, import, or export the documents, and open the LyX GUI to establish a LyXServer connection.
+description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use when a selection of a .lyx preview is explicitly given (as #lyxSelection or @live-selection.json). Use headless LyX to create, import, or export the documents, and open the LyX GUI to establish a LyXServer connection.
 allowed-tools: Bash(lq *)
 ---
 
@@ -22,7 +22,7 @@ Run the same sequence for every task:
 2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, optional `layoutsDir` overlay, `refresh` — plus `layoutSearch` (order) and `layoutRoots` (paths) when writing config. Change configuration only with authorization. See the state-scope note below.
 3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → count (`--count`) → text-only on the narrowed result. Done when you can see the exact node(s) you will touch.
 
-   **Live pointer.** The user may read `.lyx` from a preview and select text in that preview. When a preview selection is explicitly given (`#lyxSelection` or `@.lq/live-selection.json`), read it to understand the context.
+   **Live pointer.** The user may read `.lyx` from a preview and select text in that preview. When a preview selection is explicitly given (`#lyxSelection` or `@live-selection.json` next to the previewed `.lyx`), read it to understand the context.
 
    | Field | How to read it |
    |---|---|
@@ -35,7 +35,7 @@ Run the same sequence for every task:
    | `changeId` | `change-N` if the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this Live render |
    | `multi` | Drag crossed owners. `selector` is the **anchor** (start owner); `selectedText` is clipped to that owner only. |
    | `via` | Present when `file` is an included child shown in another document's preview. Use for Context only. |
-   | `capturedAt` | Last capture. The record survives leaving the preview and may be leftover. Do not read the record just because it exists. |
+   | `capturedAt` | Last capture. The record survives leaving the preview and may be leftover while the preview is still open. Do not read the record just because it exists. |
 
 4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not.
 5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.

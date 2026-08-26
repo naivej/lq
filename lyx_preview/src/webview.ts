@@ -105,6 +105,31 @@ export function renderWebviewHtml(options: {
   function postChangeFocus(id) {
     vscode.postMessage({ type: "changeFocus", id: id || null });
   }
+  /** Eat selectionchange after an empty/chrome dismiss so a nearby caret cannot resurrect the pointer. */
+  var suppressSelectUntil = 0;
+  var selectGestureFromGlyph = false;
+  function clickHitsGlyph(ev, el) {
+    if (el.closest && el.closest("math, img, svg, video, canvas")) return true;
+    var x = ev.clientX;
+    var y = ev.clientY;
+    var range = document.createRange();
+    for (var c = el.firstChild; c; c = c.nextSibling) {
+      if (c.nodeType !== 3 || !c.nodeValue.trim()) continue;
+      range.selectNodeContents(c);
+      var rects = range.getClientRects();
+      for (var i = 0; i < rects.length; i++) {
+        var r = rects[i];
+        if (x >= r.left && x <= r.right && y >= r.top && y <= r.bottom) return true;
+      }
+    }
+    return false;
+  }
+  function dismissLiveSelect() {
+    suppressSelectUntil = Date.now() + 400;
+    var selDismiss = window.getSelection();
+    if (selDismiss) selDismiss.removeAllRanges();
+    vscode.postMessage({ type: "select", id: null });
+  }
   /** DL145: selection text aligned with --text-only where possible (SpecialChar / no heading counter / multi clip). */
   function selectionLqText(sel, owner, multi) {
     if (!sel || sel.isCollapsed || !sel.rangeCount) return "";
@@ -162,7 +187,13 @@ export function renderWebviewHtml(options: {
     walk(root, false);
     return out.join("");
   }
+  document.addEventListener("mousedown", function (ev) {
+    var t = ev.target;
+    var el = t && t.nodeType === 1 ? t : t && t.parentElement;
+    selectGestureFromGlyph = !!(el && clickHitsGlyph(ev, el));
+  });
   document.addEventListener("selectionchange", function () {
+    if (Date.now() < suppressSelectUntil) return;
     var sel = window.getSelection();
     if (!sel || !sel.anchorNode) {
       postChangeFocus(null);
@@ -172,6 +203,7 @@ export function renderWebviewHtml(options: {
     var changeEl = node && node.closest ? node.closest("ins.change-inserted, del.change-deleted") : null;
     postChangeFocus(changeEl && changeEl.id ? changeEl.id : null);
     var owner = node && node.closest ? node.closest("[data-ref]") : null;
+    // Empty selectionchange is focus-collapse and paint(); do not dismiss (DL146 J4 C).
     if (!owner) return;
     var id = owner.getAttribute("data-ref") || owner.id;
     if (!id) return;
@@ -199,14 +231,35 @@ export function renderWebviewHtml(options: {
   // Click chip (summary) publishes object select even when toggle steals text selection.
   document.addEventListener("click", function (ev) {
     var t = ev.target;
-    if (!t || !t.closest) return;
-    var details = t.closest("details.disclose");
-    if (!details) return;
-    var sum = details.querySelector(":scope > summary");
-    if (!sum || !(t === sum || sum.contains(t))) return;
-    var oid = details.getAttribute("data-ref") || details.id;
-    if (!oid) return;
-    vscode.postMessage({ type: "select", id: oid, selectedText: "", multi: false });
+    var el = t && t.nodeType === 1 ? t : t && t.parentElement;
+    if (!el || !el.closest) return;
+    var details = el.closest("details.disclose");
+    if (details) {
+      var sum = details.querySelector(":scope > summary");
+      if (sum && (el === sum || sum.contains(el))) {
+        var oid = details.getAttribute("data-ref") || details.id;
+        if (oid) {
+          vscode.postMessage({ type: "select", id: oid, selectedText: "", multi: false });
+          return;
+        }
+      }
+    }
+    var mapped = el.closest("[data-ref]");
+    var chrome = false;
+    for (var n = el; n && n.nodeType === 1 && n !== document.body; n = n.parentElement) {
+      if (window.getComputedStyle(n).userSelect === "none") {
+        chrome = true;
+        break;
+      }
+    }
+    // Drag (including multi) starts on a glyph and ends with a click on the common
+    // ancestor (section/article). That click looks empty — do not dismiss.
+    var selNow = window.getSelection();
+    if (selectGestureFromGlyph && selNow && !selNow.isCollapsed && !chrome) return;
+    // Keep only a click on real content (glyph / math / img). Padding of a mapped
+    // layout still has data-ref and a collapsed caret — that is "empty", not a pointer.
+    if (!chrome && mapped && clickHitsGlyph(ev, el)) return;
+    dismissLiveSelect();
   });
   window.addEventListener("blur", function () {
     postChangeFocus(null);
