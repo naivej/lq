@@ -339,17 +339,35 @@ Deno.test("Live mapping - heading data-ref is on the heading tag not section (DL
 });
 
 Deno.test("Live mapping - unmapped body chrome does not steal the heading (DL140)", async () => {
-  const file = fromFileUrl(new URL("./fixtures/Help/EmbeddedObjects.lyx", import.meta.url));
+  // LyX-Code <pre> stays unmapped until DL143; must not closest() onto a heading.
+  const file = fromFileUrl(new URL("./fixtures/Help/Additional.lyx", import.meta.url));
   const text = await Deno.readTextFile(file);
   const { response } = await buildLiveResponse(file, parse(text), text);
-  // Description <dd> prose is unmapped; under a mapped <section> it used to
-  // closest() onto the heading. After J1 A there is no mapped ancestor.
-  const phrase = "Here you can choose an image";
+  const phrase = "\\usepackage{indentfirst}";
   assertStringIncludes(response.html, phrase);
   assertThrows(
     () => closestDataRef(response.html, phrase),
     Error,
     "no data-ref ancestor",
+  );
+});
+
+Deno.test("Live mapping - Description dd values publish the layout path (DL141)", async () => {
+  const file = fromFileUrl(new URL("./fixtures/Help/EmbeddedObjects.lyx", import.meta.url));
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  const phrase = "Here you can choose an image";
+  const sel = assertPhraseMapsToQuery(response.html, validated.tokens, ast, phrase);
+  assertMatch(sel, /^layout\[Description\]/);
+  assert(
+    !/layout\[(Chapter|Section|Subsection|Subsubsection)/.test(sel),
+    `dd must not steal heading: ${sel}`,
+  );
+  assert(
+    query(ast, sel).some((n) => extractAllText(n).includes(phrase)),
+    `--text-only of ${sel} should contain ${JSON.stringify(phrase)}`,
   );
 });
 
@@ -621,7 +639,7 @@ Deno.test("Live renderer - lists and quotes", async () => {
   assertStringIncludes(html, '<ol class="enumi">');
   assertMatch(html, /<li\b[^>]*>first<\/li>/);
   assertMatch(html, /<dt\b[^>]*>Term<\/dt>/);
-  assertStringIncludes(html, "<dd>the explanation</dd>");
+  assertMatch(html, /<dd\b[^>]*>the explanation<\/dd>/); // DL141: dd carries data-ref
   assertStringIncludes(html, '<blockquote class="quote">');
   assertStringIncludes(html, "A quoted line.");
 });

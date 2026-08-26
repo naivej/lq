@@ -1903,11 +1903,14 @@ function renderList(
         break;
       }
       if (first.layout === "Description" || spec.tag === "dl") {
+        // DL141 J1 A: map <dd> with the same layout selector as <dt> (new token id).
         html += withLayout(ctx, item, (selector) => {
           const { label, rest } = splitDescription(item.node, ctx);
-          const id = takeOwnerId(ctx);
-          emitToken(ctx, id, selector);
-          return `<dt${mappingAttrs(id)}>${label}</dt><dd>${rest}`;
+          const dtId = takeOwnerId(ctx);
+          emitToken(ctx, dtId, selector);
+          const ddId = takeOwnerId(ctx);
+          emitToken(ctx, ddId, selector);
+          return `<dt${mappingAttrs(dtId)}>${label}</dt><dd${mappingAttrs(ddId)}>${rest}`;
         });
         i++;
         while (i < items.length && items[i].depth > depth) {
