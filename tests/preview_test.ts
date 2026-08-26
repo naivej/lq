@@ -315,6 +315,44 @@ Deno.test("Live mapping - headings_paragraphs tokens match HTML ids (DL134)", as
   assertEquals(standard[0]?.bundle.selector, "layout[Standard]:nth-match(1)");
 });
 
+Deno.test("Live mapping - heading data-ref is on the heading tag not section (DL140)", async () => {
+  const file = syntheticPath("headings_paragraphs.lyx");
+  const text = await Deno.readTextFile(file);
+  const ast = parse(text);
+  const { response } = await buildLiveResponse(file, ast, text);
+  const validated = validateLiveResponse(response);
+  assertEquals(
+    [...response.html.matchAll(/<section\b[^>]*\bdata-ref="/g)].length,
+    0,
+    "<section> must not carry data-ref (J1 A)",
+  );
+  assert(
+    /<h[1-4]\b[^>]*\bdata-ref="/.test(response.html),
+    "heading tag must carry data-ref",
+  );
+  // Heading words still publish a heading layout selector.
+  const headingSel = assertPhraseMapsToQuery(response.html, validated.tokens, ast, "Introduction");
+  assertMatch(headingSel, /^layout\[Section\]/);
+  // Mapped body still wins closest (unchanged).
+  const bodySel = assertPhraseMapsToQuery(response.html, validated.tokens, ast, "Café naïve");
+  assertMatch(bodySel, /^layout\[Standard\]/);
+});
+
+Deno.test("Live mapping - unmapped body chrome does not steal the heading (DL140)", async () => {
+  const file = fromFileUrl(new URL("./fixtures/Help/EmbeddedObjects.lyx", import.meta.url));
+  const text = await Deno.readTextFile(file);
+  const { response } = await buildLiveResponse(file, parse(text), text);
+  // Description <dd> prose is unmapped; under a mapped <section> it used to
+  // closest() onto the heading. After J1 A there is no mapped ancestor.
+  const phrase = "Here you can choose an image";
+  assertStringIncludes(response.html, phrase);
+  assertThrows(
+    () => closestDataRef(response.html, phrase),
+    Error,
+    "no data-ref ancestor",
+  );
+});
+
 Deno.test("Live mapping - table cells publish nested layout paths (DL138)", async () => {
   const file = syntheticPath("table_figure_foot_math.lyx");
   const text = await Deno.readTextFile(file);
@@ -567,8 +605,8 @@ Deno.test("Live renderer - headings, paragraphs, unicode, empty, emphasis", asyn
   assertEquals(sem.role, "document");
   const dump = formatSem(sem);
   assertStringIncludes(dump, "heading");
-  assertStringIncludes(html, "<h2>1 Introduction</h2>");
-  assertStringIncludes(html, "<h3>1.1 Details</h3>");
+  assertMatch(html, /<h2\b[^>]*>1 Introduction<\/h2>/);
+  assertMatch(html, /<h3\b[^>]*>1.1 Details<\/h3>/);
   assertStringIncludes(html, "Café naïve");
   assertStringIncludes(html, "𝄞");
   assertStringIncludes(html, "<em>styled</em>");
@@ -929,7 +967,7 @@ Deno.test("Live renderer - my_template front matter and math", async () => {
   assertStringIncludes(html, '<a class="ref" href="#subsec_subsec_label">1.1</a>');
   assertStringIncludes(html, 'id="sec_Section_label"');
   assert(!html.includes("sec:Section_label"), "refs must resolve to numbers, not raw keys");
-  assertStringIncludes(html, "<h4>1.1.1 Subsubsection");
+  assertMatch(html, /<h4\b[^>]*>1\.1\.1 Subsubsection/);
   assertStringIncludes(html, 'class="float-table"');
   assertMatch(html, /Table 1:(?: <span[^>]*>)?Table caption/);
   assertStringIncludes(html, ">A Appendix");
@@ -1101,8 +1139,8 @@ Deno.test("Live renderer - Help Math.lyx Phantom chips; no math-mode UNKNOWN dum
   assertStringIncludes(html, '<nav class="toc">');
   assertStringIncludes(html, "„"); // Quotes gld German
   assertStringIncludes(html, "“");
-  assertStringIncludes(html, "<h3>Command Scheme</h3>"); // Subsection* unnumbered
-  assertStringIncludes(html, "<h4>Advice for Integrals</h4>"); // Subsubsection*
+  assertMatch(html, /<h3\b[^>]*>Command Scheme<\/h3>/); // Subsection* unnumbered (J2)
+  assertMatch(html, /<h4\b[^>]*>Advice for Integrals<\/h4>/); // Subsubsection*
   assertStringIncludes(html, 'class="Boxed"');
   assertStringIncludes(html, "<br>");
   assertStringIncludes(html, "<hr>");
@@ -1545,7 +1583,7 @@ Deno.test("Live renderer - Help Development.lyx listings, Flex Code, Paragraph",
   assertStringIncludes(html, "“");
   assertStringIncludes(html, "disclose foot");
   assertStringIncludes(html, "<br>");
-  assertStringIncludes(html, "<h5>Suspended tests</h5>");
+  assertMatch(html, /<h5\b[^>]*>Suspended tests<\/h5>/);
   assertStringIncludes(html, 'class="bibitemlabel"');
 });
 

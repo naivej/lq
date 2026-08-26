@@ -1682,8 +1682,10 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
         const text = headingPlainText(item.node);
         const id = takeOwnerId(ctx, sectionId(number, text));
         emitToken(ctx, id, selector);
+        // DL140 J1 A: map the heading tag only — <section> wraps body until the
+        // next heading and must not steal closest("[data-ref]") for unmapped chrome.
         const chunk =
-          `<section${mappingAttrs(id)}><${layout.tag}>${number}${renderLayoutInline(item.node, ctx, false, outerState)}</${layout.tag}>`;
+          `<section><${layout.tag}${mappingAttrs(id)}>${number}${renderLayoutInline(item.node, ctx, false, outerState)}</${layout.tag}>`;
         openLevels.push(layout.level);
         return chunk;
       });
