@@ -238,7 +238,7 @@ export function dedupeNavigateLabels(
 }
 
 /**
- * Attach 0-based .lyx buffer lines so LyX Navigate can jump the text editor
+ * Attach 0-based .lyx buffer lines so LyX Outline can jump the text editor
  * for figures/tables/equations/labels (not only Outline headings).
  */
 export function attachNavigateLines(
@@ -298,7 +298,7 @@ export function attachNavigateLines(
   return { figures, tables, equations, labels, listings, algorithms };
 }
 
-/** Explorer "LyX Navigate" tree node union (pure part — no vscode import). */
+/** Explorer "LyX Outline" tree node union (pure part — no vscode import). */
 export type NavNode =
   | { type: "group"; key: string; label: string; children: NavNode[] }
   | { type: "heading"; entry: OutlineEntryLike; nested: NestedOutline }
@@ -333,9 +333,9 @@ function normalizeChanges(changes: LiveChangeEntry[] | undefined): LiveChangeEnt
 }
 
 /**
- * Explorer root groups: Outline, List of Changes (DL133), then Figures/Tables/
- * Equations/Listings/Algorithms/Labels. Rows carry their reveal command data
- * through the tree item in outlineTree.ts.
+ * Explorer root groups: Table of Contents, Changes (DL133), then Figures/Tables/
+ * Equations/Listings/Algorithms/Labels and References. Rows carry their reveal
+ * command data through the tree item in outlineTree.ts.
  */
 export function buildNavigateRoots(
   outline: OutlineEntryLike[] | undefined,
@@ -350,23 +350,23 @@ export function buildNavigateRoots(
   }));
   const item = (e: LiveNavEntry): NavNode => ({ type: "item", entry: e });
   const roots: NavNode[] = [];
-  const outlineGroup = group("outline", "Outline", headingRoots);
+  const outlineGroup = group("outline", "Table of Contents", headingRoots);
   if (outlineGroup) roots.push(outlineGroup);
   const changeGroup = group(
     "changes",
-    "List of Changes",
+    "Changes",
     normalizeChanges(changes).map((e): NavNode => ({ type: "change", entry: e })),
   );
   if (changeGroup) roots.push(changeGroup);
   const nav = normalizeNavigate(navigate);
   for (
     const g of [
-      group("figures", "List of Figures", nav.figures.map(item)),
-      group("tables", "List of Tables", nav.tables.map(item)),
-      group("equations", "List of Equations", nav.equations.map(item)),
-      group("listings", "List of Listings", nav.listings.map(item)),
-      group("algorithms", "List of Algorithms", nav.algorithms.map(item)),
-      group("labels", "Labels", nav.labels.map(item)),
+      group("figures", "Figures", nav.figures.map(item)),
+      group("tables", "Tables", nav.tables.map(item)),
+      group("equations", "Equations", nav.equations.map(item)),
+      group("listings", "Listings", nav.listings.map(item)),
+      group("algorithms", "Algorithms", nav.algorithms.map(item)),
+      group("labels", "Labels and References", nav.labels.map(item)),
     ]
   ) {
     if (g) roots.push(g);

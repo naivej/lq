@@ -33,7 +33,7 @@ export function renderWebviewHtml(options: {
     : options.pending
       ? `<div id="lyx-banner" class="banner pending">Rendering…</div>`
       : options.stale
-        ? `<div id="lyx-banner" class="banner stale">Unsaved edits — save to refresh the Live preview.</div>`
+        ? `<div id="lyx-banner" class="banner stale">Unsaved edits — save to refresh the preview.</div>`
         : "";
   const diagnostics = (options.render?.diagnostics ?? [])
     .map((d) => `<li><code>${escapeHostText(d.code)}</code> ${escapeHostText(d.message)}</li>`)
@@ -42,11 +42,11 @@ export function renderWebviewHtml(options: {
     ? `<aside class="diagnostics"><ul>${diagnostics}</ul></aside>`
     : "";
   const body = options.render?.html
-    ?? (options.pending ? "" : "<p class=\"empty\">No Live render yet.</p>");
+    ?? (options.pending ? "" : "<p class=\"empty\">No preview yet.</p>");
   const mode = options.mode ?? "tracked";
   const scriptSrc = options.scriptCsp ?? "'none'";
   const nonce = options.scriptNonce;
-  // Host posts { type: "scrollToId", id } from Explorer "LyX Navigate".
+  // Host posts { type: "scrollToId", id } from Explorer "LyX Outline".
   // Figures/tables live inside collapsed <details>; open ancestors before scrolling.
   const scrollScript = nonce
     ? `<script nonce="${escapeHostText(nonce)}">
@@ -55,7 +55,7 @@ export function renderWebviewHtml(options: {
   vscode.postMessage({ type: "ready" });
   function setStaleBanner() {
     var b = document.getElementById("lyx-banner");
-    var text = "Unsaved edits — save to refresh the Live preview.";
+    var text = "Unsaved edits — save to refresh the preview.";
     if (b) {
       b.className = "banner stale";
       b.textContent = text;

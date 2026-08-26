@@ -4,7 +4,7 @@ import { renderWebviewHtml } from "./webview";
 
 function render(mode?: "original" | "tracked" | "clean"): string {
   return renderWebviewHtml({
-    title: "LyX Live: a.lyx",
+    title: "LyX Preview: a.lyx",
     stale: false,
     pending: false,
     mode,

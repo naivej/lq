@@ -155,22 +155,22 @@ describe("attachNavigateLines", () => {
   });
 });
 
-describe("buildNavigateRoots List of Changes", () => {
+describe("buildNavigateRoots Changes", () => {
   const changes = [
     { ordinal: 1, type: "inserted" as const, author: "Alice", ts: "1724000000", anchorId: "change-1", snippet: "added" },
     { ordinal: 2, type: "deleted" as const, author: "Bob", ts: "0", anchorId: "change-2", snippet: "removed" },
   ];
 
-  it("puts List of Changes right after Outline with ordered rows", () => {
+  it("puts Changes right after Table of Contents with ordered rows", () => {
     const roots = buildNavigateRoots(
       [{ level: 1, number: "1", text: "Intro", id: "sec-1" }],
       { figures: [], tables: [], equations: [], labels: [], listings: [], algorithms: [] },
       changes,
     );
     assert.equal(roots[0]!.type, "group");
-    assert.equal(roots[0]!.label, "Outline");
+    assert.equal(roots[0]!.label, "Table of Contents");
     assert.equal(roots[1]!.type, "group");
-    assert.equal(roots[1]!.label, "List of Changes");
+    assert.equal(roots[1]!.label, "Changes");
     const rows = roots[1]!.type === "group" ? roots[1]!.children : [];
     assert.equal(rows.length, 2);
     assert.equal(rows[0]!.type, "change");

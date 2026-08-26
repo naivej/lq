@@ -5,7 +5,7 @@ This extension render LyX in VS Code webview that
 - Look fimilarly as LyX GUI.
 - Refreshes when save or when the file changes on disk while the editor buffer is not dirty. 
 - Enable VS Code webview find widget
-- Use LyX navigate panel under Explorer to jump to section, figures, tables, equations, tracked changes, and more, in both the raw file and preview.
+- Use LyX Outline panel under Explorer to jump to section, figures, tables, equations, tracked changes, and more, in both the raw file and preview.
 - Generate .json from preview selection that an agent can read using `lq` to understand the context.
 - Tracked change author and timestemp, as well as the selector for hilighted text are shown in the status bar.
 

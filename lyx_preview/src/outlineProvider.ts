@@ -1,4 +1,4 @@
-/** Outline + navigate cache shared by Live preview and Explorer LyX Navigate tree. */
+/** Outline + navigate cache shared by Live preview and Explorer LyX Outline tree. */
 
 import type { LiveChangeEntry, LiveNavigate, LiveOutlineEntry } from "./previewSession";
 import { emptyNavigate } from "./previewSession";

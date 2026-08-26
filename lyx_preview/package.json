@@ -34,7 +34,7 @@
       {
         "command": "lyx-preview.open",
         "title": "Open LyX Preview",
-        "shortTitle": "Preview LyX",
+        "shortTitle": "LyX Preview",
         "icon": {
           "light": "media/lyx-l.svg",
           "dark": "media/lyx-l.svg"
@@ -43,7 +43,7 @@
       },
       {
         "command": "lyx-preview.revealOutline",
-        "title": "Reveal Outline Heading",
+        "title": "Reveal in Preview",
         "category": "LyX Preview"
       },
       {
@@ -63,7 +63,7 @@
       },
       {
         "command": "lyx-preview.changeView",
-        "title": "Change View",
+        "title": "Tracked-change view",
         "icon": "media/lyx-l-yellow.svg",
         "category": "LyX Preview"
       }
@@ -72,9 +72,9 @@
       "explorer": [
         {
           "id": "lyxPreview.outline",
-          "name": "LyX Navigate",
+          "name": "LyX Outline",
           "when": "lyxPreview.hasOutline || resourceExtname == .lyx",
-          "contextualTitle": "LyX Navigate",
+          "contextualTitle": "LyX Outline",
           "icon": "media/lyx-l.svg"
         }
       ]
@@ -130,15 +130,15 @@
         "lyx-preview.timeoutMs": {
           "type": "number",
           "default": 30000,
-          "description": "Milliseconds to wait for lq preview before terminating the process."
+          "description": "Milliseconds to wait for preview before terminating the process."
         }
       }
     },
     "languageModelTools": [
       {
         "name": "lyx-preview_get_live_selection",
-        "displayName": "LyX Live selection",
-        "modelDescription": "Return the current LyX Live Preview selection as JSON (file, diskHash, stale, mode, selector, selectedText, changeId, multi, capturedAt, optional via). Use when the user refers to #lyxSelection or the Live preview caret/highlight. If nothing is selected, the result is 'no Live selection'. The selector is a read reference, not a mutation selector.",
+        "displayName": "LyX Preview selection",
+        "modelDescription": "Return the current LyX Preview selection as JSON (file, diskHash, stale, mode, selector, selectedText, changeId, multi, capturedAt, optional via). Use when the user refers to #lyxSelection or the preview caret/highlight. If nothing is selected, the result is 'no Preview selection'. The selector is a read reference, not a mutation selector.",
         "toolReferenceName": "lyxSelection",
         "canBeReferencedInPrompt": true,
         "when": "lyxPreview.liveOpen",

@@ -1,5 +1,5 @@
 /**
- * Explorer "LyX Navigate" tree: Outline / Figures / Tables / Equations / Labels / …
+ * Explorer "LyX Outline" tree: Table of Contents / Figures / Tables / Equations / …
  *
  * Children are resolved by TreeItem.id (not `element.node`) so VS Code refresh/restore
  * cannot hit `Cannot read properties of undefined (reading 'type')`.

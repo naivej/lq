@@ -220,7 +220,7 @@ describe("resolveSelection / store", () => {
 });
 
 describe("invoke / JSON / path", () => {
-  it("returns no Live selection when empty", () => {
+  it("returns no Preview selection when empty", () => {
     assert.equal(invokeLiveSelection(undefined), NO_LIVE_SELECTION);
   });
 

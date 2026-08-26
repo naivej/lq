@@ -355,7 +355,7 @@ function rewriteLocalImages(html: string, webview: vscode.Webview): string {
 
 function titleFor(document: vscode.TextDocument): string {
   const name = document.fileName.split(/[/\\]/).pop() ?? document.fileName;
-  return `LyX Live: ${name}`;
+  return `LyX Preview: ${name}`;
 }
 
 export function activate(context: vscode.ExtensionContext): void {
@@ -379,7 +379,7 @@ export function activate(context: vscode.ExtensionContext): void {
       selectStatus.hide();
       return;
     }
-    selectStatus.text = `LyX ${compactSelector(record)}`;
+    selectStatus.text = `Selection: ${compactSelector(record)}`;
     selectStatus.tooltip = record.selector;
     selectStatus.show();
   };
@@ -422,7 +422,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand("lyx-preview.open", () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor || !editor.document.fileName.toLowerCase().endsWith(".lyx")) {
-        void vscode.window.showWarningMessage("Open a .lyx document before starting LyX Live Preview.");
+        void vscode.window.showWarningMessage("Open a .lyx document before opening LyX Preview.");
         return;
       }
       LivePreviewPanel.createOrShow(editor.document, outlineTree, host, onLiveChangeFocus);
@@ -446,7 +446,7 @@ export function activate(context: vscode.ExtensionContext): void {
           { label: "Tracked", description: "Show insertions and deletions marked (default)", mode: "tracked" },
           { label: "Clean", description: "Show the document after accepting all changes", mode: "clean" },
         ] as (vscode.QuickPickItem & { mode: ChangeViewMode })[],
-        { placeHolder: "Live Preview view mode" },
+        { placeHolder: "Tracked-change view" },
       );
       if (picked) LivePreviewPanel.setMode(picked.mode);
     }),

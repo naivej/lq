@@ -4,7 +4,7 @@ import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { LiveToken, LiveTokenVia } from "./previewSession";
 
-export const NO_LIVE_SELECTION = "no Live selection";
+export const NO_LIVE_SELECTION = "no Preview selection";
 export const LM_TOOL_NAME = "lyx-preview_get_live_selection";
 export const LM_TOOL_REF = "lyxSelection";
 export const LIVE_SELECTION_FILENAME = "live-selection.json";
