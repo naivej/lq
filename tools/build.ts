@@ -42,8 +42,8 @@ export function resolveBuildName(): string {
 }
 
 function getHostSuffix(): string {
-  if (Deno.build.os === "windows") return "_win64.exe";
-  if (Deno.build.os === "darwin") return "_mac_arm64";
+  if (Deno.build.os === "windows") return "_win.exe";
+  if (Deno.build.os === "darwin") return "_mac";
   return "_linux";
 }
 
@@ -55,7 +55,7 @@ interface CompileTarget {
 const ALL_TARGETS: CompileTarget[] = [
   { target: "x86_64-pc-windows-msvc", suffix: "_win64.exe" },
   { target: "aarch64-apple-darwin", suffix: "_mac_arm64" },
-  { target: "x86_64-unknown-linux-gnu", suffix: "_linux" },
+  { target: "x86_64-unknown-linux-gnu", suffix: "_linux64" },
 ];
 
 async function compileBinary(name: string, config: CompileTarget): Promise<void> {
