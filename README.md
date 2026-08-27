@@ -30,7 +30,7 @@
 ## Compatibility
 
 - Developed and verified against **LyX 2.4 and LyX 2.5**.
-- Tested platform: GitHub Actions on `macos-latest` (Apple Silicon) and `ubuntu-latest`; Debian trixie (by grok bot), and the author's Windows 11.
+- Tested platform: `macos-latest` and `ubuntu-latest` of GitHub Actions, Debian trixie (by grok bot), and the author's Windows 11.
 
 ### Windows patch
 
