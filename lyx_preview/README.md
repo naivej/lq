@@ -23,10 +23,10 @@ LyX Preview renders a read-only live preview of saved `.lyx` files directly insi
 ## Getting Started
 
 ### 1. Prerequisites
-Install [`lq`](https://github.com/naivej/lq) and the `use-lq` skill for your AI agent.
+Install [`lq`](https://github.com/naivej/lq) v0.7.0 or later, and the `use-lq` skill for your AI agent.
 
 The extension resolves the `lq` executable in the following order:
-1. Local development build: `~/Github/lq_dev/lq/bin/lq*`
+1. ~~Local development build: `~/Github/lq_dev/lq/bin/lq*`~~
 2. Custom setting: `lyx-preview.lqPath`
 3. System `PATH`
 
