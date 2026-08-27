@@ -17,6 +17,11 @@ async function copyFixture(name: string): Promise<string> {
   return filePath;
 }
 
+/** Compare paths after resolving OS symlinks (macOS /var → /private/var). */
+async function assertSamePath(actual: string, expected: string): Promise<void> {
+  assertEquals(await Deno.realPath(actual), await Deno.realPath(expected));
+}
+
 Deno.test("State paths - nearest local root wins over global fallback", async () => {
   const project = await Deno.makeTempDir({ prefix: "lq_state_project" });
   const fallbackProject = await Deno.makeTempDir({ prefix: "lq_state_fallback" });
@@ -87,7 +92,7 @@ Deno.test("CLI - local init creates local config without copying global values",
     );
     assertEquals(created.scope, "local");
     assertEquals(created.action, "created");
-    assertEquals(created.configPath, path.join(project, ".lq", "config.json"));
+    await assertSamePath(created.configPath!, path.join(project, ".lq", "config.json"));
     assertEquals((created.data as Record<string, unknown>).trackChanges, true);
     assertEquals((created.data as Record<string, unknown>).refresh, "none");
     assertEquals((created.data as Record<string, unknown>).authorName, "lq user");
@@ -146,7 +151,7 @@ Deno.test("CLI - global init applies options and ignores local target", { timeou
     );
     assertEquals(result.scope, "global");
     assertEquals(result.action, "updated");
-    assertEquals(result.configPath, path.join(globalHome, ".lq", "config.json"));
+    await assertSamePath(result.configPath!, path.join(globalHome, ".lq", "config.json"));
     const config = JSON.parse(await Deno.readTextFile(result.configPath!));
     assertEquals(config.trackChanges, true);
     assertEquals(config.authorName, "new global user");

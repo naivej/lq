@@ -29,6 +29,7 @@ import {
   semanticEqual,
   validateLiveResponse,
 } from "../src/preview.ts";
+import { findLayoutFile, resolveLayoutSearchPaths } from "../src/schema.ts";
 import { runCliRaw, runCliTest } from "./helpers.ts";
 
 const SYNTHETIC = fromFileUrl(new URL("./fixtures/Synthetic/", import.meta.url));
@@ -37,6 +38,16 @@ const HELP_DIR = fromFileUrl(new URL("./fixtures/Help/", import.meta.url));
 
 function syntheticPath(name: string): string {
   return `${SYNTHETIC}${name}`;
+}
+
+/** True when `{textclass}.layout` is on the default LyX search path. */
+async function hasTextclassLayout(textclass: string): Promise<boolean> {
+  try {
+    const { searchPaths } = await resolveLayoutSearchPaths({});
+    return (await findLayoutFile(`${textclass}.layout`, searchPaths)) !== undefined;
+  } catch {
+    return false;
+  }
 }
 
 async function listHelpLyx(): Promise<string[]> {
@@ -1883,15 +1894,16 @@ Deno.test("Live renderer - lang property emits HTML lang spans", async () => {
 });
 
 Deno.test("Live renderer - remaining Flex kinds get classed wrappers (no bare passthrough)", async () => {
-  const samples: [string, string[]][] = [
-    ["./fixtures/Presentations/Beamer.lyx", ["flex alternative", "flex bold", 'class="flex']],
-    ["./fixtures/Articles/Springer_Nature_Journals.lyx", ["data-field=", "flex field"]],
-    ["./fixtures/Modules/Linguistics.lyx", ["flex gloss", "groupglossedwords"]],
-    ["./fixtures/Modules/Braille.lyx", ["braillebox"]],
-    ["./fixtures/Modules/PDF_Form.lyx", ["pdf-form", "checkbox"]],
-    ["./fixtures/Curricula_Vitae/Modern_CV.lyx", ["flex column"]],
+  const samples: [string, string, string[]][] = [
+    ["./fixtures/Presentations/Beamer.lyx", "beamer", ["flex alternative", "flex bold", 'class="flex']],
+    ["./fixtures/Articles/Springer_Nature_Journals.lyx", "sn-jnl", ["data-field=", "flex field"]],
+    ["./fixtures/Modules/Linguistics.lyx", "article", ["flex gloss", "groupglossedwords"]],
+    ["./fixtures/Modules/Braille.lyx", "article", ["braillebox"]],
+    ["./fixtures/Modules/PDF_Form.lyx", "scrartcl", ["pdf-form", "checkbox"]],
+    ["./fixtures/Curricula_Vitae/Modern_CV.lyx", "moderncv", ["flex column"]],
   ];
-  for (const [rel, needles] of samples) {
+  for (const [rel, textclass, needles] of samples) {
+    if (!(await hasTextclassLayout(textclass))) continue;
     const filePath = fromFileUrl(new URL(rel, import.meta.url));
     const { html } = await renderLiveHtml(parse(await Deno.readTextFile(filePath)), { filePath });
     for (const n of needles) {
@@ -1915,12 +1927,14 @@ Deno.test("Live renderer - H-P, PDF comment/form, tablenotemark wrappers", async
   assertStringIncludes(form.html, "pdf-form");
 
   // Filename on disk keeps %28/%29 literally (not decoded parentheses).
-  const aasPath = join(
-    fromFileUrl(new URL("./fixtures/Articles/", import.meta.url)),
-    "American_Astronomical_Society_%28AASTeX_v._6.3.1%29.lyx",
-  );
-  const aas = await renderLiveHtml(parse(await Deno.readTextFile(aasPath)), { filePath: aasPath });
-  assertStringIncludes(aas.html, 'class="tablenotemark"');
+  if (await hasTextclassLayout("aastex63")) {
+    const aasPath = join(
+      fromFileUrl(new URL("./fixtures/Articles/", import.meta.url)),
+      "American_Astronomical_Society_%28AASTeX_v._6.3.1%29.lyx",
+    );
+    const aas = await renderLiveHtml(parse(await Deno.readTextFile(aasPath)), { filePath: aasPath });
+    assertStringIncludes(aas.html, 'class="tablenotemark"');
+  }
 });
 
 Deno.test("Live renderer - FloatList emits list of floats", async () => {
