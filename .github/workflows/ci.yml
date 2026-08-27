@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Install LyX (macOS)
+        if: runner.os == 'macOS'
+        run: brew install --cask lyx
+
+      - name: Install LyX (Ubuntu)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lyx
+
+      - name: Test
+        run: deno test -A
+
+      - name: Build host binary
+        run: deno task build
+
+      - name: Assert host binary
+        run: |
+          if [ "${{ runner.os }}" = "macOS" ]; then
+            ls bin/lq_*_mac_arm64
+          else
+            ls bin/lq_*_linux
+          fi

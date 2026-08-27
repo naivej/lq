@@ -30,7 +30,7 @@
 ## Compatibility
 
 - Developed and verified against **LyX 2.4 and LyX 2.5**.
-- Developed for macOS, Linux, and Windows; tested on Linux and Windows.
+- Tested platform: GitHub Actions on `macos-latest` (Apple Silicon) and `ubuntu-latest`; Debian trixie (by grok bot), and the author's Windows 11.
 
 ### Windows patch
 
