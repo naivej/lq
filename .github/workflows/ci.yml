@@ -37,7 +37,7 @@ jobs:
       - name: Assert host binary
         run: |
           if [ "${{ runner.os }}" = "macOS" ]; then
-            ls bin/lq_*_mac_arm64
+            ls bin/lq_*_mac
           else
             ls bin/lq_*_linux
           fi
