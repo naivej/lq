@@ -1,0 +1,35 @@
+# What WILL be in the .vsix (everything not matched below / by .gitignore):
+#   package.json
+#   README.md
+#   language-configuration.json
+#   media/**          (icons: icon-vsd.png, lyx-l.svg, lyx-l-yellow.svg)
+#   out/**/*.js       (compiled extension; tests excluded below)
+#   LICENSE / CHANGELOG.md when present
+#
+# What NOT to put in the .vsix (same syntax as .gitignore).
+# vsce also respects .gitignore — and that file ignores out/ — so we must
+# re-include the compiled JS below.
+
+# Large media files
+media/icon-vsd-h.png
+
+# Sources & tooling (runtime loads out/extension.js, not TypeScript)
+src/**
+**/*.ts
+**/*.map
+tsconfig.json
+eslint.config.mjs
+.gitignore
+
+# Tests (compiled next to production JS under out/)
+**/*.test.js
+
+# Dev install / local artifacts
+node_modules/**
+package-lock.json
+*.vsix
+dist/**
+
+# .gitignore lists out/ — ship the compiled extension anyway
+!out/**
+out/**/*.test.js

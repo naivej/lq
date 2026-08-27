@@ -3,12 +3,18 @@
   "displayName": "LyX Preview",
   "description": "Read-only Live preview of saved .lyx files.",
   "version": "0.1.0",
-  "publisher": "naivej",
+  "publisher": "CoconutWater",
   "license": "MIT",
-  "icon": "media/lyx-l.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/naivej/lq.git"
+  },
+  "homepage": "https://github.com/naivej/lq/tree/main/lyx_preview",
+  "icon": "media/icon-vsd.png",
   "engines": {
     "vscode": "^1.96.0"
   },
+
   "categories": [
     "Other"
   ],
@@ -155,12 +161,14 @@
     "watch": "tsc -watch -p ./",
     "lint": "eslint .",
     "test": "npm run compile && node --test out/fsPath.test.js out/previewSession.test.js out/outlineProvider.test.js out/lqRunner.test.js out/webview.test.js out/liveSelection.test.js",
-    "vscode:prepublish": "npm run compile"
+    "vscode:prepublish": "npm run compile",
+    "package": "npm run compile && vsce package --no-dependencies"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@types/node": "^26.2.0",
-    "@types/vscode": "^1.125.0",
+    "@types/vscode": "~1.96.0",
+    "@vscode/vsce": "^3.7.0",
     "eslint": "^10.8.1",
     "eslint-plugin-no-unsanitized": "^4.1.5",
     "typescript": "^6.0.3",
