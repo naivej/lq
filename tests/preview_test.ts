@@ -995,6 +995,8 @@ Deno.test("Live renderer - disclosure_collapsibles covers foldable inset set (DL
   for (const needle of mustDisclose) {
     assertStringIncludes(html, needle);
   }
+  assertStringIncludes(html, 'style="width: 50%"');
+  assert(!html.includes("box-full"), "50col% boxes must not get 100%-column chrome (DL150 J4-B)");
   assertStringIncludes(html, ">Float: Figure</summary>");
   assertStringIncludes(html, ">Float: Table</summary>");
   assertStringIncludes(html, ">Wrap: Figure</summary>");
@@ -1629,6 +1631,8 @@ Deno.test("Live renderer - Help EmbeddedObjects.lyx margin notes, wrap, listings
   for (const variant of ["Boxed", "Doublebox", "Framed", "Frameless", "Shaded", "Shadowbox", "ovalbox", "Ovalbox"]) {
     assertStringIncludes(html, `class="${variant}"`);
   }
+  assertMatch(html, /class="disclose box \w+ box-full"/);
+  assertMatch(html, /class="Boxed" style="width: 100%"/);
   assertStringIncludes(html, "Shadow box");
   assertStringIncludes(html, "Shaded background box");
   assertStringIncludes(html, "Oval box, thin");

@@ -3226,11 +3226,13 @@ function renderFlexInline(block: BlockNode, ctx: RenderCtx): string {
 function renderBox(block: BlockNode, kind: string, parentState: TraversalState, ctx: RenderCtx): string {
   const variant = kind.slice("Box ".length).trim() || "Boxed";
   const width = widthToCss(findProperty(block, "width"));
-  const style = width && width !== "100%" ? ` style="width: ${escapeLiveHtml(width)}"` : "";
+  // DL150 J4-B: emit LyX width including 100col%/100text% → 100%. Empty width hugs.
+  const style = width ? ` style="width: ${escapeLiveHtml(width)}"` : "";
+  const full = width === "100%" ? " box-full" : "";
   // DL144 F1: always nest layout paths (single-child used to skip withLayout).
   const inner = renderInsetLayouts(block, parentState, ctx);
   const box = `<div class="${escapeLiveHtml(variant)}"${style}>${inner}</div>`;
-  return wrapDisclosure(ctx, `box ${layoutSlug(variant)}`, "Box", box);
+  return wrapDisclosure(ctx, `box ${layoutSlug(variant)}${full}`, "Box", box);
 }
 
 /**

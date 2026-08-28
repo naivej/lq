@@ -138,6 +138,7 @@ describe("renderWebviewHtml change views", () => {
     const boxBlock = html.slice(boxRule, html.indexOf("div.Frameless", boxRule));
     assert.match(boxBlock, /width:\s*max-content/);
     assert.match(boxBlock, /max-width:\s*100%/);
+    assert.match(html, /details\.disclose\.box-full\[open\]/);
     // Kind-specific open rules must not reintroduce a fixed em cap.
     assert.doesNotMatch(html, /details\.disclose[^{]*\[open\][^{]*\{[^}]*min\(\d+em/);
     assert.doesNotMatch(html, /details\.disclose[^{]*\[open\][^{]*\{[^}]*max-width:\s*min\(\d+em/);

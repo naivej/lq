@@ -378,6 +378,13 @@ details.disclose.wrap[open] > .disclose-body {
   max-width: 100%;
   box-sizing: border-box;
 }
+/* DL150 J4-B: LyX 100col%/100text% Box — full column chrome (inner div has width: 100%). */
+details.disclose.box-full[open],
+details.disclose.box-full[open] > .disclose-body {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+}
 /* Footnotes: red number chip; open body uses a note-like content box (not parentheses). */
 details.disclose.foot,
 details.disclose.foot_intitle {
