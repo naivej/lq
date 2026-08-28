@@ -36,6 +36,9 @@ function childNodes(node: NavNode): NavNode[] {
       nested: n,
     }));
   }
+  if (node.type === "item") {
+    return (node.entry.children ?? []).map((e) => ({ type: "item" as const, entry: e }));
+  }
   return [];
 }
 
@@ -92,7 +95,13 @@ export class NavigateTreeItem extends vscode.TreeItem {
       const label = e.number
         ? (e.text ? `${e.number} ${e.text}` : e.number)
         : (e.name || e.text || e.id);
-      super(label, vscode.TreeItemCollapsibleState.None);
+      const hasKids = (e.children?.length ?? 0) > 0;
+      super(
+        label,
+        hasKids
+          ? vscode.TreeItemCollapsibleState.Expanded
+          : vscode.TreeItemCollapsibleState.None,
+      );
       this.description = e.name ? `${e.name} → #${e.id}` : `#${e.id}`;
       this.iconPath = new vscode.ThemeIcon(
         e.kind === "figure"

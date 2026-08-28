@@ -64,6 +64,8 @@ export interface LiveNavEntry {
   name?: string;
   /** 0-based source line when the extension could locate it in the buffer. */
   line?: number;
+  /** Nested Navigate rows (subfloats under a parent float, DL152 J5-B). */
+  children?: LiveNavEntry[];
 }
 
 /** One rendered tracked-change region (DL133). */

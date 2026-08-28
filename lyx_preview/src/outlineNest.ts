@@ -155,6 +155,7 @@ export interface NavEntryLike {
   id: string;
   name?: string;
   line?: number;
+  children?: NavEntryLike[];
 }
 
 export interface NavigateLike {
@@ -182,18 +183,24 @@ function attachList(
   locate: (e: NavEntryLike, from: number) => number,
 ): NavEntryLike[] {
   let from = 0;
-  return entries.map((e) => {
-    if (typeof e.line === "number") {
-      from = Math.max(from, e.line + 1);
-      return e;
-    }
-    const at = locate(e, from);
-    if (at >= 0) {
-      from = at + 1;
-      return { ...e, line: at };
-    }
-    return e;
-  });
+  const walk = (list: NavEntryLike[]): NavEntryLike[] =>
+    list.map((e) => {
+      let next: NavEntryLike = { ...e };
+      if (typeof e.line === "number") {
+        from = Math.max(from, e.line + 1);
+      } else {
+        const at = locate(e, from);
+        if (at >= 0) {
+          next = { ...next, line: at };
+          from = at + 1;
+        }
+      }
+      if (e.children && e.children.length > 0) {
+        next = { ...next, children: walk(e.children) };
+      }
+      return next;
+    });
+  return walk(entries);
 }
 
 /**
@@ -211,19 +218,26 @@ export function dedupeNavigateLabels(
     navigate.equations.map((e) => e.name).filter((n): n is string => !!n),
   );
   const eqIds = new Set(navigate.equations.map((e) => e.id));
-  const floatIds = new Set(
-    [...navigate.figures, ...navigate.tables, ...navigate.listings, ...navigate.algorithms]
-      .map((e) => e.id),
-  );
+  const floatEntries = [
+    ...navigate.figures,
+    ...navigate.tables,
+    ...navigate.listings,
+    ...navigate.algorithms,
+  ];
+  const flatFloats: NavEntryLike[] = [];
+  const walkFloats = (list: NavEntryLike[]) => {
+    for (const e of list) {
+      flatFloats.push(e);
+      if (e.children) walkFloats(e.children);
+    }
+  };
+  walkFloats(floatEntries);
+  const floatIds = new Set(flatFloats.map((e) => e.id));
   const floatTexts = new Set(
-    [...navigate.figures, ...navigate.tables, ...navigate.listings, ...navigate.algorithms]
-      .map((e) => e.text.trim())
-      .filter(Boolean),
+    flatFloats.map((e) => e.text.trim()).filter(Boolean),
   );
   const floatNums = new Set(
-    [...navigate.figures, ...navigate.tables, ...navigate.listings, ...navigate.algorithms]
-      .map((e) => e.number.trim())
-      .filter(Boolean),
+    flatFloats.map((e) => e.number.trim()).filter(Boolean),
   );
   const labels = navigate.labels.filter((l) => {
     if (l.name && eqNames.has(l.name)) return false;

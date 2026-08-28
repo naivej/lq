@@ -106,6 +106,7 @@ describe("renderWebviewHtml change views", () => {
     assert.match(block, /span\.layout-label/);
     assert.match(block, /span\.eqno/);
     assert.match(block, /span\.abstract_label/);
+    assert.match(block, /span\.appendix-label/);
     assert.match(block, /div\.nomencl/);
     assert.match(block, /div\.index/);
     assert.equal(block.includes("details.disclose > summary"), false);
@@ -148,6 +149,18 @@ describe("renderWebviewHtml change views", () => {
     const html = render("tracked");
     assert.match(html, /figure > \.float-body \{ display: block/);
     assert.doesNotMatch(html, /figure > \.float-body \{ display: flex/);
+  });
+
+  it("appendix frame is a top-and-sides border with an unselectable label (DL152)", () => {
+    const html = render("tracked");
+    assert.match(html, /div\.appendix-frame \{/);
+    const start = html.indexOf("div.appendix-frame {");
+    const block = html.slice(start, html.indexOf("span.appendix-label", start));
+    assert.match(block, /border-top:/);
+    assert.match(block, /border-left:/);
+    assert.match(block, /border-right:/);
+    assert.match(block, /border-bottom:\s*none/);
+    assert.match(html, /span\.appendix-label \{/);
   });
 
   it("marks whole-inset disclosures: inserted underline, deleted label strike + open diagonal", () => {

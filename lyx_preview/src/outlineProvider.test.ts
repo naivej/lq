@@ -186,6 +186,37 @@ describe("buildNavigateRoots Changes", () => {
     );
     assert(roots.every((r) => r.type !== "group" || r.key !== "changes"));
   });
+
+  it("keeps subfloats as children of the parent figure (DL152)", () => {
+    const roots = buildNavigateRoots([], {
+      figures: [
+        {
+          kind: "figure",
+          number: "1",
+          text: "Outer",
+          id: "float-figure-1",
+          children: [
+            { kind: "figure", number: "a", text: "Left", id: "float-figure-1-a" },
+            { kind: "figure", number: "b", text: "Right", id: "float-figure-1-b" },
+          ],
+        },
+        { kind: "figure", number: "2", text: "After", id: "float-figure-2" },
+      ],
+      tables: [],
+      equations: [],
+      labels: [],
+      listings: [],
+      algorithms: [],
+    });
+    const figGroup = roots.find((r) => r.type === "group" && r.key === "figures");
+    assert.equal(figGroup?.type, "group");
+    const items = figGroup?.type === "group" ? figGroup.children : [];
+    assert.equal(items.length, 2);
+    assert.equal(items[0]?.type, "item");
+    const kids = items[0]?.type === "item" ? items[0].entry.children ?? [] : [];
+    assert.deepEqual(kids.map((c) => `${c.number} ${c.text}`), ["a Left", "b Right"]);
+    assert.equal(items[1]?.type === "item" ? items[1].entry.children?.length ?? 0 : -1, 0);
+  });
 });
 
 describe("outline cache bounds", () => {

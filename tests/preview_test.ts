@@ -2099,3 +2099,51 @@ Deno.test("findMagick discovers magick on PATH when bundled is absent (DL148)", 
     }
   }
 });
+
+Deno.test("Live renderer - appendix frame and lettering when marker is on Standard (DL152)", async () => {
+  const { html, outline } = await renderFile("appendix_marker.lyx");
+  assertStringIncludes(html, '<div class="appendix-frame">');
+  assertStringIncludes(html, '<span class="appendix-label">Appendix</span>');
+  assertMatch(html, /<span class="heading-number">1 <\/span>Main/);
+  assertMatch(html, /<span class="heading-number">A <\/span>First appendix/);
+  assertMatch(html, /<span class="heading-number">A\.1 <\/span>Nested/);
+  assert(!html.includes(">2 First appendix"), "appendix section must not continue arabic numbering");
+  const frameAt = html.indexOf('class="appendix-frame"');
+  assert(frameAt !== -1);
+  assert(
+    html.indexOf("Main") < frameAt,
+    "main-text heading stays outside the appendix frame",
+  );
+  assert(
+    html.indexOf("First appendix") > frameAt,
+    "appendix heading sits inside the frame",
+  );
+  const firstApp = outline.find((e) => e.text === "First appendix");
+  assertEquals(firstApp?.number.trim(), "A");
+  const nested = outline.find((e) => e.text === "Nested");
+  assertEquals(nested?.number.trim(), "A.1");
+  assert(
+    !outline.some((e) => e.text === "Appendix"),
+    "frame label must not appear in the TOC outline",
+  );
+});
+
+Deno.test("Live renderer - nested Float is a subfloat (DL152)", async () => {
+  const { html, navigate } = await renderFile("subfloat_figures.lyx");
+  assertStringIncludes(html, ">Float: Figure</summary>");
+  assertStringIncludes(html, ">Subfloat: Figure</summary>");
+  assertStringIncludes(html, '<span class="float-caption-prefix">Figure 1: </span>');
+  assertStringIncludes(html, '<span class="float-caption-prefix">Subfigure a: </span>');
+  assertStringIncludes(html, '<span class="float-caption-prefix">Subfigure b: </span>');
+  assertStringIncludes(html, '<span class="float-caption-prefix">Figure 2: </span>');
+  assert(!html.includes("Figure 3:"), "nested floats must not consume the main figure counter");
+  assertMatch(html, /<figure class="[^"]*\bsubfloat\b[^"]*"/);
+  assertEquals(navigate.figures.map((e) => e.number), ["1", "2"]);
+  assertEquals(navigate.figures[0]?.text, "Outer");
+  assertEquals(
+    (navigate.figures[0]?.children ?? []).map((c) => `${c.number} ${c.text}`),
+    ["a Left", "b Right"],
+  );
+  assertEquals(navigate.figures[1]?.text, "After");
+  assertEquals(navigate.figures[1]?.children?.length ?? 0, 0);
+});

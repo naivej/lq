@@ -171,7 +171,8 @@ export function renderWebviewHtml(options: {
           cls.contains("float-caption-prefix") ||
           cls.contains("layout-label") ||
           cls.contains("eqno") ||
-          cls.contains("abstract_label")
+          cls.contains("abstract_label") ||
+          cls.contains("appendix-label")
         )
       ) return;
       if (cls && cls.contains("specialchar")) {
@@ -614,11 +615,32 @@ span.heading-number,
 span.float-caption-prefix,
 span.layout-label,
 span.eqno,
-span.abstract_label {
+span.abstract_label,
+span.appendix-label {
   -webkit-user-select: none;
   user-select: none;
 }
 span.ref, span.citation { }
+div.appendix-frame {
+  position: relative;
+  margin: 1.4em 0 0;
+  padding: 0.95em 0.75em 0.35em;
+  border-top: 1px solid brown;
+  border-left: 1px solid brown;
+  border-right: 1px solid brown;
+  border-bottom: none;
+  box-sizing: border-box;
+}
+span.appendix-label {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  padding: 0 0.5em;
+  background: var(--vscode-editor-background, #fff);
+  color: brown;
+  font-size: 0.85em;
+}
 img { max-width: 100%; height: auto; }
 div.wrap { float: right; margin: 0.4em 0 1em 1em; }
 div.wrap.wrap-left { float: left; margin: 0.4em 1em 1em 0; }

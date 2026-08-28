@@ -103,6 +103,8 @@ export interface LiveNavEntry {
   name?: string;
   /** Optional 0-based source line (filled by the extension when known). */
   line?: number;
+  /** Nested Navigate rows (subfloats under a parent float, DL152 J5-B). */
+  children?: LiveNavEntry[];
 }
 
 /** One rendered tracked-change region (DL133): document order, resolved author. */
@@ -428,6 +430,14 @@ interface RenderCtx {
   layoutCounters: Map<string, number>;
   /** Extra float-type counters (e.g. tableau) for FloatList / uncommon floats. */
   floatTypeCounts: Map<string, number>;
+  /** Sub-figure / sub-table counters (reset when entering an outer float). */
+  subFloatCounts: Map<string, number>;
+  /** True while rendering/indexing inside a Float or Wrap. */
+  inFloat: boolean;
+  /** Outer→inner float numbers for unique subfloat HTML ids. */
+  floatNumberStack: string[];
+  /** Open captioned floats while indexing (for nested LoF children). */
+  floatStack: FloatListEntry[];
   /** Captioned floats collected during index for List of Figures/Tables. */
   floatListEntries: FloatListEntry[];
   /** Numbered equations collected during render (for LyX Navigate). */
@@ -478,6 +488,7 @@ interface FloatListEntry {
   number: string;
   text: string;
   id: string;
+  children?: FloatListEntry[];
 }
 
 interface NomenclEntry {
@@ -1182,10 +1193,17 @@ class HeadingState {
   private appendix = false;
   private letterLevel: number | undefined;
 
+  /** Sticky from the first `\start_of_appendix` (any layout), matching Buffer::setLabel. */
+  enterAppendix(): void {
+    if (this.appendix) return;
+    this.appendix = true;
+    this.letterLevel = undefined;
+  }
+
   next(layout: string, level: number, startAppendix: boolean): string {
     if (layout.endsWith("*") || level > 3) return "";
-    if (startAppendix && !this.appendix) {
-      this.appendix = true;
+    if (startAppendix) this.enterAppendix();
+    if (this.appendix && this.letterLevel === undefined) {
       this.letterLevel = level;
       for (const key of [...this.counts.keys()]) {
         if (key >= level) this.counts.delete(key);
@@ -1218,6 +1236,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
     atBody: boolean,
     inHeadingLayout: boolean,
     state: TraversalState,
+    inFloat: boolean,
   ) => {
     for (const n of list) {
       if (n.type === "property") {
@@ -1231,11 +1250,12 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
       }
       if (n.type !== "block") continue;
       if (n.tag === "deeper") {
-        walk(n.children, floatNo, atBody, inHeadingLayout, state);
+        walk(n.children, floatNo, atBody, inHeadingLayout, state, inFloat);
         continue;
       }
       if (n.tag === "layout") {
         const layout = (n.args ?? "").trim();
+        if (hasStartOfAppendix(n)) headings.enterAppendix();
         const heading = role(layout, ctx);
         if (heading.kind === "omit") continue;
         if (heading.kind === "heading") {
@@ -1253,14 +1273,14 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
           }
           // Only labels nested in the heading layout are TOC labels — not every
           // later body label while currentHeading is set.
-          walk(n.children, floatNo, false, true, state);
+          walk(n.children, floatNo, false, true, state, inFloat);
           continue;
         }
-        walk(n.children, floatNo, false, false, state);
+        walk(n.children, floatNo, false, false, state, inFloat);
         continue;
       }
       if (n.tag !== "inset") {
-        walk(n.children, floatNo, atBody, inHeadingLayout, state);
+        walk(n.children, floatNo, atBody, inHeadingLayout, state, inFloat);
         continue;
       }
       const kind = insetKind(n);
@@ -1273,27 +1293,37 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         // LyX InsetCaption un-steps on the inherited `deleted` flag, so a
         // deleted float is excluded from nav and does not consume a number.
         const deleted = state.deletedDepth > 0 || state.outerDeletedDepth > 0;
+        const nested = inFloat;
+        if (!nested) ctx.subFloatCounts.set(variant, 0);
         const taken = deleted
           ? undefined
+          : nested
+          ? takeSubFloatNumber(ctx, variant)
           : takeFloatNumber(ctx, variant) ?? takeGenericFloatNumber(ctx, variant);
-        if (!deleted) noteFloatListEntry(ctx, n, variant, taken);
+        const listed = !deleted &&
+          noteFloatListEntry(ctx, n, variant, taken, nested);
         const prevCap = currentFloatCaption;
-        const caps = captionBlocks(n);
+        const caps = floatOwnCaptions(n);
         // nameref for floats matches native LyXHTML ("Figure 1"), not the caption prose.
         currentFloatCaption = taken
-          ? `${floatNamerefPrefix(variant)} ${taken}`
+          ? `${nested ? subfloatNamerefPrefix(variant) : floatNamerefPrefix(variant)} ${taken}`
           : caps.map((c) => collectVisibleText(c)).join(" ").replace(/\s+/g, " ").trim();
+        const parentNum = ctx.floatNumberStack[ctx.floatNumberStack.length - 1];
+        const idNum = nested && parentNum ? `${parentNum}-${taken}` : taken;
+        if (idNum) ctx.floatNumberStack.push(idNum);
         // Children are a fresh paragraph space; the inherited flag moves to
         // outer* so nested equations still count (LyX hull quirk) while nested
         // captions/floats skip (InsetCaption param propagation).
-        walk(n.children, taken ?? floatNo, false, false, enterTraversalState(state));
+        walk(n.children, taken ?? floatNo, false, false, enterTraversalState(state), true);
+        if (idNum) ctx.floatNumberStack.pop();
+        if (listed) ctx.floatStack.pop();
         currentFloatCaption = prevCap;
         continue;
       }
       if (kind === "listings" || kind.startsWith("listings ")) {
         const deleted = state.deletedDepth > 0 || state.outerDeletedDepth > 0;
         const taken = !deleted && listingTakesNumber(n) ? takeFloatNumber(ctx, "listing") : undefined;
-        walk(n.children, taken ?? floatNo, false, false, enterTraversalState(state));
+        walk(n.children, taken ?? floatNo, false, false, enterTraversalState(state), inFloat);
         continue;
       }
       if (kind.startsWith("CommandInset include") && includeIsListings(n)) {
@@ -1306,7 +1336,7 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
           ctx.labels.set(label, taken);
           ctx.labelKinds.set(label, "float");
         }
-        walk(n.children, taken ?? floatNo, false, false, enterTraversalState(state));
+        walk(n.children, taken ?? floatNo, false, false, enterTraversalState(state), inFloat);
         continue;
       }
       if (kind.startsWith("CommandInset label")) {
@@ -1363,10 +1393,10 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
         if (entry.terms.length || entry.see) ctx.index.push(entry);
         continue;
       }
-      walk(n.children, floatNo, false, inHeadingLayout, enterTraversalState(state));
+      walk(n.children, floatNo, false, inHeadingLayout, enterTraversalState(state), inFloat);
     }
   };
-  walk(nodes, undefined, true, false, createTraversalState());
+  walk(nodes, undefined, true, false, createTraversalState(), false);
   ctx.figure = 0;
   ctx.table = 0;
   ctx.algorithm = 0;
@@ -1374,6 +1404,10 @@ function indexDocument(nodes: Node[], ctx: RenderCtx): void {
   ctx.equation = 0;
   ctx.chapterLabel = "";
   ctx.floatTypeCounts = new Map();
+  ctx.subFloatCounts = new Map();
+  ctx.floatNumberStack = [];
+  ctx.floatStack = [];
+  ctx.inFloat = false;
   ctx.nomenclSeq = 0;
   ctx.indexSeq = 0;
   ctx.subeq = null;
@@ -1572,6 +1606,10 @@ export async function renderLiveHtml(
     indexSeq: 0,
     layoutCounters: new Map(),
     floatTypeCounts: new Map(),
+    subFloatCounts: new Map(),
+    inFloat: false,
+    floatNumberStack: [],
+    floatStack: [],
     floatListEntries: [],
     navEquations: [],
     authors: documentAuthors(ast),
@@ -1652,15 +1690,20 @@ function floatNavKind(type: string): string {
 }
 
 function buildNavigate(ctx: RenderCtx): LiveNavigate {
+  const toNav = (e: FloatListEntry): LiveNavEntry => {
+    const nav: LiveNavEntry = {
+      kind: floatNavKind(e.type),
+      number: e.number,
+      text: e.text,
+      id: e.id,
+    };
+    if (e.children && e.children.length > 0) {
+      nav.children = e.children.map(toNav);
+    }
+    return nav;
+  };
   const mapFloat = (type: string): LiveNavEntry[] =>
-    ctx.floatListEntries
-      .filter((e) => e.type === type)
-      .map((e) => ({
-        kind: floatNavKind(type),
-        number: e.number,
-        text: e.text,
-        id: e.id,
-      }));
+    ctx.floatListEntries.filter((e) => e.type === type).map(toNav);
   // Labels group = leftovers only (not already listed under Outline / floats / equations).
   // Do not reuse section number / heading title here — that made every body label look like
   // its enclosing heading and let extension title-dedupe hide them from Labels.
@@ -1733,6 +1776,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
   let html = "";
   const openLevels: number[] = [];
   const headings = new HeadingState();
+  let appendixOpen = false;
 
   const closeSections = (level: number) => {
     while (openLevels.length > 0 && openLevels[openLevels.length - 1] >= level) {
@@ -1741,8 +1785,19 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
     }
   };
 
+  const openAppendixFrame = () => {
+    if (appendixOpen) return;
+    closeSections(-999);
+    html += `<div class="appendix-frame"><span class="appendix-label">Appendix</span>`;
+    appendixOpen = true;
+  };
+
   while (i < items.length) {
     const item = items[i];
+    if (hasStartOfAppendix(item.node)) {
+      headings.enterAppendix();
+      openAppendixFrame();
+    }
     const layout = role(item.layout, ctx);
     if (layout.kind === "omit") {
       i++;
@@ -1851,6 +1906,7 @@ function renderFlowItems(items: FlowItem[], ctx: RenderCtx, outerState?: Travers
     i++;
   }
   closeSections(-999);
+  if (appendixOpen) html += "</div>";
   return html;
 }
 
@@ -1874,6 +1930,9 @@ function snapshotCounters(ctx: RenderCtx) {
     bibitem: ctx.bibitem,
     layoutCounters: new Map(ctx.layoutCounters),
     floatTypeCounts: new Map(ctx.floatTypeCounts),
+    subFloatCounts: new Map(ctx.subFloatCounts),
+    inFloat: ctx.inFloat,
+    floatNumberStack: ctx.floatNumberStack.slice(),
     subeq: ctx.subeq ? { ...ctx.subeq } : null,
     tokens: ctx.tokens.slice(),
     tokSeq: ctx.tokSeq,
@@ -1898,6 +1957,9 @@ function restoreCounters(ctx: RenderCtx, snap: ReturnType<typeof snapshotCounter
   ctx.bibitem = snap.bibitem;
   ctx.layoutCounters = snap.layoutCounters;
   ctx.floatTypeCounts = snap.floatTypeCounts;
+  ctx.subFloatCounts = snap.subFloatCounts;
+  ctx.inFloat = snap.inFloat;
+  ctx.floatNumberStack = snap.floatNumberStack;
   ctx.subeq = snap.subeq;
   ctx.tokens = snap.tokens;
   ctx.tokSeq = snap.tokSeq;
@@ -3462,6 +3524,7 @@ function noteChapterHeading(ctx: RenderCtx, heading: LayoutRole, number: string)
   ctx.algorithm = 0;
   ctx.listing = 0;
   ctx.floatTypeCounts = new Map();
+  ctx.subFloatCounts = new Map();
 }
 
 function takeFloatNumber(ctx: RenderCtx, variant: string, deleted = false): string | undefined {
@@ -3490,18 +3553,37 @@ function takeGenericFloatNumber(ctx: RenderCtx, variant: string, deleted = false
   return ctx.chapterLabel ? `${ctx.chapterLabel}.${n}` : String(n);
 }
 
+function takeSubFloatNumber(ctx: RenderCtx, variant: string, deleted = false): string {
+  const n = (ctx.subFloatCounts.get(variant) ?? 0) + 1;
+  if (!deleted) ctx.subFloatCounts.set(variant, n);
+  return alphabetic(n).toLowerCase();
+}
+
 function noteFloatListEntry(
   ctx: RenderCtx,
   floatBlock: BlockNode,
   variant: string,
   number: string | undefined,
-): void {
-  if (!number) return;
-  const captions = captionBlocks(floatBlock);
-  if (captionsAreUnnumbered(captions)) return;
+  nested = false,
+): boolean {
+  if (!number) return false;
+  const captions = floatOwnCaptions(floatBlock);
+  if (captionsAreUnnumbered(captions)) return false;
   const text = captions.map((c) => collectVisibleText(c)).join(" ").replace(/\s+/g, " ").trim();
-  const id = `float-${layoutSlug(variant)}-${number.replaceAll(".", "-")}`;
-  ctx.floatListEntries.push({ type: variant, number, text, id });
+  const parent = ctx.floatNumberStack[ctx.floatNumberStack.length - 1];
+  const id = nested && parent
+    ? `float-${layoutSlug(variant)}-${parent.replaceAll(".", "-")}-${number.replaceAll(".", "-")}`
+    : `float-${layoutSlug(variant)}-${number.replaceAll(".", "-")}`;
+  const entry: FloatListEntry = { type: variant, number, text, id };
+  if (nested && ctx.floatStack.length > 0) {
+    const owner = ctx.floatStack[ctx.floatStack.length - 1]!;
+    owner.children = owner.children ?? [];
+    owner.children.push(entry);
+  } else {
+    ctx.floatListEntries.push(entry);
+  }
+  ctx.floatStack.push(entry);
+  return true;
 }
 
 function floatListTitle(type: string): string {
@@ -3517,13 +3599,17 @@ function renderFloatList(kind: string, ctx: RenderCtx): string {
   const entries = ctx.floatListEntries.filter((e) => e.type === type);
   if (entries.length === 0) return "";
   const title = floatListTitle(type);
-  let html = `<nav class="toc toc-floats"><h2 class="tochead toc-${escapeLiveHtml(layoutSlug(type) || "float")}">${escapeLiveHtml(title)}</h2><ol>`;
-  for (const e of entries) {
-    const label = e.text ? `${e.number} ${e.text}` : e.number;
-    html += `<li><a href="#${escapeLiveHtml(e.id)}">${escapeLiveHtml(label.trim())}</a></li>`;
-  }
-  html += "</ol></nav>";
-  return html;
+  const items = (list: FloatListEntry[]): string => {
+    let out = "";
+    for (const e of list) {
+      const label = e.text ? `${e.number} ${e.text}` : e.number;
+      out += `<li><a href="#${escapeLiveHtml(e.id)}">${escapeLiveHtml(label.trim())}</a>`;
+      if (e.children && e.children.length > 0) out += `<ol>${items(e.children)}</ol>`;
+      out += "</li>";
+    }
+    return out;
+  };
+  return `<nav class="toc toc-floats"><h2 class="tochead toc-${escapeLiveHtml(layoutSlug(type) || "float")}">${escapeLiveHtml(title)}</h2><ol>${items(entries)}</ol></nav>`;
 }
 
 /**
@@ -3713,6 +3799,11 @@ function floatCaptionPrefix(variant: string, num: string | undefined): string {
   return `${floatNamerefPrefix(variant)} ${num}: `;
 }
 
+function subfloatCaptionPrefix(variant: string, num: string | undefined): string {
+  if (!num) return "";
+  return `${subfloatNamerefPrefix(variant)} ${num}: `;
+}
+
 /** Native nameref text for a float label ("Figure", "Table", …). */
 function floatNamerefPrefix(variant: string): string {
   const v = variant.toLowerCase();
@@ -3721,6 +3812,15 @@ function floatNamerefPrefix(variant: string): string {
   if (v === "listing") return "Listing";
   if (v === "figure" || !v) return "Figure";
   return variant.charAt(0).toUpperCase() + variant.slice(1);
+}
+
+/** English GUI strings (`en.po`: Sub-Figure → Subfigure). */
+function subfloatNamerefPrefix(variant: string): string {
+  const v = variant.toLowerCase();
+  if (v === "table") return "Subtable";
+  if (v === "figure" || !v) return "Subfigure";
+  if (v === "algorithm") return "Sub-Algorithm";
+  return `Sub-${floatNamerefPrefix(variant)}`;
 }
 
 /** `Caption Below` → `Below`; bare `Caption` → `Standard` (native type_). */
@@ -3732,6 +3832,21 @@ function captionTypeFromKind(kind: string): string {
 
 function captionBlocks(root: BlockNode): BlockNode[] {
   return collectBlocks(root, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
+}
+
+function isNestedCaptionableInset(b: BlockNode): boolean {
+  if (b.tag !== "inset") return false;
+  const k = insetKind(b);
+  return k.startsWith("Float ") || k.startsWith("Wrap ");
+}
+
+/** Captions that belong to this float, not to nested subfloats. */
+function floatOwnCaptions(root: BlockNode): BlockNode[] {
+  return collectBlocks(
+    root,
+    (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"),
+    isNestedCaptionableInset,
+  );
 }
 
 function captionsAreUnnumbered(captions: BlockNode[]): boolean {
@@ -3763,39 +3878,55 @@ function renderCaptionedFloat(
   variant: string,
   ctx: RenderCtx,
   parentState?: TraversalState,
+  nested = false,
 ): string {
-  const allCaptions = captionBlocks(block);
+  const allCaptions = floatOwnCaptions(block);
   const numbered = !captionsAreUnnumbered(allCaptions);
   // LyX InsetCaption un-steps on the inherited `deleted` flag, so floats and
   // captions nested in a deleted owner skip their number too (J-C).
   const deleted = parentState
     ? parentState.deletedDepth > 0 || parentState.outerDeletedDepth > 0
     : false;
+  if (!nested) ctx.subFloatCounts.set(variant, 0);
   const num = numbered
-    ? (takeFloatNumber(ctx, variant, deleted) ?? takeGenericFloatNumber(ctx, variant, deleted))
+    ? (nested
+      ? takeSubFloatNumber(ctx, variant, deleted)
+      : (takeFloatNumber(ctx, variant, deleted) ?? takeGenericFloatNumber(ctx, variant, deleted)))
     : undefined;
-  const prefix = numbered ? floatCaptionPrefix(variant, num) : "";
-  const id = num ? ` id="float-${layoutSlug(variant)}-${num.replaceAll(".", "-")}"` : "";
-  let html = `<figure class="float-${layoutSlug(variant)}"${id}>`;
-  for (const item of flattenFlow(block.children, 0)) {
-    const captions = collectBlocks(item.node, (b) => b.tag === "inset" && insetKind(b).startsWith("Caption"));
-    if (captions.length > 0) {
-      const cap = captions.map((c) => renderCaptionInline(c, ctx, parentState)).join("");
-      // Number once per float; only the first caption block gets the prefix.
-      // DL145: "Figure 1: " is render chrome (like heading-number) — non-select.
-      const usePrefix = prefix && html.indexOf("<figcaption") === -1
-        ? `<span class="float-caption-prefix">${escapeLiveHtml(prefix)}</span>`
-        : "";
-      html += `<figcaption${captionClassAttr(captions)}>${usePrefix}${cap}</figcaption>`;
-      continue;
+  const prefix = numbered
+    ? (nested ? subfloatCaptionPrefix(variant, num) : floatCaptionPrefix(variant, num))
+    : "";
+  const parent = ctx.floatNumberStack[ctx.floatNumberStack.length - 1];
+  const idCore = nested && parent && num ? `${parent}-${num}` : num;
+  const id = idCore ? ` id="float-${layoutSlug(variant)}-${idCore.replaceAll(".", "-")}"` : "";
+  const cls = nested
+    ? `float-${layoutSlug(variant)} subfloat`
+    : `float-${layoutSlug(variant)}`;
+  let html = `<figure class="${cls}"${id}>`;
+  if (idCore) ctx.floatNumberStack.push(idCore.replaceAll(".", "-"));
+  try {
+    for (const item of flattenFlow(block.children, 0)) {
+      const captions = floatOwnCaptions(item.node);
+      if (captions.length > 0) {
+        const cap = captions.map((c) => renderCaptionInline(c, ctx, parentState)).join("");
+        // Number once per float; only the first caption block gets the prefix.
+        // DL145: "Figure 1: " is render chrome (like heading-number) — non-select.
+        const usePrefix = prefix && html.indexOf("<figcaption") === -1
+          ? `<span class="float-caption-prefix">${escapeLiveHtml(prefix)}</span>`
+          : "";
+        html += `<figcaption${captionClassAttr(captions)}>${usePrefix}${cap}</figcaption>`;
+        continue;
+      }
+      // Body layout under the float inset (no Caption hop). Always map for empty consistency.
+      html += withLayout(ctx, item, (selector) => {
+        const bodyId = takeOwnerId(ctx);
+        emitToken(ctx, bodyId, selector);
+        const inner = renderLayoutInline(item.node, ctx, false, parentState);
+        return `<div class="float-body"${mappingAttrs(bodyId)}>${inner}</div>`;
+      });
     }
-    // Body layout under the float inset (no Caption hop). Always map for empty consistency.
-    html += withLayout(ctx, item, (selector) => {
-      const bodyId = takeOwnerId(ctx);
-      emitToken(ctx, bodyId, selector);
-      const inner = renderLayoutInline(item.node, ctx, false, parentState);
-      return `<div class="float-body"${mappingAttrs(bodyId)}>${inner}</div>`;
-    });
+  } finally {
+    if (idCore) ctx.floatNumberStack.pop();
   }
   html += "</figure>";
   return html;
@@ -3816,13 +3947,17 @@ function renderWrap(block: BlockNode, parentState: TraversalState, ctx: RenderCt
   const placement = (findProperty(block, "placement") ?? "").toLowerCase();
   const side = placement === "l" || placement === "i" ? "left" : "right";
   const variant = insetKind(block).slice("Wrap ".length).trim() || "figure";
-  const prev = ctx.inWrap;
+  const nested = ctx.inFloat;
+  const prevWrap = ctx.inWrap;
+  const prevFloat = ctx.inFloat;
   ctx.inWrap = true;
+  ctx.inFloat = true;
   let inner = "";
   try {
-    inner = renderCaptionedFloat(block, variant, ctx, parentState);
+    inner = renderCaptionedFloat(block, variant, ctx, parentState, nested);
   } finally {
-    ctx.inWrap = prev;
+    ctx.inWrap = prevWrap;
+    ctx.inFloat = prevFloat;
   }
   const wrap = `<div class="wrap wrap-${side}" style="width: ${escapeLiveHtml(width)}">${inner}</div>`;
   return wrapDisclosure(ctx,
@@ -3898,12 +4033,21 @@ function renderListings(block: BlockNode, parentState: TraversalState, ctx: Rend
 
 function renderFloat(block: BlockNode, kind: string, parentState: TraversalState, ctx: RenderCtx): string {
   const variant = kind.slice("Float ".length).trim() || "figure";
-  const figure = renderCaptionedFloat(block, variant, ctx, parentState);
-  return wrapDisclosure(ctx,
-    `float float-${layoutSlug(variant)}`,
-    floatDisclosureLabel(variant),
-    figure,
-  );
+  const nested = ctx.inFloat;
+  const prev = ctx.inFloat;
+  ctx.inFloat = true;
+  let figure = "";
+  try {
+    figure = renderCaptionedFloat(block, variant, ctx, parentState, nested);
+  } finally {
+    ctx.inFloat = prev;
+  }
+  const pretty = floatNamerefPrefix(variant);
+  const label = nested ? `Subfloat: ${pretty}` : floatDisclosureLabel(variant);
+  const cls = nested
+    ? `float float-${layoutSlug(variant)} subfloat`
+    : `float float-${layoutSlug(variant)}`;
+  return wrapDisclosure(ctx, cls, label, figure);
 }
 
 function renderInclude(block: BlockNode, ctx: RenderCtx): string {
