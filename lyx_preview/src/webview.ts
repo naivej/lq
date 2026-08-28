@@ -297,7 +297,10 @@ ol.enumiii { list-style-type: lower-roman; }
 ol.enumiv { list-style-type: upper-alpha; }
 figure.float-figure, figure.float-table { display: block; margin: 1.2em auto; text-align: center; }
 figure > figcaption { display: block; text-align: center; margin: 0 0 0.6em; }
-figure > .float-body { display: flex; justify-content: center; margin: 0.4em 0; }
+/* Block, not flex: a figure note with inline math would otherwise become
+ * anonymous flex items and paint as two text columns (DL151). Tables stay
+ * centered via figure table { margin-left/right: auto } below. */
+figure > .float-body { display: block; margin: 0.4em 0; }
 figure table { margin-left: auto; margin-right: auto; }
 table { border-collapse: collapse; margin: 0.75em 0; }
 td, th { border: 1px solid var(--vscode-panel-border); padding: 0.25em 0.5em; }
@@ -333,8 +336,10 @@ details.disclose > summary::-webkit-details-marker { display: none; }
 details.disclose[open] {
   display: inline-block;
   vertical-align: top;
-  width: fit-content;
-  max-width: min(36em, 100%);
+  /* Hug content; cap at the page (article / preview pane, including splitter drag). */
+  width: max-content;
+  max-width: 100%;
+  box-sizing: border-box;
   margin: 0.35em 0.12em;
 }
 details.disclose[open] > summary {
@@ -342,14 +347,22 @@ details.disclose[open] > summary {
 }
 details.disclose[open] > .disclose-body {
   display: block;
-  width: fit-content;
-  max-width: min(36em, 100%);
+  width: max-content;
+  max-width: 100%;
   box-sizing: border-box;
+  overflow-wrap: break-word;
   margin: 0.15em 0 0.25em;
   padding: 0.35em 0.5em;
   border: 1px solid #888;
   border-radius: 3px;
   background: var(--vscode-editor-background, #fff);
+}
+/* Block layouts inside the box would otherwise stretch to the page even for a short phrase. */
+details.disclose[open] > .disclose-body > .plain_layout,
+details.disclose[open] > .disclose-body > .standard {
+  width: max-content;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 /* Wide media (figures/tables) need the full column when open — including
  * wraps nested inside a Standard <p>, not only section/article children. */
@@ -383,7 +396,6 @@ details.disclose.foot_intitle[open] {
   display: inline-block;
   vertical-align: baseline;
   margin: 0.15em 0.12em;
-  max-width: min(28em, 100%);
 }
 details.disclose.foot[open] > summary,
 details.disclose.foot_intitle[open] > summary {
@@ -393,6 +405,10 @@ details.disclose.foot_intitle[open] > summary {
 details.disclose.foot[open] > .foot_inner,
 details.disclose.foot_intitle[open] > .foot_intitle_inner {
   display: block;
+  width: max-content;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-wrap: break-word;
   margin: 0;
   padding: 0.4em 0.5em;
   border: 1px solid #c44;
@@ -400,6 +416,14 @@ details.disclose.foot_intitle[open] > .foot_intitle_inner {
   background: #fff5f5;
   font-size: 0.95em;
   color: inherit;
+}
+details.disclose.foot[open] > .foot_inner > .plain_layout,
+details.disclose.foot[open] > .foot_inner > .standard,
+details.disclose.foot_intitle[open] > .foot_intitle_inner > .plain_layout,
+details.disclose.foot_intitle[open] > .foot_intitle_inner > .standard {
+  width: max-content;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 /* LyX-ish inset label colors */
 details.disclose.note-note > summary {
@@ -417,14 +441,8 @@ details.disclose.note-greyedout > summary {
   border-color: #888;
   color: #555;
 }
-details.disclose.note[open] {
-  width: fit-content;
-  max-width: min(28em, 100%);
-}
 details.disclose.note-note[open] > .disclose-body,
 details.disclose.note-comment[open] > .disclose-body {
-  width: fit-content;
-  max-width: min(28em, 100%);
   border-color: #c9a000;
   background: #fffceb;
 }
@@ -432,14 +450,8 @@ details.disclose.note-comment[open] > .disclose-body {
   border-color: #5555aa;
   background: #f7f7ff;
 }
-/* Greyedout: hug content — avoid 28em-wide empty box from block .plain_layout. */
-details.disclose.note-greyedout[open] {
-  width: max-content;
-  max-width: min(28em, 100%);
-}
+/* Greyedout: inline inner layouts so a short note does not stretch like a block paragraph. */
 details.disclose.note-greyedout[open] > .disclose-body {
-  width: max-content;
-  max-width: min(28em, 100%);
   border-color: #888;
   background: #f4f4f4;
   color: #A0A0A0;
@@ -529,7 +541,6 @@ details.disclose.nomencl-marker[open] > .disclose-body {
   font-size: 0.9em;
   white-space: pre-wrap;
   word-break: break-word;
-  max-width: min(40em, 100%);
 }
 code.marker-body,
 code.ert-body {
@@ -669,6 +680,8 @@ div.flex.column { display: inline-block; vertical-align: top; margin: 0 0.5em; }
 div.Boxed, div.Framed, div.Doublebox, div.Shadowbox, div.ovalbox, div.Ovalbox, div.Shaded {
   display: block;
   box-sizing: border-box;
+  width: max-content;
+  max-width: 100%;
   margin: 0.4em 0;
   text-align: center;
 }

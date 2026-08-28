@@ -117,6 +117,38 @@ describe("renderWebviewHtml change views", () => {
     assert.match(html, /selectedText: ""/);
   });
 
+  it("open inset boxes hug content and cap at the page, not a fixed em width", () => {
+    const html = render("tracked");
+    const cssStart = html.indexOf("details.disclose[open] {");
+    assert.notEqual(cssStart, -1);
+    const bodyRule = html.indexOf("details.disclose[open] > .disclose-body {", cssStart);
+    assert.notEqual(bodyRule, -1);
+    const openBlock = html.slice(cssStart, bodyRule);
+    assert.match(openBlock, /width:\s*max-content/);
+    assert.match(openBlock, /max-width:\s*100%/);
+    assert.equal(openBlock.includes("36em"), false);
+    assert.equal(openBlock.includes("28em"), false);
+    const bodyEnd = html.indexOf("details.disclose.float[open]", bodyRule);
+    const bodyBlock = html.slice(bodyRule, bodyEnd);
+    assert.match(bodyBlock, /width:\s*max-content/);
+    assert.match(bodyBlock, /max-width:\s*100%/);
+    assert.equal(bodyBlock.includes("36em"), false);
+    const boxRule = html.indexOf("div.Boxed, div.Framed");
+    assert.notEqual(boxRule, -1);
+    const boxBlock = html.slice(boxRule, html.indexOf("div.Frameless", boxRule));
+    assert.match(boxBlock, /width:\s*max-content/);
+    assert.match(boxBlock, /max-width:\s*100%/);
+    // Kind-specific open rules must not reintroduce a fixed em cap.
+    assert.doesNotMatch(html, /details\.disclose[^{]*\[open\][^{]*\{[^}]*min\(\d+em/);
+    assert.doesNotMatch(html, /details\.disclose[^{]*\[open\][^{]*\{[^}]*max-width:\s*min\(\d+em/);
+  });
+
+  it("figure float-body is a block so a note with inline math is not two columns", () => {
+    const html = render("tracked");
+    assert.match(html, /figure > \.float-body \{ display: block/);
+    assert.doesNotMatch(html, /figure > \.float-body \{ display: flex/);
+  });
+
   it("marks whole-inset disclosures: inserted underline, deleted label strike + open diagonal", () => {
     const html = render("tracked");
     assert.match(html, /ins\.change-inserted details\.disclose > \*/);
