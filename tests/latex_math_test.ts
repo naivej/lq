@@ -292,3 +292,47 @@ Deno.test("latexToMathML - GUI math fonts emit Unicode / styled mtext (DL153)", 
   assertStringIncludes(latexToMathML("\\textmd{x}"), "<mtext>x</mtext>");
   assertStringIncludes(latexToMathML("\\textup{x}"), "<mtext>x</mtext>");
 });
+
+Deno.test("latexToMathML - brace fences and left/right at matrix breaks (DL154)", () => {
+  const bare = latexToMathML("\\{x\\}");
+  assertStringIncludes(bare, "<mo>{</mo>");
+  assertStringIncludes(bare, "<mo>}</mo>");
+  assert(!bare.includes("<mi>{</mi>"), "bare \\{ is a fence, not an identifier");
+
+  const paired = latexToMathML("\\left\\{ x \\right\\}");
+  assertStringIncludes(paired, "<mo>{</mo>");
+  assertStringIncludes(paired, "<mo>}</mo>");
+  assert(!paired.includes("<mo>\\</mo>"), "\\left\\{ must consume the brace, not emit a backslash");
+
+  const invisible = latexToMathML("\\left. x \\right\\}");
+  assertStringIncludes(invisible, "<mo>}</mo>");
+  assert(!invisible.includes("<mo>.</mo>"), "\\left. is an invisible delimiter");
+
+  const named = latexToMathML("\\left\\lbrace x \\right\\rbrace");
+  assertStringIncludes(named, "<mo>{</mo>");
+  assertStringIncludes(named, "<mo>}</mo>");
+
+  const inatt = latexToMathML(
+    "\\begin{array}{cc}A & \\left\\{ x \\right.\\\\ & \\left. y \\right\\}\\end{array}",
+  );
+  assertEquals([...inatt.matchAll(/<mtr>/g)].length, 2);
+  assertStringIncludes(inatt, "<mo>{</mo>");
+  assertStringIncludes(inatt, "<mo>}</mo>");
+  assertStringIncludes(inatt, "<mi>x</mi>");
+  assertStringIncludes(inatt, "<mi>y</mi>");
+  assert(!inatt.includes("<mo>\\</mo>"));
+
+  const splitRow = latexToMathML("\\begin{array}{c}\\left\\{ a \\\\ b \\right.\\end{array}");
+  assertEquals([...splitRow.matchAll(/<mtr>/g)].length, 2);
+  assertStringIncludes(splitRow, "<mo>{</mo>");
+  assertStringIncludes(splitRow, "<mi>a</mi>");
+  assertStringIncludes(splitRow, "<mi>b</mi>");
+  assert(!splitRow.includes("<mo>.</mo>"));
+
+  const splitCol = latexToMathML("\\begin{array}{cc}\\left( a & b \\right)\\end{array}");
+  assertEquals([...splitCol.matchAll(/<mtd>/g)].length, 2);
+  assertStringIncludes(splitCol, "<mo>(</mo>");
+  assertStringIncludes(splitCol, "<mo>)</mo>");
+  assertStringIncludes(splitCol, "<mi>a</mi>");
+  assertStringIncludes(splitCol, "<mi>b</mi>");
+});

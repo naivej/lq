@@ -48,6 +48,10 @@ function escapeLiveHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+function fenceMo(delim: string): string {
+  return delim ? `<mo>${escapeLiveHtml(delim)}</mo>` : "";
+}
+
 type MathFamily = "normal" | "script" | "fraktur" | "double-struck" | "sans" | "mono";
 type MathSeries = "medium" | "bold";
 type MathShape = "italic" | "up";
@@ -169,6 +173,7 @@ const SYM_MO: Record<string, string> = {
   exists: "∃", nexists: "∄", forall: "∀", neg: "¬", lnot: "¬",
   land: "∧", lor: "∨",
   langle: "⟨", rangle: "⟩", lceil: "⌈", rceil: "⌉", lfloor: "⌊", rfloor: "⌋",
+  lbrace: "{", rbrace: "}",
   backslash: "\\", vert: "|", Vert: "∥",
   inf: "inf",
   angle: "∠", measuredangle: "∡", sphericalangle: "∢", triangle: "△",
@@ -803,7 +808,8 @@ class Parser {
       this.i++;
       if (next === "," || next === ":" || next === ";" || next === " ") return "<mspace width='0.16em'/>";
       if (next === "\\" ) return "<mspace linebreak='newline'/>";
-      if (next === "{" || next === "}" || next === "_" || next === "%") return `<mi>${escapeLiveHtml(next)}</mi>`;
+      if (next === "{" || next === "}") return `<mo>${next}</mo>`;
+      if (next === "_" || next === "%") return `<mi>${escapeLiveHtml(next)}</mi>`;
       return `<mo>${escapeLiveHtml(next)}</mo>`;
     }
     let name = "";
@@ -818,20 +824,20 @@ class Parser {
       const parts: string[] = [];
       while (this.i < this.s.length && this.s[this.i] !== "}") {
         this.skipSpace();
+        if (this.atFenceBreak()) break;
         if (this.startsCommand("right")) {
           this.i += 1 + "right".length;
           const close = this.readDelimiter();
           const inner = parts.length === 1 ? parts[0] : parts.length ? `<mrow>${parts.join("")}</mrow>` : "";
-          return `<mrow><mo>${escapeLiveHtml(open)}</mo>${inner}<mo>${escapeLiveHtml(close)}</mo></mrow>`;
+          return this.wrapFences(open, inner, close);
         }
         parts.push(this.parseWithScripts());
       }
       const inner = parts.length === 1 ? parts[0] : parts.length ? `<mrow>${parts.join("")}</mrow>` : "";
-      return `<mrow><mo>${escapeLiveHtml(open)}</mo>${inner}</mrow>`;
+      return this.wrapFences(open, inner);
     }
     if (name === "right") {
-      const close = this.readDelimiter();
-      return `<mo>${escapeLiveHtml(close)}</mo>`;
+      return fenceMo(this.readDelimiter());
     }
     if (name === "frac" || name === "dfrac" || name === "tfrac" || name === "cfrac" ||
       name === "nicefrac" || name === "unitfrac") {
@@ -1348,20 +1354,51 @@ class Parser {
     return { sub, sup };
   }
 
+  private wrapFences(open: string, inner: string, close?: string): string {
+    const a = fenceMo(open);
+    const b = close === undefined ? "" : fenceMo(close);
+    if (!a && !b) return inner;
+    return `<mrow>${a}${inner}${b}</mrow>`;
+  }
+
+  /** `&` / `\\` / `\end` end a matrix cell — unmatched `\left` must not swallow them (DL154 J2-B). */
+  private atFenceBreak(): boolean {
+    if (this.s[this.i] === "&") return true;
+    if (this.s.startsWith("\\\\", this.i)) return true;
+    return this.startsCommand("end");
+  }
+
   private readDelimiter(): string {
     this.skipSpace();
+    if (this.s[this.i] === ".") {
+      this.i++;
+      return "";
+    }
     if (this.s[this.i] === "\\") {
       this.i++;
+      if (this.i < this.s.length && !/[A-Za-z]/.test(this.s[this.i]!)) {
+        const ch = this.s[this.i++]!;
+        if (ch === "{" || ch === "}") return ch;
+        if (ch === ".") return "";
+        if (ch === "|") return "∥";
+        return ch;
+      }
       let name = "";
-      while (this.i < this.s.length && /[A-Za-z]/.test(this.s[this.i])) name += this.s[this.i++];
+      while (this.i < this.s.length && /[A-Za-z]/.test(this.s[this.i]!)) name += this.s[this.i++];
       if (name === "lvert" || name === "rvert" || name === "vert") return "|";
+      if (name === "lVert" || name === "rVert" || name === "Vert") return "∥";
       if (name === "langle") return "⟨";
       if (name === "rangle") return "⟩";
-      if (name === "{") return "{";
-      if (name === "}") return "}";
-      return name || this.s[this.i - 1] || "";
+      if (name === "lbrace") return "{";
+      if (name === "rbrace") return "}";
+      if (name === "lceil") return "⌈";
+      if (name === "rceil") return "⌉";
+      if (name === "lfloor") return "⌊";
+      if (name === "rfloor") return "⌋";
+      if (name === "backslash") return "\\";
+      return SYM_MO[name] ?? name;
     }
-    if (this.i < this.s.length) return this.s[this.i++];
+    if (this.i < this.s.length) return this.s[this.i++]!;
     return "";
   }
 
