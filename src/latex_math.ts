@@ -2,7 +2,10 @@
  * Small TeX-to-MathML converter for Live formula insets.
  * Covers the LyX subset: greek, scripts, sums, delimiters, fractions, primes.
  * Unknown commands fall back to mtext so source never becomes executable HTML.
+ * Math-mode fonts emit Unicode alphanumerics (MathML Core / DL153).
  */
+import { MATH_ALPHANUM, type MathAlphanumVariant } from "./math_alphanum.ts";
+
 const MATH_COLOR: Record<string, string> = {
   red: "red",
   green: "green",
@@ -43,6 +46,86 @@ function escapeLiveHtml(value: string): string {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+type MathFamily = "normal" | "script" | "fraktur" | "double-struck" | "sans" | "mono";
+type MathSeries = "medium" | "bold";
+type MathShape = "italic" | "up";
+type MathFontState = { family: MathFamily; series: MathSeries; shape: MathShape };
+
+const DEFAULT_MATH_FONT: MathFontState = { family: "normal", series: "medium", shape: "italic" };
+
+/** LyX GUI math fonts (toolbar + Edit → Math → Text Properties). */
+const MATH_FONT_CMD: Record<string, Partial<MathFontState>> = {
+  mathbf: { series: "bold", shape: "up" },
+  boldsymbol: { series: "bold", shape: "italic" },
+  mathit: { shape: "italic" },
+  mathsf: { family: "sans", shape: "up" },
+  mathtt: { family: "mono", shape: "up" },
+  mathbb: { family: "double-struck", shape: "up" },
+  mathds: { family: "double-struck", shape: "up" },
+  mathfrak: { family: "fraktur", shape: "up" },
+  mathcal: { family: "script", shape: "up" },
+  mathscr: { family: "script", shape: "up" },
+  mathrm: { family: "normal", series: "medium", shape: "up" },
+  mathnormal: { family: "normal", series: "medium", shape: "italic" },
+};
+
+/** Text-in-math fonts: keep mtext (spaces) and paint with CSS. */
+const TEXT_FONT_STYLE: Record<string, string> = {
+  textbf: "font-weight:bold",
+  textit: "font-style:italic",
+  textsl: "font-style:italic",
+  textsf: "font-family:sans-serif",
+  texttt: "font-family:monospace",
+  textsc: "font-variant:small-caps",
+};
+const TEXT_PLAIN = new Set([
+  "text",
+  "textrm",
+  "textnormal",
+  "textup",
+  "textmd",
+  "operatorname",
+]);
+
+function isDefaultFont(font: MathFontState): boolean {
+  return font.family === "normal" && font.series === "medium" && font.shape === "italic";
+}
+
+function needsUprightMi(font: MathFontState): boolean {
+  return font.family === "normal" && font.series === "medium" && font.shape === "up";
+}
+
+function styledAlphanum(ch: string, font: MathFontState): string {
+  const row = MATH_ALPHANUM[ch];
+  if (!row) return ch;
+  const pick = (...keys: MathAlphanumVariant[]): string | undefined => {
+    for (const k of keys) {
+      if (row[k]) return row[k];
+    }
+    return undefined;
+  };
+  if (font.family === "double-struck") return pick("doubleStruck") ?? ch;
+  if (font.family === "script") {
+    return (font.series === "bold" ? pick("boldScript", "script") : pick("script")) ?? ch;
+  }
+  if (font.family === "fraktur") {
+    return (font.series === "bold" ? pick("boldFraktur", "fraktur") : pick("fraktur")) ?? ch;
+  }
+  if (font.family === "sans") {
+    if (font.series === "bold" && font.shape === "italic") {
+      return pick("boldItalicSans", "boldSans", "italicSans", "sans") ?? ch;
+    }
+    if (font.series === "bold") return pick("boldSans", "sans") ?? ch;
+    if (font.shape === "italic") return pick("italicSans", "sans") ?? ch;
+    // Digits: LyX stores sans-serif digits in the bold_sans column.
+    return pick("sans", "boldSans") ?? ch;
+  }
+  if (font.family === "mono") return pick("monospace") ?? ch;
+  if (font.shape === "up") return (font.series === "bold" ? pick("bold") : undefined) ?? ch;
+  if (font.series === "bold") return pick("boldItalic", "bold") ?? ch;
+  return pick("italic") ?? ch;
 }
 
 const SYM_MI: Record<string, string> = {
@@ -574,12 +657,40 @@ function expandChemExpr(tex: string): string {
 }
 
 class Parser {
+  private font: MathFontState = { ...DEFAULT_MATH_FONT };
+
   constructor(
     private readonly s: string,
     private i = 0,
     private readonly macros: MathMacroMap | undefined = undefined,
     private readonly macroDepth = 0,
   ) {}
+
+  private withFont(patch: Partial<MathFontState>, body: () => string): string {
+    const prev = this.font;
+    this.font = { ...prev, ...patch };
+    try {
+      return body();
+    } finally {
+      this.font = prev;
+    }
+  }
+
+  private emitIdent(ch: string): string {
+    if (isDefaultFont(this.font)) return `<mi>${escapeLiveHtml(ch)}</mi>`;
+    const glyph = styledAlphanum(ch, this.font);
+    const attr = needsUprightMi(this.font) ? ' mathvariant="normal"' : "";
+    return `<mi${attr}>${escapeLiveHtml(glyph)}</mi>`;
+  }
+
+  private emitNumber(n: string): string {
+    if (isDefaultFont(this.font) || needsUprightMi(this.font)) {
+      const attr = needsUprightMi(this.font) ? ' mathvariant="normal"' : "";
+      return `<mn${attr}>${n}</mn>`;
+    }
+    const glyphs = [...n].map((d) => styledAlphanum(d, this.font)).join("");
+    return `<mn>${escapeLiveHtml(glyphs)}</mn>`;
+  }
 
   parseExpr(): string {
     const parts: string[] = [];
@@ -672,16 +783,16 @@ class Parser {
       while (this.i < this.s.length && this.s[this.i] >= "0" && this.s[this.i] <= "9") {
         n += this.s[this.i++];
       }
-      return `<mn>${n}</mn>`;
+      return this.emitNumber(n);
     }
-    if (/[A-Za-z]/.test(ch)) return `<mi>${escapeLiveHtml(ch)}</mi>`;
+    if (/[A-Za-z]/.test(ch)) return this.emitIdent(ch);
     if (ch === "=" || ch === "+" || ch === "-" || ch === "*" || ch === "/" || ch === "," ||
       ch === ":" || ch === ";" || ch === "(" || ch === ")" || ch === "[" || ch === "]" ||
       ch === "|" || ch === "<" || ch === ">") {
       return `<mo>${escapeLiveHtml(ch)}</mo>`;
     }
     if (ch === "'") return "<mo>′</mo>";
-    return `<mi>${escapeLiveHtml(ch)}</mi>`;
+    return this.emitIdent(ch);
   }
 
   private parseCommand(): string {
@@ -700,6 +811,8 @@ class Parser {
     this.skipSpace();
     const macro = this.macros?.get(name);
     if (macro) return this.expandMacro(name, macro);
+    const fontPatch = MATH_FONT_CMD[name];
+    if (fontPatch) return this.withFont(fontPatch, () => this.parseGroupOrAtom());
     if (name === "left") {
       const open = this.readDelimiter();
       const parts: string[] = [];
@@ -746,10 +859,12 @@ class Parser {
       }
       return `<msqrt>${this.parseGroupOrAtom()}</msqrt>`;
     }
-    if (name === "text" || name === "mathrm" || name === "textrm" || name === "operatorname" ||
-      name === "textbf" || name === "textsf" || name === "texttt") {
+    if (TEXT_PLAIN.has(name) || TEXT_FONT_STYLE[name]) {
       const inner = this.readGroupText();
-      return `<mtext>${escapeLiveHtml(inner)}</mtext>`;
+      const css = TEXT_FONT_STYLE[name];
+      return css
+        ? `<mtext style="${css}">${escapeLiveHtml(inner)}</mtext>`
+        : `<mtext>${escapeLiveHtml(inner)}</mtext>`;
     }
     if (name === "mbox") return this.parseGroupOrAtom();
     if (name === "makebox") {
@@ -837,10 +952,6 @@ class Parser {
       const inner = this.parseGroupOrAtom();
       return `<menclose notation="box">${inner}</menclose>`;
     }
-    if (name === "mathds") {
-      const inner = this.parseGroupOrAtom();
-      return `<mstyle mathvariant="double-struck">${inner}</mstyle>`;
-    }
     if (name === "pmod") {
       const inner = this.parseGroupOrAtom();
       return `<mrow><mo>(</mo><mtext>mod </mtext>${inner}<mo>)</mo></mrow>`;
@@ -926,25 +1037,6 @@ class Parser {
     if (name === "hrulefill") return "<mo>─</mo>";
     if (name === "lefteqn" || name === "shoveleft" || name === "oldstylenums") {
       return this.parseGroupOrAtom();
-    }
-    if (name === "mathbf" || name === "boldsymbol" || name === "mathsf" || name === "mathtt" ||
-      name === "mathit" || name === "mathcal" || name === "mathfrak" || name === "mathbb" ||
-      name === "mathscr") {
-      const inner = this.parseGroupOrAtom();
-      const variant = name === "mathbf" || name === "boldsymbol"
-        ? "bold"
-        : name === "mathsf"
-        ? "sans-serif"
-        : name === "mathtt"
-        ? "monospace"
-        : name === "mathcal" || name === "mathscr"
-        ? "script"
-        : name === "mathfrak"
-        ? "fraktur"
-        : name === "mathbb"
-        ? "double-struck"
-        : "italic";
-      return `<mstyle mathvariant="${variant}">${inner}</mstyle>`;
     }
     if (name === "ensuremath") {
       if (this.s[this.i] === "{") {
@@ -1047,7 +1139,7 @@ class Parser {
     }
     if (OPNAME.has(name)) return `<mi>${name}</mi>`;
     if (SYM_MO[name]) return `<mo>${SYM_MO[name]}</mo>`;
-    if (SYM_MI[name]) return `<mi>${SYM_MI[name]}</mi>`;
+    if (SYM_MI[name]) return this.emitIdent(SYM_MI[name]!);
     // Unknown command: skip one optional group and show the name.
     if (this.s[this.i] === "{") this.readGroupText();
     return `<mi>${escapeLiveHtml("\\" + name)}</mi>`;

@@ -50,7 +50,7 @@ Deno.test("latexToMathML - scripts, greek, sum, delimiters", () => {
   assertStringIncludes(latexToMathML("\\downarrow"), "<mo>↓</mo>");
   assertStringIncludes(latexToMathML("\\dfrac{A}{B}"), "<mfrac>");
   assertStringIncludes(latexToMathML("\\nicefrac{1}{18}"), "<mfrac>");
-  assertStringIncludes(latexToMathML("\\mathbf{x}"), 'mathvariant="bold"');
+  assertStringIncludes(latexToMathML("\\mathbf{x}"), "𝐱");
 });
 
 Deno.test("renderFormulaHtml - MathML plus TeX annotation, escaped", () => {
@@ -257,4 +257,38 @@ Deno.test("latexToMathML - deep macro chains cap expansion depth (DL132 P5)", ()
   const out = latexToMathML(`\\${name(0)}`, macros);
   assertStringIncludes(out, `\\${name(64)}`);
   assert(!out.includes(`\\${name(80)}`), "the chain must stop at the depth cap");
+});
+
+Deno.test("latexToMathML - GUI math fonts emit Unicode / styled mtext (DL153)", () => {
+  const ds = latexToMathML("\\mathds{1}");
+  assertStringIncludes(ds, "𝟙");
+  assert(!ds.includes("mathvariant"), "Core ignores double-struck mathvariant");
+  assertStringIncludes(latexToMathML("\\mathbb{N}"), "ℕ");
+  assertStringIncludes(latexToMathML("\\mathbf{x}"), "𝐱");
+  assertStringIncludes(latexToMathML("\\boldsymbol{x}"), "𝒙");
+  assertStringIncludes(latexToMathML("\\mathsf{A}"), "𝖠");
+  assertStringIncludes(latexToMathML("\\mathtt{A}"), "𝙰");
+  assertStringIncludes(latexToMathML("\\mathcal{F}"), "ℱ");
+  assertStringIncludes(latexToMathML("\\mathscr{F}"), "ℱ");
+  assertStringIncludes(latexToMathML("\\mathfrak{R}"), "ℜ");
+  assertStringIncludes(latexToMathML("\\mathit{a}"), "<mi>a</mi>");
+  const roman = latexToMathML("\\mathrm{d}");
+  assertStringIncludes(roman, 'mathvariant="normal"');
+  assertStringIncludes(roman, ">d</mi>");
+  const normal = latexToMathML("\\mathnormal{a}");
+  assertStringIncludes(normal, "<mi>a</mi>");
+  assert(!normal.includes("mathvariant"), "mathnormal is default italic mi");
+  assertStringIncludes(latexToMathML("\\mathds{?}"), "?");
+
+  const words = latexToMathML("\\textrm{a b}");
+  assertStringIncludes(words, "<mtext>a b</mtext>");
+  assertStringIncludes(latexToMathML("\\textbf{x}"), 'style="font-weight:bold"');
+  assertStringIncludes(latexToMathML("\\textit{x}"), 'style="font-style:italic"');
+  assertStringIncludes(latexToMathML("\\textsl{x}"), 'style="font-style:italic"');
+  assertStringIncludes(latexToMathML("\\textsf{x}"), 'style="font-family:sans-serif"');
+  assertStringIncludes(latexToMathML("\\texttt{x}"), 'style="font-family:monospace"');
+  assertStringIncludes(latexToMathML("\\textsc{x}"), 'style="font-variant:small-caps"');
+  assertStringIncludes(latexToMathML("\\textnormal{x}"), "<mtext>x</mtext>");
+  assertStringIncludes(latexToMathML("\\textmd{x}"), "<mtext>x</mtext>");
+  assertStringIncludes(latexToMathML("\\textup{x}"), "<mtext>x</mtext>");
 });

@@ -1528,7 +1528,7 @@ Deno.test("Live renderer - Help UserGuide.lyx script, line, nomencl, Flex Emph",
   assertStringIncludes(html, '<a href="#idx-');
   assertStringIncludes(html, 'id="idx-');
   assertStringIncludes(html, 'style="text-align: right"');
-  assertStringIncludes(html, 'mathvariant="double-struck"');
+  assertStringIncludes(html, "ℝ");
   assertStringIncludes(html, "<mo>↻</mo>");
   assertStringIncludes(html, 'class="wline"');
   assertStringIncludes(html, "This is text with Wavy underlining on.");
