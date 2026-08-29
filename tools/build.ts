@@ -60,7 +60,7 @@ const ALL_TARGETS: CompileTarget[] = [
 
 async function compileBinary(name: string, config: CompileTarget): Promise<void> {
   const outputPath = `bin/lq_${name}${config.suffix}`;
-  const args = ["compile", "-A"];
+  const args = ["compile", "-A", "--bundle", "--minify"];
   if (config.target) {
     args.push("--target", config.target);
   }
