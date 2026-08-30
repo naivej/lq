@@ -4,7 +4,7 @@
     "audit:messages": "deno run -A tools/audit_messages.ts",
     "dev": "deno run --watch main.ts",
     "build": "deno run -A tools/build.ts",
-    "build:all": "deno run -A tools/build.ts --all",
+    "build:release": "deno run -A tools/build.ts --release",
     "profile": "deno run --cpu-prof --cpu-prof-flamegraph --cpu-prof-md -A main.ts",
     "coverage": "deno test --coverage=cov -A && deno coverage cov --threshold=70"
   },

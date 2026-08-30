@@ -131,7 +131,7 @@
         "lyx-preview.lqPath": {
           "type": "string",
           "default": "",
-          "description": "Path to the compiled lq binary. The extension prefers the newest binary in the lq repo dev build directory, then this path, then lq on PATH."
+          "description": "LyX Preview will download and update the lq binary at this path. Leave empty to manage lq yourself."
         },
         "lyx-preview.timeoutMs": {
           "type": "number",
@@ -160,7 +160,7 @@
     "compile": "tsc -p ./",
     "watch": "tsc -watch -p ./",
     "lint": "eslint .",
-    "test": "npm run compile && node --test out/fsPath.test.js out/previewSession.test.js out/outlineProvider.test.js out/lqRunner.test.js out/webview.test.js out/liveSelection.test.js",
+    "test": "npm run compile && node --test out/fsPath.test.js out/previewSession.test.js out/outlineProvider.test.js out/lqRunner.test.js out/lqEnsure.test.js out/webview.test.js out/liveSelection.test.js",
     "vscode:prepublish": "npm run compile",
     "package": "npm run compile && vsce package --no-dependencies"
   },

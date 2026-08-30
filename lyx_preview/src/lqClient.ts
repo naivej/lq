@@ -1,58 +1,74 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import * as vscode from "vscode";
+import { AdapterError } from "./previewSession";
+import { ensureManagedLq, LqEnsureError } from "./lqEnsure";
+import { resolveLqBinary } from "./lqResolve";
 
-/**
- * Development preference: binaries produced by `deno task build` in the lq
- * repo. Consulted first so a freshly built lq always wins over configured or
- * PATH binaries.
- */
-const DEV_LQ_BIN_DIR = join(homedir(), "Github", "lq_dev", "lq", "bin");
+export { DEV_LQ_BIN_DIR, findLqInDir } from "./lqResolve";
+export type { LqResolveResult } from "./lqResolve";
+export { resolveLqBinary };
 
-export function discoverLqBinary(documentUri: vscode.Uri): string {
-  const devBinary = findLqInDir(DEV_LQ_BIN_DIR);
-  if (devBinary) return devBinary;
-  const configured = vscode.workspace
+/** Read `lyx-preview.lqPath` (workspace/folder-aware when uri given). */
+export function readLqPathSetting(documentUri?: vscode.Uri): string {
+  return vscode.workspace
     .getConfiguration("lyx-preview", documentUri)
     .get<string>("lqPath")
-    ?.trim();
-  if (configured) return configured;
-  const onPath = findOnPath("lq");
-  if (onPath) return onPath;
-  return "lq";
+    ?.trim() ?? "";
 }
 
-/** Absolute path of the first executable named `command` on PATH, if any. */
-function findOnPath(command: string): string | undefined {
-  const pathVar = process.env.PATH ?? "";
-  const separator = process.platform === "win32" ? ";" : ":";
-  const extensions = process.platform === "win32"
-    ? ["", ".exe", ".cmd", ".bat", ".com"]
-    : [""];
-  for (const dir of pathVar.split(separator)) {
-    if (!dir) continue;
-    for (const ext of extensions) {
-      const candidate = join(dir, command + ext);
-      const stat = statSync(candidate, { throwIfNoEntry: false });
-      if (stat?.isFile()) return candidate;
-    }
+/**
+ * Path to spawn for Live preview (DL155).
+ * Throws AdapterError MISSING_BINARY when unset and no dev binary.
+ */
+export function discoverLqBinary(documentUri?: vscode.Uri): string {
+  const resolved = resolveLqBinary(readLqPathSetting(documentUri));
+  if (resolved.kind === "unset") {
+    throw new AdapterError(
+      "MISSING_BINARY",
+      "Set lyx-preview.lqPath to a file path. LyX Preview will download and update the lq binary at that path.",
+    );
   }
-  return undefined;
+  return resolved.path;
 }
 
-/** Newest `lq*` entry (not a .map) inside `dir`, if the directory exists. */
-function findLqInDir(dir: string): string | undefined {
-  if (!existsSync(dir)) return undefined;
-  let newest: { full: string; mtimeMs: number } | undefined;
-  for (const name of readdirSync(dir)) {
-    if (!/^lq/i.test(name) || name.endsWith(".map")) continue;
-    const full = join(dir, name);
-    const stat = statSync(full, { throwIfNoEntry: false });
-    if (!stat?.isFile()) continue;
-    if (!newest || stat.mtimeMs > newest.mtimeMs) {
-      newest = { full, mtimeMs: stat.mtimeMs };
+let ensureFlight: Promise<void> | undefined;
+
+/**
+ * If resolve is managed, ensure the binary matches GitHub latest (hash).
+ * Dev / unset → no-op. Single-flight across activate / config / preview.
+ */
+export async function ensureCompanionLq(documentUri?: vscode.Uri): Promise<void> {
+  if (ensureFlight) return ensureFlight;
+  ensureFlight = (async () => {
+    const resolved = resolveLqBinary(readLqPathSetting(documentUri));
+    if (resolved.kind !== "managed") return;
+
+    try {
+      await vscode.window.withProgress(
+        {
+          location: vscode.ProgressLocation.Notification,
+          title: "LyX Preview",
+          cancellable: false,
+        },
+        async (progress) => {
+          const result = await ensureManagedLq(resolved.path, {
+            onProgress: (message) => progress.report({ message }),
+          });
+          if (result.updated) {
+            void vscode.window.showInformationMessage("lq ready");
+          }
+        },
+      );
+    } catch (error) {
+      const message = error instanceof LqEnsureError
+        ? error.message
+        : error instanceof Error
+        ? error.message
+        : String(error);
+      void vscode.window.showErrorMessage(`lq update failed: ${message}`);
+      throw error;
     }
-  }
-  return newest?.full;
+  })().finally(() => {
+    ensureFlight = undefined;
+  });
+  return ensureFlight;
 }

@@ -1,0 +1,41 @@
+# Automatic GitHub Release for lq binaries (DL155).
+# Trigger: push a version tag (v0.7.1, v1.0.0, …).
+# Publishes stable-named assets + SHA256SUMS to that tag's Release.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Build all targets and stage release assets
+        run: deno task build:release
+
+      - name: Create GitHub Release and upload assets
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            release/lq_win64.exe
+            release/lq_win_arm64.exe
+            release/lq_mac64
+            release/lq_mac_arm64
+            release/lq_linux64
+            release/lq_linux_arm64
+            release/SHA256SUMS
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

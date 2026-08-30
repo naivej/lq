@@ -8,7 +8,7 @@ import {
   formatChangeTime,
   type LiveChangeEntry,
 } from "./previewSession";
-import { discoverLqBinary } from "./lqClient";
+import { discoverLqBinary, ensureCompanionLq } from "./lqClient";
 import { runLivePreview } from "./lqRunner";
 import {
   forgetOutline,
@@ -247,6 +247,7 @@ class LivePreviewPanel {
     this.paint();
     const timeoutMs = vscode.workspace.getConfiguration("lyx-preview", this.document.uri).get<number>("timeoutMs") ?? 30000;
     try {
+      await ensureCompanionLq(this.document.uri);
       const lqPath = discoverLqBinary(this.document.uri);
       const render = await runLivePreview(lqPath, this.filePath, timeoutMs, abort.signal);
       if (abort.signal.aborted || generation !== this.session.generation) return;
@@ -410,6 +411,11 @@ export function activate(context: vscode.ExtensionContext): void {
           new vscode.LanguageModelTextPart(invokeLiveSelection(selection.get())),
         ]),
     }),
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("lyx-preview.lqPath")) {
+        void ensureCompanionLq();
+      }
+    }),
     vscode.commands.registerCommand("lyx-preview.open", () => {
       const editor = vscode.window.activeTextEditor;
       if (!editor || !editor.document.fileName.toLowerCase().endsWith(".lyx")) {
@@ -457,6 +463,7 @@ export function activate(context: vscode.ExtensionContext): void {
   );
 
   refreshTreeForDoc(vscode.window.activeTextEditor?.document);
+  void ensureCompanionLq();
 }
 
 export function deactivate(): void {
