@@ -174,7 +174,10 @@ export function annotateChanges(root: Node | DocumentNode | Node[] | DocumentNod
   // Handle arrays (multi-match selector results)
   if (Array.isArray(root)) return root.map(r => annotateChanges(r));
 
-  function walk(node: Node | DocumentNode, deletedDepth: number, insertedDepth: number): unknown {
+  function walk(node: Node | DocumentNode | string, deletedDepth: number, insertedDepth: number): unknown {
+    // truncateAtDepth (DL33) replaces cutoff children with a count-indicator
+    // string. Pass it through so annotation cannot turn it into `{}` (DL156).
+    if (typeof node === "string") return node;
     if (node.type === "text") {
       const result: Record<string, unknown> = { type: "text", text: node.text };
       if (deletedDepth > 0) result.changeStatus = "deleted";

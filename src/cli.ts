@@ -1059,16 +1059,17 @@ export async function runCli(args: string[]) {
     return;
   }
 
-  if (cleanArgs.length < 2) {
-    printError("MISSING_ARGS", "Usage: lq <command> <file> [selector] [value]. Run 'lq help' for details.");
-  }
-
-  // Extract --count and --text-only flags early (before positional arg destructuring)
-  // so they don't get mistaken for the file path.
+  // Extract --count and --text-only flags before positional destructuring
+  // so they are not mistaken for the file path (DL29). Re-check arity after
+  // extraction: a flag-only `read --count` must still be MISSING_ARGS (DL156).
   const countOnly = cleanArgs.includes("--count");
   const textOnly = cleanArgs.includes("--text-only");
   const positionalArgs = cleanArgs.filter(a => a !== "--count" && a !== "--text-only");
-  
+
+  if (positionalArgs.length < 2) {
+    printError("MISSING_ARGS", "Usage: lq <command> <file> [selector] [value]. Run 'lq help' for details.");
+  }
+
   const [command, filePath, selector, ...restArgs] = positionalArgs;
 
   // Commands without their own flag parsing must not silently swallow stray
@@ -1304,10 +1305,11 @@ function foldNegativeDepth(args: string[]): string[] {
     });
     
     if (depthStr !== undefined) {
-      const depth = parseInt(depthStr, 10);
-      if (isNaN(depth) || depth < 0) {
+      const trimmed = depthStr.trim();
+      if (!/^\d+$/.test(trimmed)) {
         printError("INVALID_FLAG", "--depth must be a non-negative integer.");
       }
+      const depth = parseInt(trimmed, 10);
       
       if (useFullAst) {
         const maxDepth = computeMaxDepth(ast, 0);

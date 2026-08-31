@@ -218,6 +218,24 @@ Deno.test("CLI - missing arguments", { timeout: 10000 }, async () => {
   assertEquals(result.code, "MISSING_ARGS");
 });
 
+// DL156 F1: --count / --text-only must not strip the required file after the
+// arity check, or the process throws instead of emitting MISSING_ARGS JSON.
+Deno.test("CLI - read mode flags without a file report MISSING_ARGS", { timeout: 10000 }, async () => {
+  const cases = [
+    ["read", "--count"],
+    ["read", "--text-only"],
+    ["read", "--count", "--text-only"],
+  ];
+  for (const args of cases) {
+    const raw = await runCliRaw(args);
+    assertEquals(raw.code, 1, args.join(" "));
+    assertEquals(raw.stderr.includes("TypeError"), false, args.join(" "));
+    const result = JSON.parse(raw.stdout);
+    assertEquals(result.code, "MISSING_ARGS", args.join(" "));
+    assertStringIncludes(result.message, "Usage: lq <command> <file>");
+  }
+});
+
 Deno.test("CLI - missing selector recommends selector help", { timeout: 10000 }, async () => {
   const result = await runCliTest(["read", FIXTURE]);
   assertEquals(result.code, "MISSING_SELECTOR");
@@ -921,6 +939,37 @@ Deno.test("CLI - dump --toc heading text clean + depth = absolute TocLevel", { t
   for (const n of book0Data) {
     assertEquals(n.layout, "Chapter", `book depth 0 = Chapter, got ${n.layout}`);
   }
+});
+
+// ---------------------------------------------------------------------------
+// 25c. DL156: raw-CST dump --depth is a complete non-negative integer;
+// cutoff children stay count-indicator strings after change annotation.
+// ---------------------------------------------------------------------------
+Deno.test("CLI - raw dump --depth rejects incomplete numeric values", { timeout: 10000 }, async () => {
+  for (const value of ["1.5", "1x", "1e2", "+1", "-1"]) {
+    const result = await runCliTest(["dump", FIXTURE, "--depth", value]);
+    assertEquals(result.code, "INVALID_FLAG", value);
+    assertStringIncludes(result.message!, "non-negative integer");
+  }
+});
+
+Deno.test("CLI - raw dump --depth 0 and 1 remain valid", { timeout: 10000 }, async () => {
+  for (const value of ["0", "1"]) {
+    const result = await runCliTest(["dump", FIXTURE, "--depth", value]);
+    assertEquals(result.code, undefined, value);
+    const data = result.data as { type?: string };
+    assertEquals(data.type, "document", value);
+  }
+});
+
+Deno.test("CLI - raw dump --depth 0 keeps the count-indicator string", { timeout: 10000 }, async () => {
+  // headings_paragraphs.lyx root: #LyX comment text, lyxformat property,
+  // document block, trailing empty text — independently counted from the file.
+  const fixture = fromFileUrl(new URL("./fixtures/Synthetic/headings_paragraphs.lyx", import.meta.url));
+  const result = await runCliTest(["dump", fixture, "--depth", "0"]);
+  assertEquals(result.code, undefined);
+  const children = (result.data as { children: unknown[] }).children;
+  assertEquals(children, ["... (1 blocks, 2 text nodes, 1 properties)"]);
 });
 
 // ---------------------------------------------------------------------------
