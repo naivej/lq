@@ -66,6 +66,7 @@ Work inside Git when possible: stage before mutating, review the staged diff. Th
 | Find a paragraph after a quote | `lq read file.lyx "layout[Section]:contains(Intro):first ~ layout[Standard]:until(layout[Section]):adjacent(layout[Quote])" --text-only` |
 | Check selector blast radius | `lq read file.lyx "<selector>" --count` |
 | Inspect exact CST | `lq read file.lyx "<precise selector>"` |
+| Find label names | `lq dump file.lyx "inset[CommandInset label]"` |
 | Deep-debug a node | `lq dump file.lyx "<selector>"` |
 | Find a citation key | `lq bib file.lyx --search "keyword"` |
 | Restore the last mutation | `lq undo file.lyx` |

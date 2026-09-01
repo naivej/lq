@@ -21,7 +21,7 @@ Choose the selection scale deliberately — the smallest scale that expresses th
 
 | Workflow | Prefer | Why |
 |---|---|---|
-| Understand a paragraph's mixed content | `layout[Standard]` with `read --text-only` or `dump` | Shows text, tracked markers, properties, and inset markers together |
+| Understand a paragraph's mixed content | `layout[Standard]` with `dump` | Shows text, tracked markers, property keys, and inset markers together |
 | Fix a phrase in one paragraph | A unique layout selector plus `set --find` | Keeps the operation inside the paragraph while allowing substring replacement |
 | Fix only one tracked/style region | A containing block with `:change(...)` or `:property(...)`, or a `text:change(...)` selector for direct text work | Selects the state run without treating the marker itself as prose |
 | Change one document or inline property | `property[key]` | The property is the unit being changed; do not replace the containing paragraph |

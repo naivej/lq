@@ -2,11 +2,10 @@
 
 ## Cross-references
 
-Find the exact label first — labels are text inside `CommandInset label` blocks:
+Find the exact label first — dump the `CommandInset label` inset; `name` is inset data:
 
 ```bash
-lq read file.lyx "inset[CommandInset label]" --text-only
-lq read file.lyx "inset[CommandInset label]:contains(sec:)" --text-only
+lq dump file.lyx "inset[CommandInset label]"
 ```
 
 Then insert a standard reference:
