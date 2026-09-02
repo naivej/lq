@@ -162,7 +162,7 @@
     "lint": "eslint .",
     "test": "npm run compile && node --test out/fsPath.test.js out/previewSession.test.js out/outlineProvider.test.js out/lqRunner.test.js out/lqEnsure.test.js out/webview.test.js out/liveSelection.test.js",
     "vscode:prepublish": "npm run compile",
-    "package": "npm run compile && vsce package --no-dependencies"
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
