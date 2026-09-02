@@ -4,40 +4,43 @@ on:
   push:
   pull_request:
 
+# fmt is host-independent (Ubuntu only). Clippy lints the compiled crate, so
+# Ubuntu (unix cfg) and Windows (windows cfg). Tests run on every shipping OS.
 jobs:
   test:
+    name: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-latest, ubuntu-latest]
+        include:
+          - os: ubuntu-latest
+            fmt: true
+            clippy: true
+            components: rustfmt, clippy
+          - os: windows-latest
+            fmt: false
+            clippy: true
+            components: clippy
+          - os: macos-latest
+            fmt: false
+            clippy: false
+            components: ""
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: denoland/setup-deno@v2
+      - uses: dtolnay/rust-toolchain@master
         with:
-          deno-version: v2.x
+          toolchain: "1.98.0"
+          components: ${{ matrix.components }}
 
-      - name: Install LyX (macOS)
-        if: runner.os == 'macOS'
-        run: brew install --cask lyx
+      - name: Format
+        if: ${{ matrix.fmt }}
+        run: cargo fmt --check
 
-      - name: Install LyX (Ubuntu)
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y lyx
+      - name: Clippy
+        if: ${{ matrix.clippy }}
+        run: cargo clippy --all-targets -- --deny warnings
 
       - name: Test
-        run: deno test -A
-
-      - name: Build host binary
-        run: deno task build
-
-      - name: Assert host binary
-        run: |
-          if [ "${{ runner.os }}" = "macOS" ]; then
-            ls bin/lq_*_mac
-          else
-            ls bin/lq_*_linux
-          fi
+        run: cargo test

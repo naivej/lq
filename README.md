@@ -11,12 +11,14 @@
 
 ## Quick start
 
-- Build for your platform with `deno task build`, or download the binary
+- Build with Rust 1.98: `cargo build --release`, or download the binary from [Releases](https://github.com/naivej/lq/releases)
 - Run `lq init` to create a local configuration in `.lq/`
 - Run `npx skills add naivej/lq` to install the skill
 - (Optionally) Install the [LyX Preview extension for VS Code](lyx_preview/README.md)
 - Ask your agent to `/use-lq`
 - Explore `lq help` to learn more
+
+From 0.8.0 the CLI is a Rust crate at the repo root. The last TypeScript CLI is branch [`deno`](https://github.com/naivej/lq/tree/deno) (tag `v0.7.1`).
 
 ## Highlights
 
@@ -30,7 +32,7 @@
 ## Compatibility
 
 - Developed and verified against **LyX 2.4 and LyX 2.5**.
-- Tested platform: `macos-latest` and `ubuntu-latest` of GitHub Actions, Debian trixie (by grok bot), and the author's Windows 11.
+- Tested platform: GitHub Actions (`ubuntu-latest`, `windows-latest`, `macos-latest`), and the author's Windows 11.
 
 ### Windows patch
 

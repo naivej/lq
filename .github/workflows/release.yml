@@ -1,5 +1,5 @@
-# Automatic GitHub Release for lq binaries (DL155).
-# Trigger: push a version tag (v0.7.1, v1.0.0, …).
+# Automatic GitHub Release for lq binaries (DL155 names, Cargo 0.8.0).
+# Trigger: push a version tag (v0.8.0, …).
 # Publishes stable-named assets + SHA256SUMS to that tag's Release.
 
 name: Release
@@ -13,20 +13,84 @@ permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: ubuntu-latest
+  build:
+    name: ${{ matrix.asset }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            asset: lq_win64.exe
+            bin: lq.exe
+          - os: windows-latest
+            target: aarch64-pc-windows-msvc
+            asset: lq_win_arm64.exe
+            bin: lq.exe
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            asset: lq_mac64
+            bin: lq
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            asset: lq_mac_arm64
+            bin: lq
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            asset: lq_linux64
+            bin: lq
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-gnu
+            asset: lq_linux_arm64
+            bin: lq
+            linker: aarch64-linux-gnu-gcc
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
 
-      - uses: denoland/setup-deno@v2
+      - uses: dtolnay/rust-toolchain@master
         with:
-          deno-version: v2.x
+          toolchain: "1.98.0"
+          targets: ${{ matrix.target }}
 
-      - name: Build all targets and stage release assets
-        run: deno task build:release
+      - name: Linux aarch64 linker
+        if: ${{ matrix.linker }}
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu
 
-      - name: Create GitHub Release and upload assets
-        uses: softprops/action-gh-release@v2
+      - name: Build
+        env:
+          CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER: ${{ matrix.linker }}
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Stage asset
+        shell: bash
+        run: |
+          mkdir -p release
+          src="target/${{ matrix.target }}/release/${{ matrix.bin }}"
+          cp "$src" "release/${{ matrix.asset }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.asset }}
+          path: release/${{ matrix.asset }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Flatten and checksum
+        run: |
+          mkdir -p release
+          find artifacts -type f -exec cp {} release/ \;
+          cd release
+          sha256sum lq_win64.exe lq_win_arm64.exe lq_mac64 lq_mac_arm64 lq_linux64 lq_linux_arm64 > SHA256SUMS
+          ls -l
+
+      - uses: softprops/action-gh-release@v2
         with:
           files: |
             release/lq_win64.exe

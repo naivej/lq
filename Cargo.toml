@@ -1,0 +1,26 @@
+[package]
+name = "lq"
+version = "0.8.0"
+edition = "2024"
+description = "LyX document CLI"
+license = "MIT"
+publish = false
+
+[dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_System_Pipes"] }
+
+[dev-dependencies]
+serde_json = "1.0.151"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Pipes"] }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

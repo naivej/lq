@@ -20,7 +20,7 @@ Run the same sequence for every task:
 
 1. **Set the task's author name first.** `lq init --author-name "<task>"` before the first mutation, and switch when the task changes. Replay undo is author-scoped, so each task's edits stay separately revertible. Name the task, not the human.
 2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, optional `layoutsDir` overlay, `refresh` — plus `layoutSearch` (order) and `layoutRoots` (paths) when writing config. Change configuration only with authorization. See the state-scope note below.
-3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → count (`--count`) → text-only on the narrowed result. Done when you can see the exact node(s) you will touch.
+3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → `read --count` on the narrowed selector → text-only. `dump` has no `--count`. Done when you can see the exact node(s) you will touch.
 
    **Live pointer.** The user may read `.lyx` from a preview and select text in that preview. When a preview selection is explicitly given (`#lyxSelection` or `@live-selection.json` next to the previewed `.lyx`), read it to understand the context.
 
@@ -40,7 +40,7 @@ Run the same sequence for every task:
 4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not.
 5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.
 6. **Mutate minimally.** Every match is edited — `insert` duplicates its payload per match, broad `set`/`delete` can rewrite the document. Prefer a unique anchor and the smallest scale that expresses the workflow.
-7. **Verify immediately.** Read the same selector back (`--text-only` or `--count`), inspect the JSON warnings, review `git diff`; export with LyX for high-risk changes. Done when the read-back matches the intent and the diff shows only it.
+7. **Verify immediately.** Read the same selector back (`--text-only` or `--count`), inspect the JSON `warnings` (preview may warn on include/listing/layout/bind/bib UTF-8 without failing), review `git diff`; export with LyX for high-risk changes. Done when the read-back matches the intent and the diff shows only it.
 
 Work inside Git when possible: stage before mutating, review the staged diff. There is no `--dry-run`; counts, schema, Git, and snapshots are the safety workflow. Rollback by intent:
 
