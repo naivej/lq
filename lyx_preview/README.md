@@ -4,8 +4,6 @@ A VS Code companion extension for [`lq`](https://github.com/naivej/lq) — the s
 
 LyX Preview renders a read-only live preview of saved `.lyx` files directly inside a VS Code webview, combining visual feedback, outline navigation, and AI-assisted workflows.
 
----
-
 ## Features
 
 - **LyX-Familiar Appearance:** Renders layouts, sections, formatting, tables, images, and math with styling faithful to the LyX editor.
@@ -18,13 +16,11 @@ LyX Preview renders a read-only live preview of saved `.lyx` files directly insi
 - **Status Bar Inspection:** Displays active CST selectors, tracked-change author/timestamp metadata, and selection details in the VS Code status bar.
 - **Built-in Webview Search:** Full support for standard search (`Ctrl+F` / `Cmd+F`) inside the preview panel.
 
----
-
 ## Getting Started
 
 ### 1. Prerequisites
 
-1. Set `lq`'s installation path in `lyx-preview.lqPath`. On load (and whenever that setting changes), LyX Preview downloads or updates the matching binary from the latest GitHub Release. For development, the extension first loads (but does not download or update) the Cargo release binary at `~/Github/lq_dev/lq/target/release/lq.exe` (or `lq` on Unix). Remove or rename that file to test GitHub-managed `lqPath` download.
+1. Set `lq`'s installation path in `lyx-preview.lqPath`. On load (and whenever that setting changes), LyX Preview downloads or updates the matching binary from the latest GitHub Release. The development path `~/Github/lq_dev/lq/target/release` will be used before `lqPath` (but not managed), keep development path clean in production.
 
 2. Run `npx skills add naivej/lq` to install the `use-lq` skill for AI agent workflows.
 
@@ -41,8 +37,6 @@ When reviewing documents with revision marks, click the **Tracked-change view** 
 ### 4. Share Selection with an AI Agent
 - Select text or constructs inside the preview.
 - Share the context with your agent by referencing `@live-selection.json` or mentioning `#lyxSelection` in VS Code chat.
-
----
 
 ## Relationship with LyXHTML
 

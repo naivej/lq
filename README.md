@@ -14,11 +14,9 @@
 - Build with Rust 1.98: `cargo build --release`, or download the binary from [Releases](https://github.com/naivej/lq/releases)
 - Run `lq init` to create a local configuration in `.lq/`
 - Run `npx skills add naivej/lq` to install the skill
-- (Optionally) Install the [LyX Preview extension for VS Code](lyx_preview/README.md)
+- (Optionally) Install the [LyX Preview extension for VS Code](lyx_preview/README.md) and let it download/update `lq`.
 - Ask your agent to `/use-lq`
 - Explore `lq help` to learn more
-
-From 0.8.0 the CLI is a Rust crate at the repo root. The last TypeScript CLI is branch [`deno`](https://github.com/naivej/lq/tree/deno) (tag `v0.7.1`).
 
 ## Highlights
 

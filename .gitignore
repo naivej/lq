@@ -1,8 +1,4 @@
 /target/
-bin
-deno.lock
-cov
-audit
 .lq
 lyx_preview/node_modules/
 lyx_preview/out/
