@@ -76,6 +76,15 @@ fn set_cached_ast_inner(hash: &str, ast: &Document, state: &StatePaths) -> std::
 }
 
 fn prune_cache(dir: &Path) {
+    prune_dir_by_ext(dir, "cst");
+}
+
+/// Prune `cache/raster/*.png` to `max_cache_entries` (031, independent of `.cst`).
+pub(crate) fn prune_raster_dir(dir: &Path) {
+    prune_dir_by_ext(dir, "png");
+}
+
+fn prune_dir_by_ext(dir: &Path, ext: &str) {
     let max = max_cache_entries();
     let Ok(rd) = fs::read_dir(dir) else {
         return;
@@ -83,7 +92,7 @@ fn prune_cache(dir: &Path) {
     let mut entries: Vec<(PathBuf, Option<SystemTime>)> = Vec::new();
     for ent in rd.flatten() {
         let path = ent.path();
-        if path.extension().and_then(|s| s.to_str()) != Some("cst") {
+        if path.extension().and_then(|s| s.to_str()) != Some(ext) {
             continue;
         }
         if !path.is_file() {

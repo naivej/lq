@@ -1758,11 +1758,19 @@ fn render_info(block: NodeId, ctx: &mut RenderCtx<'_>) -> String {
         if arg.is_empty() {
             return String::new();
         }
+        if ctx.icon_aliases.is_none() {
+            ctx.icon_aliases = Some(match ctx.system_images_dir.as_deref() {
+                Some(dir) => graphics::load_icon_aliases(dir, Some(&mut ctx.warnings)),
+                None => Vec::new(),
+            });
+        }
+        let aliases = ctx.icon_aliases.as_deref().unwrap_or(&[]);
         let src = graphics::resolve_info_icon_data_uri(
             &arg,
             ctx.system_images_dir.as_deref(),
             ctx.magick_path.as_deref(),
-            Some(&mut ctx.warnings),
+            aliases,
+            &mut ctx.icon_uri_memo,
         );
         let file_name = graphics::resolved_info_icon_name(
             &arg,
@@ -2745,8 +2753,22 @@ fn render_graphics(block: NodeId, ctx: &mut RenderCtx<'_>, owner_parent: Option<
         let path = resolve_graphic_path(&filename, ctx);
         filepath = path.to_string_lossy().into_owned();
         if path.is_file() && !is_web_image(&path) {
-            src = graphics::rasterize_to_png_data_uri(&path, ctx.magick_path.as_deref())
-                .unwrap_or_default();
+            let key = path.to_string_lossy().into_owned();
+            if let Some(hit) = ctx.preview_uri_memo.get(&key) {
+                src = hit.clone();
+                if let Some(p) = ctx.preview_path_memo.get(&key) {
+                    filepath = p.clone();
+                }
+            } else if let Some(png) = graphics::ensure_raster_png(
+                &path,
+                ctx.magick_path.as_deref(),
+                ctx.raster_dir.as_deref(),
+            ) {
+                src = path_to_file_url(&png);
+                filepath = png.to_string_lossy().into_owned();
+                ctx.preview_uri_memo.insert(key.clone(), src.clone());
+                ctx.preview_path_memo.insert(key, filepath.clone());
+            }
         }
         if src.is_empty() {
             src = path_to_file_url(&path);

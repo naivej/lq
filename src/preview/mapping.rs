@@ -20,6 +20,8 @@ pub(crate) fn build_query_index(ast: &Document, root: NodeId) -> QueryIndex {
     let mut order = Vec::new();
     collect_query_blocks(ast, root, &mut order);
     let mut by_id = HashMap::new();
+    let mut seen: HashMap<(QueryTag, String), usize> = HashMap::new();
+    let mut formula_n = 0usize;
     for &node in &order {
         let (tag_s, name) = match &ast.node(node).kind {
             NodeKind::Block { tag, args, .. } => {
@@ -32,35 +34,27 @@ pub(crate) fn build_query_index(ast: &Document, root: NodeId) -> QueryIndex {
             "inset" => QueryTag::Inset,
             _ => continue,
         };
-        let mut n = 0usize;
-        for &other in &order {
-            let NodeKind::Block {
-                tag: ot, args: oa, ..
-            } = &ast.node(other).kind
-            else {
-                continue;
-            };
-            if ot != tag_s {
-                continue;
-            }
-            if !args_match_selector(oa.as_deref(), name) {
-                continue;
-            }
-            n += 1;
-            if other == node {
-                break;
-            }
+        let first = name.split_whitespace().next().unwrap_or("");
+        *seen.entry((tag, name.to_string())).or_insert(0) += 1;
+        if first != name && !first.is_empty() {
+            *seen.entry((tag, first.to_string())).or_insert(0) += 1;
         }
+        let is_formula = tag == QueryTag::Inset && first == "Formula";
+        let global_n = if is_formula {
+            formula_n += 1;
+            formula_n
+        } else {
+            *seen.get(&(tag, name.to_string())).unwrap_or(&1)
+        };
         by_id.insert(
             node,
             QueryIndexEntry {
-                tag,
                 name: name.to_string(),
-                global_n: n,
+                global_n,
             },
         );
     }
-    QueryIndex { by_id, order }
+    QueryIndex { by_id }
 }
 
 fn collect_query_blocks(ast: &Document, id: NodeId, out: &mut Vec<NodeId>) {
@@ -201,27 +195,13 @@ pub(crate) fn inset_owner_selector(ctx: &RenderCtx<'_>, block: NodeId) -> String
     let kind = inset_selector_kind(ast, block);
     let index = active_query_index(ctx);
     if kind == "Formula" {
-        let mut n = 0usize;
-        for &node in &index.order {
-            let Some(rec) = index.by_id.get(&node) else {
-                continue;
-            };
-            if rec.tag != QueryTag::Inset {
-                continue;
-            }
-            let args = match &ast.node(node).kind {
-                NodeKind::Block { args, .. } => args.as_deref(),
-                _ => continue,
-            };
-            if !args_match_selector(args, "Formula") {
-                continue;
-            }
-            n += 1;
-            if node == block {
-                break;
-            }
-        }
-        return format!("inset[Formula]:nth-match({})", if n == 0 { 1 } else { n });
+        let n = index
+            .by_id
+            .get(&block)
+            .map(|r| r.global_n)
+            .filter(|&n| n > 0)
+            .unwrap_or(1);
+        return format!("inset[Formula]:nth-match({n})");
     }
     let rec = index.by_id.get(&block);
     let name = rec.map(|r| r.name.as_str()).unwrap_or(kind.as_str());

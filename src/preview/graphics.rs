@@ -1,7 +1,11 @@
-//! ImageMagick discovery and rasterization (DL148).
+//! ImageMagick discovery and rasterization (DL148). Info icons (031).
 
+use crate::cache::{hash_file, max_cache_entries, prune_raster_dir};
 use crate::paths::{TextReadError, read_text_file};
+use flate2::read::GzDecoder;
 use std::env;
+use std::fs;
+use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 
 /// Resolve ImageMagick (`magick`). Exported for discovery tests (DL148).
@@ -106,9 +110,53 @@ fn prepend_path_dir(dir: &Path) -> Option<std::ffi::OsString> {
     env::join_paths(paths).ok()
 }
 
-/// Rasterize a non-web image to a PNG data URI via ImageMagick (DL148).
-pub(crate) fn rasterize_to_png_data_uri(path: &Path, magick: Option<&Path>) -> Option<String> {
+const RASTER_RECIPE: &str = "d120-p0";
+
+/// Magick PNG on disk for a non-web figure (031). `None` if Magick skipped or failed.
+pub(crate) fn ensure_raster_png(
+    source: &Path,
+    magick: Option<&Path>,
+    raster_dir: Option<&Path>,
+) -> Option<PathBuf> {
+    if !source.is_file() {
+        return None;
+    }
+    let dest = raster_dest(source, raster_dir)?;
+    if dest.is_file() {
+        return Some(dest);
+    }
+    let png = magick_png_bytes(source, magick)?;
+    if max_cache_entries() == 0 {
+        return None;
+    }
+    fs::create_dir_all(dest.parent()?).ok()?;
+    let tmp = dest.with_extension("png.tmp");
+    fs::write(&tmp, &png).ok()?;
+    if dest.exists() {
+        let _ = fs::remove_file(&dest);
+    }
+    fs::rename(&tmp, &dest).ok()?;
+    if let Some(dir) = dest.parent() {
+        prune_raster_dir(dir);
+    }
+    Some(dest)
+}
+
+fn raster_dest(source: &Path, raster_dir: Option<&Path>) -> Option<PathBuf> {
+    let dir = raster_dir?;
+    if max_cache_entries() == 0 {
+        return None;
+    }
+    let hash = hash_file(source).ok()?;
+    Some(dir.join(format!("{hash}-{RASTER_RECIPE}.png")))
+}
+
+fn magick_png_bytes(path: &Path, magick: Option<&Path>) -> Option<Vec<u8>> {
+    if !path.is_file() {
+        return None;
+    }
     let magick = magick?;
+    record_magick_spawn();
     let args = raster_magick_args(path);
     let mut cmd = std::process::Command::new(magick);
     cmd.args(&args);
@@ -121,10 +169,19 @@ pub(crate) fn rasterize_to_png_data_uri(path: &Path, magick: Option<&Path>) -> O
     if !output.status.success() || output.stdout.is_empty() {
         return None;
     }
-    Some(format!(
-        "data:image/png;base64,{}",
-        base64_encode(&output.stdout)
-    ))
+    Some(output.stdout)
+}
+
+fn record_magick_spawn() {
+    let Ok(log) = env::var("LQ_MAGICK_CALL_LOG") else {
+        return;
+    };
+    if log.is_empty() {
+        return;
+    }
+    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(log) {
+        let _ = f.write_all(b"1\n");
+    }
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -167,7 +224,10 @@ pub(crate) fn resolved_info_icon_name(
     }
     let munged = munge_icon_name(trimmed);
     match images_dir {
-        Some(dir) => apply_icon_aliases(&munged, dir, warnings),
+        Some(dir) => {
+            let aliases = load_icon_aliases(dir, warnings);
+            apply_icon_aliases(&munged, &aliases)
+        }
         None => munged,
     }
 }
@@ -176,25 +236,32 @@ pub(crate) fn resolve_info_icon_data_uri(
     name: &str,
     images_dir: Option<&Path>,
     magick_path: Option<&Path>,
-    warnings: Option<&mut Vec<String>>,
+    aliases: &[(String, String)],
+    memo: &mut std::collections::HashMap<String, Option<String>>,
 ) -> Option<String> {
-    let images_dir = images_dir?;
     if name.is_empty() {
         return None;
     }
-    let unique = icon_file_bases(name, images_dir, warnings);
-    if magick_path.is_some() {
-        for base in &unique {
-            let svgz_candidates = [
-                images_dir.join(format!("{base}.svgz")),
-                images_dir.join("oxygen").join(format!("{base}.svgz")),
-                images_dir.join("adwaita").join(format!("{base}.svgz")),
-                images_dir.join("classic").join(format!("{base}.svgz")),
-            ];
-            for file in svgz_candidates {
-                if let Some(uri) = rasterize_to_png_data_uri(&file, magick_path) {
-                    return Some(uri);
-                }
+    if let Some(hit) = memo.get(name) {
+        return hit.clone();
+    }
+    let uri = resolve_info_icon_uncached(name, images_dir, magick_path, aliases);
+    memo.insert(name.to_string(), uri.clone());
+    uri
+}
+
+fn resolve_info_icon_uncached(
+    name: &str,
+    images_dir: Option<&Path>,
+    magick_path: Option<&Path>,
+    aliases: &[(String, String)],
+) -> Option<String> {
+    let images_dir = images_dir?;
+    let unique = icon_file_bases(name, aliases);
+    for base in &unique {
+        for file in svgz_paths(images_dir, base) {
+            if let Some(uri) = svgz_to_svg_data_uri(&file) {
+                return Some(uri);
             }
         }
     }
@@ -207,21 +274,59 @@ pub(crate) fn resolve_info_icon_data_uri(
             if !file.is_file() {
                 continue;
             }
-            if let Ok(bytes) = std::fs::read(&file)
+            if let Ok(bytes) = fs::read(&file)
                 && !bytes.is_empty()
             {
                 return Some(format!("data:image/png;base64,{}", base64_encode(&bytes)));
             }
         }
     }
+    if magick_path.is_some() {
+        for base in &unique {
+            for file in svgz_paths(images_dir, base) {
+                if !file.is_file() {
+                    continue;
+                }
+                if let Some(png) = magick_png_bytes(&file, magick_path) {
+                    return Some(format!("data:image/png;base64,{}", base64_encode(&png)));
+                }
+            }
+        }
+    }
     None
+}
+
+fn svgz_paths(images_dir: &Path, base: &str) -> [PathBuf; 4] {
+    [
+        images_dir.join(format!("{base}.svgz")),
+        images_dir.join("oxygen").join(format!("{base}.svgz")),
+        images_dir.join("adwaita").join(format!("{base}.svgz")),
+        images_dir.join("classic").join(format!("{base}.svgz")),
+    ]
+}
+
+fn svgz_to_svg_data_uri(path: &Path) -> Option<String> {
+    if !path.is_file() {
+        return None;
+    }
+    let file = fs::File::open(path).ok()?;
+    let mut decoder = GzDecoder::new(file);
+    let mut svg = String::new();
+    decoder.read_to_string(&mut svg).ok()?;
+    if !svg.to_ascii_lowercase().contains("<svg") {
+        return None;
+    }
+    Some(format!(
+        "data:image/svg+xml;base64,{}",
+        base64_encode(svg.as_bytes())
+    ))
 }
 
 fn munge_icon_name(name: &str) -> String {
     name.replace('\\', "backslash").replace([' ', ';'], "_")
 }
 
-fn load_icon_aliases(
+pub(crate) fn load_icon_aliases(
     images_dir: &Path,
     warnings: Option<&mut Vec<String>>,
 ) -> Vec<(String, String)> {
@@ -262,21 +367,17 @@ fn load_icon_aliases(
     }
 }
 
-fn apply_icon_aliases(name: &str, images_dir: &Path, warnings: Option<&mut Vec<String>>) -> String {
+fn apply_icon_aliases(name: &str, aliases: &[(String, String)]) -> String {
     let mut out = name.to_string();
-    for (from, to) in load_icon_aliases(images_dir, warnings) {
-        if out.contains(&from) {
-            out = out.replace(&from, &to);
+    for (from, to) in aliases {
+        if out.contains(from.as_str()) {
+            out = out.replace(from, to);
         }
     }
     out
 }
 
-fn icon_file_bases(
-    name: &str,
-    images_dir: &Path,
-    mut warnings: Option<&mut Vec<String>>,
-) -> Vec<String> {
+fn icon_file_bases(name: &str, aliases: &[(String, String)]) -> Vec<String> {
     let trimmed = name.trim();
     if trimmed.is_empty() {
         return Vec::new();
@@ -293,10 +394,93 @@ fn icon_file_bases(
         if !bases.contains(&b) {
             bases.push(b.clone());
         }
-        let aliased = apply_icon_aliases(&b, images_dir, warnings.as_deref_mut());
+        let aliased = apply_icon_aliases(&b, aliases);
         if aliased != b && !bases.contains(&aliased) {
             bases.push(aliased);
         }
     }
     bases
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use flate2::Compression;
+    use flate2::write::GzEncoder;
+    use std::collections::HashMap;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_dir(prefix: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!(
+            "lq_g_{prefix}_{}_{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    #[test]
+    fn missing_source_does_not_spawn_magick() {
+        let dir = temp_dir("miss");
+        let log = dir.join("calls.txt");
+        unsafe {
+            env::set_var("LQ_MAGICK_CALL_LOG", &log);
+        }
+        let fake_magick = dir.join("magick.exe");
+        fs::write(&fake_magick, b"x").unwrap();
+        let missing = dir.join("nope.pdf");
+        assert!(
+            ensure_raster_png(&missing, Some(&fake_magick), Some(&dir.join("raster"))).is_none()
+        );
+        unsafe {
+            env::remove_var("LQ_MAGICK_CALL_LOG");
+        }
+        assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn existing_raster_skips_magick() {
+        let dir = temp_dir("hit");
+        let src = dir.join("fig.pdf");
+        fs::write(&src, b"%PDF-1.4 fake").unwrap();
+        let raster = dir.join("raster");
+        fs::create_dir_all(&raster).unwrap();
+        let dest = raster_dest(&src, Some(&raster)).unwrap();
+        fs::write(&dest, b"png-bytes").unwrap();
+        let log = dir.join("calls.txt");
+        unsafe {
+            env::set_var("LQ_MAGICK_CALL_LOG", &log);
+        }
+        let fake_magick = dir.join("magick.exe");
+        fs::write(&fake_magick, b"x").unwrap();
+        let got = ensure_raster_png(&src, Some(&fake_magick), Some(&raster)).unwrap();
+        unsafe {
+            env::remove_var("LQ_MAGICK_CALL_LOG");
+        }
+        assert_eq!(got, dest);
+        assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn svgz_becomes_svg_data_uri_and_memos() {
+        let dir = temp_dir("svgz");
+        let svg = "<svg xmlns='http://www.w3.org/2000/svg'></svg>";
+        let mut enc = GzEncoder::new(Vec::new(), Compression::default());
+        enc.write_all(svg.as_bytes()).unwrap();
+        let gz = enc.finish().unwrap();
+        fs::write(dir.join("foo.svgz"), gz).unwrap();
+        let mut memo = HashMap::new();
+        let uri = resolve_info_icon_data_uri("foo", Some(&dir), None, &[], &mut memo).unwrap();
+        assert!(uri.starts_with("data:image/svg+xml;base64,"));
+        let again = resolve_info_icon_data_uri("foo", Some(&dir), None, &[], &mut memo).unwrap();
+        assert_eq!(uri, again);
+        assert_eq!(memo.len(), 1);
+        let _ = fs::remove_dir_all(&dir);
+    }
 }

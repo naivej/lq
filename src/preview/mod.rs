@@ -549,6 +549,8 @@ pub struct LiveRenderOptions {
     pub layouts_dir: Option<PathBuf>,
     pub overlay_layouts_dir: Option<PathBuf>,
     pub system_layouts_dir: Option<PathBuf>,
+    /// `.lq/cache/raster` for Magick figure PNGs (031). `None` → derive from cwd/state.
+    pub raster_dir: Option<PathBuf>,
 }
 
 pub struct LiveHtml {
@@ -602,6 +604,18 @@ pub fn render_live_html(
         system_doc_dir: system_ref.map(|p| p.join("..").join("doc")),
         system_images_dir: images_dir_from_layouts(system_ref),
         magick_path: graphics::find_magick(system_ref),
+        raster_dir: options.raster_dir.clone().or_else(|| {
+            let cwd = options
+                .file_path
+                .as_deref()
+                .and_then(|p| p.parent())
+                .unwrap_or_else(|| Path::new("."));
+            crate::paths::resolve_state_paths(cwd, None).map(|s| s.cache.join("raster"))
+        }),
+        preview_uri_memo: HashMap::new(),
+        preview_path_memo: HashMap::new(),
+        icon_uri_memo: HashMap::new(),
+        icon_aliases: None,
         labels: HashMap::new(),
         label_kinds: HashMap::new(),
         label_titles: HashMap::new(),
@@ -679,6 +693,7 @@ pub fn build_live_response(
             layouts_dir: None,
             overlay_layouts_dir: overlay_layouts_dir.map(Path::to_path_buf),
             system_layouts_dir: system_layouts_dir.map(Path::to_path_buf),
+            raster_dir: None,
         },
     )?;
     let hash = match disk_hash {
@@ -712,17 +727,15 @@ pub fn build_live_response(
 }
 
 pub(crate) struct QueryIndexEntry {
-    pub tag: QueryTag,
     pub name: String,
     pub global_n: usize,
 }
 
 pub(crate) struct QueryIndex {
     pub by_id: HashMap<NodeId, QueryIndexEntry>,
-    pub order: Vec<NodeId>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub(crate) enum QueryTag {
     Layout,
     Inset,
@@ -792,6 +805,11 @@ pub(crate) struct RenderCtx<'a> {
     pub system_doc_dir: Option<PathBuf>,
     pub system_images_dir: Option<PathBuf>,
     pub magick_path: Option<PathBuf>,
+    pub raster_dir: Option<PathBuf>,
+    pub preview_uri_memo: HashMap<String, String>,
+    pub preview_path_memo: HashMap<String, String>,
+    pub icon_uri_memo: HashMap<String, Option<String>>,
+    pub icon_aliases: Option<Vec<(String, String)>>,
     pub labels: HashMap<String, String>,
     pub label_kinds: HashMap<String, LabelKind>,
     pub label_titles: HashMap<String, String>,

@@ -436,6 +436,7 @@ fn live_renderer_missing_textclass_layout_is_a_hard_error() {
             layouts_dir: Some(PathBuf::from(r"Z:\lq-no-such-layouts")),
             overlay_layouts_dir: None,
             system_layouts_dir: None,
+            raster_dir: None,
         },
     ) else {
         panic!("expected LAYOUT_NOT_FOUND");
@@ -1952,7 +1953,10 @@ fn live_renderer_help_math_lyx_phantom_chips_no_math_mode_unknown_dump() {
     }
     if html.contains(r#"data-info-icon="math-mode""#) {
         assert!(html.contains(r#"<img class="info-icon""#));
-        assert!(html.contains("data:image/png;base64,"));
+        assert!(
+            html.contains("data:image/svg+xml") || html.contains("data:image/png;base64,"),
+            "info icon img must embed svg or png"
+        );
     } else {
         assert!(html.contains(r#"aria-label="math-mode""#));
     }
@@ -1979,8 +1983,8 @@ fn live_renderer_help_math_lyx_phantom_chips_no_math_mode_unknown_dump() {
     assert!(html.contains(r#"data-info-icon="math-macro newmacroname_newcommand""#));
     assert!(
         html.contains(r#"data-info-icon="math-macro newmacroname_newcommand""#)
-            && html.contains("data:image/png;base64,"),
-        "math-macro toolbar Info icon must resolve classic PNG (not missing/glyph-only)"
+            && (html.contains("data:image/svg+xml") || html.contains("data:image/png;base64,")),
+        "math-macro toolbar Info icon must embed svg or png (not missing/glyph-only)"
     );
     assert!(
         !html.contains(r#"encoding="application/x-tex">$\begin{cases}"#),
@@ -2545,7 +2549,10 @@ fn live_renderer_help_tutorial_lyx_toc_info_lyx_code_quotes() {
         "Tutorial toolbar Info icons must render as img or glyph"
     );
     if html.contains(r#"data-info-icon="buffer-view""#) {
-        assert!(html.contains("data:image/png;base64,"));
+        assert!(
+            html.contains("data:image/svg+xml") || html.contains("data:image/png;base64,"),
+            "info icon img must embed svg or png"
+        );
     }
 }
 

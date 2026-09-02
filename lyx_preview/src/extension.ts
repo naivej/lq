@@ -1,4 +1,5 @@
-import { basename, dirname } from "node:path";
+import { homedir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { randomBytes } from "node:crypto";
 import * as vscode from "vscode";
 import { normalizeFsPath, sameFsPath } from "./fsPath";
@@ -169,8 +170,19 @@ class LivePreviewPanel {
     const roots = new Map<string, vscode.Uri>();
     for (const folder of vscode.workspace.workspaceFolders ?? []) {
       roots.set(folder.uri.toString(), folder.uri);
+      addLqCacheRoot(roots, folder.uri.fsPath);
     }
-    roots.set(document.uri.toString(), vscode.Uri.file(dirname(document.uri.fsPath)));
+    const docDir = dirname(document.uri.fsPath);
+    roots.set(document.uri.toString(), vscode.Uri.file(docDir));
+    addLqCacheRoot(roots, docDir);
+    let walk = docDir;
+    for (let i = 0; i < 8; i++) {
+      const parent = dirname(walk);
+      if (parent === walk) break;
+      walk = parent;
+      addLqCacheRoot(roots, walk);
+    }
+    addLqCacheRoot(roots, homedir());
     const panel = vscode.window.createWebviewPanel(
       VIEW_TYPE,
       titleFor(document),
@@ -332,6 +344,11 @@ class LivePreviewPanel {
     void vscode.commands.executeCommand("setContext", "lyxPreview.liveOpen", false);
     for (const d of this.disposables) d.dispose();
   }
+}
+
+function addLqCacheRoot(roots: Map<string, vscode.Uri>, dir: string): void {
+  const lq = join(dir, ".lq");
+  roots.set(lq, vscode.Uri.file(lq));
 }
 
 function rewriteLocalImages(html: string, webview: vscode.Webview): string {
