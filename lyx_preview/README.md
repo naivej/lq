@@ -24,7 +24,7 @@ LyX Preview renders a read-only live preview of saved `.lyx` files directly insi
 
 ### 1. Prerequisites
 
-1. Set `lq`'s installation path in `lyx-preview.lqPath`. On load (and whenever that setting changes), LyX Preview downloads or updates the matching binary from the latest GitHub Release. For development, the extension first loads (but does not download or update) `lq*` from `~/Github/lq_dev/lq/bin/`. Keep this directory empty in production.
+1. Set `lq`'s installation path in `lyx-preview.lqPath`. On load (and whenever that setting changes), LyX Preview downloads or updates the matching binary from the latest GitHub Release. For development, the extension first loads (but does not download or update) the Cargo release binary at `~/Github/lq_dev/lq/target/release/lq.exe` (or `lq` on Unix). Remove or rename that file to test GitHub-managed `lqPath` download.
 
 2. Run `npx skills add naivej/lq` to install the `use-lq` skill for AI agent workflows.
 

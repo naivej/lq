@@ -47,6 +47,20 @@ describe("lqResolve", () => {
     }
   });
 
+  it("prefers cargo lq.exe over other lq* names", () => {
+    const dir = join(tmpdir(), `lq-resolve-cargo-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    try {
+      writeFileSync(join(dir, "lq.d"), "dep");
+      writeFileSync(join(dir, "lq_old"), "a");
+      const exe = join(dir, "lq.exe");
+      writeFileSync(exe, "bin");
+      assert.equal(findLqInDir(dir), exe);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it("uses managed lqPath when dev dir empty", () => {
     const dir = join(tmpdir(), `lq-resolve-empty-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
