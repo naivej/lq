@@ -8,8 +8,8 @@
 #     Box, Float figure/table, Wrap figure, Branch, Caption (nested)
 #   Charstyle Flex (inline, NOT chips): Code, Emph, Strong, Noun, URL
 #   Plain-text marker chips (Live-only): ERT, Phantom/HPhantom/VPhantom,
-#     Index (+ IndexMacro see), Nomenclature (symbol + Argument description disclosure),
-#     Argument 1 Short Title
+#     Nomenclature (symbol + Argument description disclosure), Argument 1 Short Title
+#   Index chip "Idx" with nested IndexMacro boxes (Subentry / See)
 #   Other Arguments (post:, 2, …): Live silent (parent-consumed)
 #   Content: Formula (inline+display), FormulaMacro, Graphics, Tabular,
 #     listings, Preview (non-click bordered box)
@@ -378,6 +378,16 @@ status collapsed
 
 \begin_layout Plain Layout
 IndexTerm
+\begin_inset IndexMacro subentry
+status collapsed
+
+\begin_layout Plain Layout
+SubTerm
+\end_layout
+
+\end_inset
+
+
 \begin_inset IndexMacro see
 status collapsed
 

@@ -1288,12 +1288,19 @@ fn live_renderer_disclosure_collapsibles_covers_foldable_inset_set() {
         r#"class="disclose ert""#,
         r#"class="disclose phantom""#,
         r#"class="disclose index-marker""#,
+        r#"class="disclose index-macro""#,
         r#"class="disclose nomencl""#,
         r#"class="disclose argument""#,
     ] {
         assert!(html.contains(needle), "missing {needle}");
     }
     assert!(html.contains(r#">Float: Figure</summary>"#));
+    assert!(html.contains(r#">Idx</summary>"#));
+    assert!(html.contains(r#">Subentry</summary>"#));
+    assert!(html.contains(r#">See</summary>"#));
+    assert!(html.contains("IndexTerm"));
+    assert!(html.contains("SubTerm"));
+    assert!(html.contains("SeeAlso"));
     assert!(html.contains("phantom body"));
     assert!(!html.contains("box-full"));
 }
@@ -2363,6 +2370,26 @@ fn live_renderer_help_embeddedobjects_lyx_margin_notes_wrap_listings() {
     };
     assert!(html.contains(r#"<article class="lyx-live">"#));
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
+    let heading_6_1 = html
+        .find(r#"heading-number">6.1 </span>Wrap Floats"#)
+        .expect("section 6.1 Wrap Floats heading");
+    let heading_end = html[heading_6_1..]
+        .find("</h2>")
+        .map(|n| heading_6_1 + n)
+        .expect("section 6.1 heading close");
+    let heading = &html[heading_6_1..heading_end];
+    assert!(
+        heading.contains(r#">Idx</summary>"#),
+        "section 6.1 index chip must say Idx"
+    );
+    assert!(
+        heading.contains(r#"class="disclose index-macro""#),
+        "section 6.1 index must nest a subentry box"
+    );
+    assert!(
+        heading.contains(r#">Subentry</summary>"#),
+        "section 6.1 subentry chip must sit inside the index box"
+    );
     assert!(html.contains(r#"class="disclose marginal""#));
     assert!(html.contains("This is a margin note."));
     assert!(html.contains(r#"class="wrap wrap-left""#));

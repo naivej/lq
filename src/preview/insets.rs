@@ -762,28 +762,22 @@ fn render_inset_body(
     }
     if kind.starts_with("Index ") || kind == "Index" {
         let entry = collect_index_entry(block, ctx);
-        let text = if !entry.see.is_empty() && !entry.terms.is_empty() {
-            format!("{} (see {})", entry.terms.join(", "), entry.see)
-        } else if !entry.terms.is_empty() {
-            entry.terms.join(", ")
-        } else {
-            entry.see.clone()
-        };
-        let label = if !entry.terms.is_empty() {
-            entry.terms.join(", ")
-        } else if !entry.see.is_empty() {
-            entry.see.clone()
-        } else {
-            "Index".into()
-        };
+        let inner = render_inset_layouts(block, parent_state, ctx);
         return format!(
             r#"<a id="{}"></a>{}"#,
             escape_live_html(&entry.id),
-            wrap_plain_text_marker(ctx, "index-marker", &label, &text)
+            wrap_disclosure(ctx, "index-marker", "Idx", &inner, None)
         );
     }
     if kind.starts_with("IndexMacro ") || kind == "IndexMacro" {
-        return String::new();
+        let inner = render_inset_layouts(block, parent_state, ctx);
+        return wrap_disclosure(
+            ctx,
+            "index-macro",
+            index_macro_summary_label(kind),
+            &inner,
+            None,
+        );
     }
     if kind == "Nomenclature" || kind.starts_with("Nomenclature ") {
         let entry = collect_nomencl_entry(block, ctx);
@@ -1372,6 +1366,21 @@ fn phantom_summary_label(kind: &str) -> String {
         "VPhantom".into()
     } else {
         "Phantom".into()
+    }
+}
+
+fn index_macro_summary_label(kind: &str) -> &'static str {
+    let rest = kind
+        .strip_prefix("IndexMacro")
+        .unwrap_or(kind)
+        .trim()
+        .to_ascii_lowercase();
+    match rest.as_str() {
+        "subentry" => "Subentry",
+        "see" => "See",
+        "seealso" => "See also",
+        "sortkey" => "Sort as",
+        _ => "Index",
     }
 }
 

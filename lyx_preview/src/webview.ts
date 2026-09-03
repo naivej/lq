@@ -531,7 +531,6 @@ details.disclose.flex-container > summary {
 /* Denylist plain-text markers (Live-only; native XHTML omits these). */
 details.disclose.ert > summary,
 details.disclose.phantom > summary,
-details.disclose.index-marker > summary,
 details.disclose.nomencl-marker > summary {
   background: #f0f0f0;
   border-color: #777;
@@ -539,9 +538,15 @@ details.disclose.nomencl-marker > summary {
   font-family: ui-monospace, Consolas, monospace;
   font-weight: 600;
 }
+details.disclose.index-marker > summary,
+details.disclose.index-macro > summary {
+  background: #f0f0f0;
+  border-color: #777;
+  color: #333;
+  font-weight: 600;
+}
 details.disclose.ert[open] > .disclose-body,
 details.disclose.phantom[open] > .disclose-body,
-details.disclose.index-marker[open] > .disclose-body,
 details.disclose.nomencl-marker[open] > .disclose-body {
   font-family: ui-monospace, Consolas, monospace;
   font-size: 0.9em;
