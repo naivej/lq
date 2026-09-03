@@ -783,6 +783,14 @@ fn count_substr(hay: &str, needle: &str) -> usize {
     hay.matches(needle).count()
 }
 
+fn img_tag_for<'a>(html: &'a str, filename: &str) -> Option<&'a str> {
+    let needle = format!(r#"data-filename="{filename}""#);
+    let at = html.find(&needle)?;
+    let start = html[..at].rfind("<img")?;
+    let end = at + html[at..].find('>')? + 1;
+    Some(&html[start..end])
+}
+
 fn find_li_starting(html: &str, text: &str) -> Option<usize> {
     let mut offset = 0;
     let mut rest = html;
@@ -1373,7 +1381,7 @@ fn live_renderer_every_help_lyx_renders() {
         };
         match build_live_response(&path, &ast, &text, None, None, None) {
             Ok(r) => {
-                if !r.response.html.contains(r#"<article class="lyx-live">"#) {
+                if !r.response.html.contains(r#"<article class="lyx-live""#) {
                     failures.push(format!("{name}: missing article wrapper"));
                 }
             }
@@ -1945,7 +1953,7 @@ fn live_renderer_help_math_lyx_phantom_chips_no_math_mode_unknown_dump() {
     let Some((html, response)) = render_path(&path) else {
         return;
     };
-    assert!(html.contains(r#"<article class="lyx-live">"#));
+    assert!(html.contains(r#"<article class="lyx-live""#));
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
     assert!(
         !html.contains("unknown-inset"),
@@ -2204,9 +2212,12 @@ fn live_renderer_help_userguide_lyx_script_line_nomencl_flex_emph() {
     let Some((html, response)) = render_path(&path) else {
         return;
     };
-    assert!(html.contains(r#"<article class="lyx-live">"#));
+    assert!(html.contains(r#"<article class="lyx-live""#));
+    assert!(
+        html.contains(r#"data-par-sep="skip""#),
+        "UserGuide uses skip between paragraphs, not first-line indent"
+    );
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
-    assert!(html.contains("<sup>") && html.contains("a, b"));
     assert!(html.contains("<sub>") && html.contains("3x"));
     assert!(html.contains("<hr>"));
     assert!(html.contains(r#"<em class="flex_emph""#) && html.contains("Emph"));
@@ -2352,6 +2363,17 @@ fn live_renderer_help_userguide_lyx_script_line_nomencl_flex_emph() {
     assert!(html.contains("this one is centered"));
     assert!(html.contains(r#"style="text-align: left""#));
     assert!(html.contains("this one is left aligned"));
+    let widget_at = html
+        .find("The widget also has a")
+        .expect("paragraph_spacing single example");
+    let widget_div = html[..widget_at]
+        .rfind("<div")
+        .expect("wrapper for the widget paragraph");
+    assert!(
+        html[widget_div..widget_at].contains(r#"style="line-height: 1""#),
+        "LyX single paragraph spacing must set line-height"
+    );
+    assert!(html.contains(r#"class="longtable""#));
     assert!(html.contains("Vector") && html.contains("fonts"));
     assert!(
         !html.contains("fontsrange"),
@@ -2377,7 +2399,11 @@ fn live_renderer_help_embeddedobjects_lyx_margin_notes_wrap_listings() {
     let Some((html, response)) = render_path(&path) else {
         return;
     };
-    assert!(html.contains(r#"<article class="lyx-live">"#));
+    assert!(html.contains(r#"<article class="lyx-live""#));
+    assert!(
+        html.contains(r#"data-par-sep="indent""#),
+        "EmbeddedObjects uses first-line indent, like the LyX window"
+    );
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
     let heading_6_1 = html
         .find(r#"heading-number">6.1 </span>Wrap Floats"#)
@@ -2399,19 +2425,79 @@ fn live_renderer_help_embeddedobjects_lyx_margin_notes_wrap_listings() {
         heading.contains(r#">Subentry</summary>"#),
         "section 6.1 subentry chip must sit inside the index box"
     );
+    let heading_6_2 = html
+        .find(r#"heading-number">6.2 </span>Surrounded Fixed Objects"#)
+        .expect("section 6.2 Surrounded Fixed Objects heading");
+    let phrase_at = html[heading_6_2..]
+        .find("To get an object exactly at the position")
+        .map(|n| heading_6_2 + n)
+        .expect("6.2 intro before the small tables");
+    let tables_div = html[phrase_at..]
+        .find(r#"class="standard""#)
+        .map(|n| phrase_at + n)
+        .expect("centered table paragraph after 6.2 intro");
+    let tables_end = html[tables_div..]
+        .find("</div>")
+        .map(|n| tables_div + n)
+        .expect("centered table paragraph close");
+    let tables_par = &html[tables_div..tables_end];
+    assert!(
+        tables_par.contains("text-align: center"),
+        "6.2 table group must keep the paragraph center setting"
+    );
+    assert!(
+        tables_par.contains("text-indent: 0"),
+        "centered table paragraph must not pick up first-line indent"
+    );
+    let table_count = tables_par.matches("<table").count();
+    assert!(
+        table_count >= 2,
+        "6.2 must keep several small tables in one paragraph, found {table_count}"
+    );
+    assert!(
+        !tables_par.contains("longtable"),
+        "6.2 side-by-side tables are not long tables"
+    );
     assert!(html.contains(r#"class="disclose marginal""#));
     assert!(html.contains("This is a margin note."));
     assert!(html.contains(r#"class="wrap wrap-left""#));
-    assert!(html.contains("width: 40%"));
+    let wrap_at = html
+        .find(r#"class="wrap wrap-left" style="width: 40%""#)
+        .expect("wrap box at 40% of the column");
+    let wrap_region_end = (wrap_at + 12_000).min(html.len());
+    let wrap_plot = img_tag_for(&html[wrap_at..wrap_region_end], "2D-intensity-plot.pdf")
+        .expect("plot inside the wrap");
+    assert!(
+        wrap_plot.contains(r#"style="width: 100%""#),
+        "plot inside a wrap fills the wrap box, not the pane"
+    );
+    let first_plot = img_tag_for(&html, "2D-intensity-plot.pdf").expect("first 2D plot");
+    assert!(
+        !first_plot.contains("100%") && !first_plot.contains('%'),
+        "unsized Graphics Dialog plot must not stretch to the pane: {first_plot}"
+    );
+    if first_plot.contains("width:") {
+        assert!(
+            first_plot.contains("px"),
+            "unsized plot on-screen size is CSS pixels: {first_plot}"
+        );
+    }
     assert!(html.contains("<figcaption"));
     assert!(html.contains("Figure 6.1: "));
     assert!(html.contains(r#"class="float-caption-Standard""#));
     assert!(html.contains("This is a wrapped figure float."));
     assert!(html.contains(r##"href="#fig_This_is_a">6.1</a>"##));
-    assert!(html.contains(r#"data-filename="2D-intensity-plot.pdf""#));
-    assert!(html.contains("width: 100%"));
-    assert!(html.contains(r#"data-filename="Star-structure.pdf""#));
-    assert!(html.contains("width: 50%"));
+    let star = img_tag_for(&html, "Star-structure.pdf").expect("Star-structure plot");
+    assert!(
+        !star.contains("50%"),
+        "LyX window scale is lyxscale, not print 50col%: {star}"
+    );
+    if star.contains("width:") {
+        assert!(
+            star.contains("px"),
+            "Star-structure on-screen size is CSS pixels, not a column %"
+        );
+    }
     assert!(
         html.contains("data:image/png;base64,") || html.contains("2D-intensity-plot.pdf"),
         "PDF figures must still name the source file"
@@ -2524,7 +2610,7 @@ fn live_renderer_help_formula_numbering_lyx_refs_and_eqno() {
     let Some((html, response)) = render_path(&path) else {
         return;
     };
-    assert!(html.contains(r#"<article class="lyx-live">"#));
+    assert!(html.contains(r#"<article class="lyx-live""#));
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
     assert!(
         count_substr(&html, r#"class="eqno""#) >= 8,
@@ -2542,7 +2628,7 @@ fn live_renderer_help_intro_lyx_toc_href_quotes_table() {
     let Some((html, response)) = render_path(&path) else {
         return;
     };
-    assert!(html.contains(r#"<article class="lyx-live">"#));
+    assert!(html.contains(r#"<article class="lyx-live""#));
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
     assert!(html.contains(r#"<h1 class="title""#));
     assert!(html.contains("Introduction to"));
@@ -2566,7 +2652,7 @@ fn live_renderer_help_tutorial_lyx_toc_info_lyx_code_quotes() {
     let Some((html, response)) = render_path(&path) else {
         return;
     };
-    assert!(html.contains(r#"<article class="lyx-live">"#));
+    assert!(html.contains(r#"<article class="lyx-live""#));
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
     assert!(html.contains(r#"<nav class="toc">"#));
     assert!(html.contains(r#"class="href""#));
@@ -2598,7 +2684,7 @@ fn live_renderer_help_development_lyx_multirow_cells_emit_rowspan() {
     let Some((html, response)) = render_path(&path) else {
         return;
     };
-    assert!(html.contains(r#"<article class="lyx-live">"#));
+    assert!(html.contains(r#"<article class="lyx-live""#));
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
     assert!(html.contains(r#"rowspan="3""#));
     let mut found = false;
@@ -2628,7 +2714,7 @@ fn live_renderer_help_customization_lyx_description_flex_code_labels() {
     let Some((html, response)) = render_path(&path) else {
         return;
     };
-    assert!(html.contains(r#"<article class="lyx-live">"#));
+    assert!(html.contains(r#"<article class="lyx-live""#));
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
     assert!(html.contains(r#"<code class="flex_code""#) && html.contains("Format"));
     assert!(
@@ -2663,7 +2749,7 @@ fn live_renderer_help_development_lyx_listings_flex_code_paragraph() {
     let Some((html, response)) = render_path(&path) else {
         return;
     };
-    assert!(html.contains(r#"<article class="lyx-live">"#));
+    assert!(html.contains(r#"<article class="lyx-live""#));
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
     assert!(html.contains(r#"class="href""#));
     assert!(html.contains(r#"<nav class="toc">"#));

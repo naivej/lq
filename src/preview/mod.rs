@@ -657,6 +657,7 @@ pub fn render_live_html(
         include_stack: Vec::new(),
         subeq: None,
         branches: index::document_branches(ast),
+        par_indent: mapping::document_par_indent(ast),
         ast,
     };
     let body = find_body(ast);
@@ -667,7 +668,10 @@ pub fn render_live_html(
     let mut changes = ctx.changes;
     changes.sort_by_key(|e| e.ordinal);
     Ok(LiveHtml {
-        html: format!("<article class=\"lyx-live\">{inner}</article>"),
+        html: format!(
+            "<article{}>{inner}</article>",
+            article_par_attrs(ast, ctx.par_indent)
+        ),
         warnings: ctx.warnings,
         diagnostics: ctx.diagnostics,
         outline: ctx.outline,
@@ -851,6 +855,7 @@ pub(crate) struct RenderCtx<'a> {
     pub include_stack: Vec<String>,
     pub subeq: Option<SubeqState>,
     pub branches: HashMap<String, bool>,
+    pub par_indent: bool,
     pub ast: &'a Document,
 }
 
@@ -867,6 +872,19 @@ pub(crate) struct FlowItem {
     pub layout: String,
     pub depth: i32,
     pub node: NodeId,
+}
+
+fn article_par_attrs(ast: &Document, indent: bool) -> String {
+    if indent {
+        match mapping::document_par_indent_css(ast) {
+            Some(len) => {
+                format!(r#" class="lyx-live" data-par-sep="indent" style="--par-indent: {len}""#)
+            }
+            None => r#" class="lyx-live" data-par-sep="indent""#.to_string(),
+        }
+    } else {
+        r#" class="lyx-live" data-par-sep="skip""#.to_string()
+    }
 }
 
 pub(crate) fn find_body(ast: &Document) -> Vec<NodeId> {

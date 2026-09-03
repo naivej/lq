@@ -287,6 +287,15 @@ div.abstract { margin: 1.5em 2.5em 2em; }
 .abstract_label { display: block; font-weight: bold; text-align: center; margin-bottom: 0.6em; }
 .abstract_item { font-size: 0.95em; margin: 0.4em 0; }
 div.standard { margin: 0 0 0.8em; }
+article.lyx-live[data-par-sep="indent"] div.standard {
+  text-indent: var(--par-indent, 1.5em);
+  margin-bottom: 0.35em;
+}
+article.lyx-live[data-par-sep="indent"] :is(h1, h2, h3, h4, h5, h6) + div.standard,
+article.lyx-live[data-par-sep="indent"] :is(ol, ul, dl, blockquote, pre) + div.standard,
+article.lyx-live[data-par-sep="indent"] div.abstract + div.standard {
+  text-indent: 0;
+}
 div.subtitle { font-size: 1.2em; text-align: center; margin: 0.2em 0 0.8em; }
 blockquote { margin: 0.5em 1.5em; }
 dl.description dt { font-weight: bold; }
@@ -297,11 +306,15 @@ ol.enumiv { list-style-type: upper-alpha; }
 figure.float-figure, figure.float-table { display: block; margin: 1.2em auto; text-align: center; }
 figure > figcaption { display: block; text-align: center; margin: 0 0 0.6em; }
 /* Block, not flex: a figure note with inline math would otherwise become
- * anonymous flex items and paint as two text columns (DL151). Tables stay
- * centered via figure table { margin-left/right: auto } below. */
+ * anonymous flex items and paint as two text columns (DL151). */
 figure > .float-body { display: block; margin: 0.4em 0; }
+/* LyX paints a normal table as Inline (InsetTabular::rowFlags). A centered
+ * paragraph can then sit several tables side by side. Long tables are Display. */
+table { display: inline-table; vertical-align: middle; border-collapse: collapse; margin: 0.35em 0.4em; }
+table.longtable { display: table; margin: 0.75em auto; }
+table.longtable.longtable-left { margin-left: 0; margin-right: auto; }
+table.longtable.longtable-right { margin-left: auto; margin-right: 0; }
 figure table { margin-left: auto; margin-right: auto; }
-table { border-collapse: collapse; margin: 0.75em 0; }
 td, th { border: 1px solid var(--vscode-panel-border); padding: 0.25em 0.5em; }
 /*
  * DL131 disclosure: click summary to expand/collapse (no hover).
@@ -496,7 +509,8 @@ details.disclose.wrap.wrap-table[open] > .disclose-body {
 }
 /* Contain floated wrap content inside the open disclosure box.
  * Closed chip stays inline; when open, kill the page-level float so the
- * figure/table stays inside the bordered .disclose-body (not beside it). */
+ * figure/table stays inside the bordered .disclose-body (not beside it).
+ * Do not force width: 100% — that stretched wrap pictures to the full pane (DL041). */
 details.disclose.wrap[open] > .disclose-body {
   overflow: auto;
   display: flow-root;
@@ -504,7 +518,6 @@ details.disclose.wrap[open] > .disclose-body {
 details.disclose.wrap[open] .wrap {
   float: none !important;
   margin: 0 !important;
-  width: 100% !important;
   max-width: 100%;
 }
 details.disclose.wrap[open] .wrap figure {

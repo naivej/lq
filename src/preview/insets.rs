@@ -1547,7 +1547,17 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         None,
     );
     let used_cols = if cols > 0 { cols } else { cells.len().max(1) };
-    let mut html = String::from("<table><tbody>");
+    let is_long = meta.contains("islongtable=\"true\"");
+    let table_class = if is_long {
+        match attr_after(&meta, "longtabularalignment=\"") {
+            Some("left") => r#" class="longtable longtable-left""#,
+            Some("right") => r#" class="longtable longtable-right""#,
+            _ => r#" class="longtable""#,
+        }
+    } else {
+        ""
+    };
+    let mut html = format!("<table{table_class}><tbody>");
     let mut c = 0usize;
     for i in 0..cell_attrs.len() {
         let attr = &cell_attrs[i];
@@ -2735,29 +2745,31 @@ fn is_web_image(path: &Path) -> bool {
         .is_some_and(|e| WEB_IMAGE_EXTS.iter().any(|x| x.eq_ignore_ascii_case(e)))
 }
 
-fn graphic_box_style(block: NodeId, ctx: &RenderCtx<'_>) -> String {
-    let width = if ctx.in_wrap {
-        "100%".into()
-    } else {
-        width_to_css(find_property(ctx.doc(), block, "width").as_deref())
+fn graphic_lyxscale(ast: &Document, block: NodeId) -> u32 {
+    find_property(ast, block, "lyxscale")
+        .and_then(|v| v.trim().parse::<u32>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(100)
+}
+
+fn graphic_box_style(
+    block: NodeId,
+    ctx: &RenderCtx<'_>,
+    displayed: Option<&Path>,
+    rasterized: bool,
+) -> String {
+    if ctx.in_wrap {
+        return r#" style="width: 100%""#.into();
+    }
+    let lyxscale = graphic_lyxscale(ctx.doc(), block);
+    let Some(path) = displayed else {
+        return String::new();
     };
-    let height = if ctx.in_wrap {
-        String::new()
-    } else {
-        width_to_css(find_property(ctx.doc(), block, "height").as_deref())
+    let Some(pixel_w) = graphics::png_pixel_width(path) else {
+        return String::new();
     };
-    let mut styles = Vec::new();
-    if !width.is_empty() && width != "0" && width != "0pt" {
-        styles.push(format!("width: {width}"));
-    }
-    if !height.is_empty() && height != "0" && height != "0pt" {
-        styles.push(format!("height: {height}"));
-    }
-    if styles.is_empty() {
-        String::new()
-    } else {
-        format!(r#" style="{}""#, escape_live_html(&styles.join("; ")))
-    }
+    let css_w = graphics::graphic_display_width_px(pixel_w, lyxscale, rasterized);
+    format!(r#" style="width: {css_w}px""#)
 }
 
 fn graphics_owner_selector(
@@ -2786,15 +2798,22 @@ fn render_graphics(block: NodeId, ctx: &mut RenderCtx<'_>, owner_parent: Option<
         .to_string();
     let mut src = String::new();
     let mut filepath = String::new();
+    let mut rasterized = false;
+    let mut displayed: Option<PathBuf> = None;
     if !filename.is_empty() {
         let path = resolve_graphic_path(&filename, ctx);
         filepath = path.to_string_lossy().into_owned();
+        if path.is_file() && is_web_image(&path) {
+            displayed = Some(path.clone());
+        }
         if path.is_file() && !is_web_image(&path) {
             let key = path.to_string_lossy().into_owned();
             if let Some(hit) = ctx.preview_uri_memo.get(&key) {
                 src = hit.clone();
                 if let Some(p) = ctx.preview_path_memo.get(&key) {
                     filepath = p.clone();
+                    displayed = Some(PathBuf::from(p));
+                    rasterized = true;
                 }
             } else if let Some(png) = graphics::ensure_raster_png(
                 &path,
@@ -2803,6 +2822,8 @@ fn render_graphics(block: NodeId, ctx: &mut RenderCtx<'_>, owner_parent: Option<
             ) {
                 src = path_to_file_url(&png);
                 filepath = png.to_string_lossy().into_owned();
+                displayed = Some(png.clone());
+                rasterized = true;
                 ctx.preview_uri_memo.insert(key.clone(), src.clone());
                 ctx.preview_path_memo.insert(key, filepath.clone());
             }
@@ -2826,7 +2847,7 @@ fn render_graphics(block: NodeId, ctx: &mut RenderCtx<'_>, owner_parent: Option<
     emit_token(ctx, &id, &sel);
     format!(
         r#"<img{src_attr}{fp_attr}{}{} data-filename="{}" alt="{}">"#,
-        graphic_box_style(block, ctx),
+        graphic_box_style(block, ctx, displayed.as_deref(), rasterized),
         mapping_attrs(&id),
         escape_live_html(&base),
         escape_live_html(&base)

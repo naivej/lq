@@ -111,6 +111,38 @@ fn prepend_path_dir(dir: &Path) -> Option<std::ffi::OsString> {
 }
 
 const RASTER_RECIPE: &str = "d120-p0";
+const RASTER_DENSITY: f64 = 120.0;
+const GUI_DISPLAY_DPI: f64 = 72.0;
+
+/// Screen CSS pixels for a graphic, matching the LyX window (lyxscale, not print width).
+/// Magick rasters at 120 dpi; LyX's loader shows the same PDF around 72 dpi.
+pub(crate) fn graphic_display_width_px(
+    pixel_w: u32,
+    lyxscale: u32,
+    rasterized_120dpi: bool,
+) -> u32 {
+    let mut w = f64::from(pixel_w);
+    if rasterized_120dpi {
+        w *= GUI_DISPLAY_DPI / RASTER_DENSITY;
+    }
+    w *= f64::from(lyxscale.max(1)) / 100.0;
+    w.round().max(1.0) as u32
+}
+
+pub(crate) fn png_pixel_width(path: &Path) -> Option<u32> {
+    png_pixel_width_bytes(&fs::read(path).ok()?)
+}
+
+fn png_pixel_width_bytes(bytes: &[u8]) -> Option<u32> {
+    const SIG: &[u8] = &[137, 80, 78, 71, 13, 10, 26, 10];
+    if bytes.len() < 24 || !bytes.starts_with(SIG) {
+        return None;
+    }
+    if &bytes[12..16] != b"IHDR" {
+        return None;
+    }
+    Some(u32::from_be_bytes(bytes[16..20].try_into().ok()?))
+}
 
 /// Magick PNG on disk for a non-web figure (031). `None` if Magick skipped or failed.
 pub(crate) fn ensure_raster_png(
@@ -464,6 +496,29 @@ mod tests {
         }
         assert_eq!(got, dest);
         assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn graphic_display_width_matches_lyx_window_dpi_and_lyxscale() {
+        assert_eq!(graphic_display_width_px(390, 100, true), 234);
+        assert_eq!(graphic_display_width_px(390, 60, true), 140);
+        assert_eq!(graphic_display_width_px(200, 100, false), 200);
+        assert_eq!(graphic_display_width_px(200, 50, false), 100);
+    }
+
+    #[test]
+    fn png_pixel_width_reads_ihdr() {
+        let dir = temp_dir("ihdr");
+        let png = dir.join("tiny.png");
+        let mut bytes = vec![137, 80, 78, 71, 13, 10, 26, 10];
+        bytes.extend_from_slice(&13u32.to_be_bytes());
+        bytes.extend_from_slice(b"IHDR");
+        bytes.extend_from_slice(&390u32.to_be_bytes());
+        bytes.extend_from_slice(&553u32.to_be_bytes());
+        bytes.extend_from_slice(&[8, 2, 0, 0, 0]);
+        fs::write(&png, &bytes).unwrap();
+        assert_eq!(png_pixel_width(&png), Some(390));
         let _ = fs::remove_dir_all(&dir);
     }
 

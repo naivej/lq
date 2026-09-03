@@ -656,6 +656,28 @@ pub(crate) fn find_property(ast: &Document, block: NodeId, key: &str) -> Option<
     None
 }
 
+/// LyX default is indent (`BufferParams::ParagraphIndentSeparation`).
+pub(crate) fn document_par_indent(ast: &Document) -> bool {
+    let Some(header) = crate::tracked_changes::get_header(ast) else {
+        return true;
+    };
+    !matches!(
+        find_property(ast, header, "paragraph_separation"),
+        Some(v) if v.eq_ignore_ascii_case("skip")
+    )
+}
+
+/// Custom `\paragraph_indentation` length, if not `default`.
+pub(crate) fn document_par_indent_css(ast: &Document) -> Option<String> {
+    let header = crate::tracked_changes::get_header(ast)?;
+    let v = find_property(ast, header, "paragraph_indentation")?;
+    let v = v.trim();
+    if v.is_empty() || v.eq_ignore_ascii_case("default") {
+        return None;
+    }
+    Some(v.to_string())
+}
+
 fn property_from_text(text: &str, key: &str) -> Option<String> {
     for line in text.split('\n') {
         let t = line.trim_start();

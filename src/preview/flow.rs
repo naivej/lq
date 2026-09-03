@@ -463,8 +463,9 @@ pub(crate) fn render_flow_items(
                         )
                     };
                     format!(
-                        "<section><{tag}{}>{num_html}{}</{tag}>",
+                        "<section><{tag}{}{}>{num_html}{}</{tag}>",
                         mapping::mapping_attrs(&id),
+                        paragraph_style_attr(ctx.doc(), item.node, ctx.par_indent),
                         insets::render_layout_inline(item.node, ctx, false, outer_state)
                     )
                 });
@@ -532,7 +533,7 @@ pub(crate) fn render_flow_items(
                 mapping::layout_slug(&item.layout),
                 deleted_class,
                 mapping::mapping_attrs(&id),
-                align_attr(ctx.doc(), item.node)
+                paragraph_style_attr(ctx.doc(), item.node, ctx.par_indent)
             )
         }));
         i += 1;
@@ -825,9 +826,10 @@ fn render_list(
                     let dd_id = mapping::take_owner_id(ctx, None);
                     mapping::emit_token(ctx, &dd_id, selector);
                     format!(
-                        "<dt{}>{label}</dt><dd{}>{rest}",
+                        "<dt{}>{label}</dt><dd{}{}>{rest}",
                         mapping::mapping_attrs(&dt_id),
-                        mapping::mapping_attrs(&dd_id)
+                        mapping::mapping_attrs(&dd_id),
+                        paragraph_style_attr(ctx.doc(), item.node, ctx.par_indent)
                     )
                 }));
                 i += 1;
@@ -849,8 +851,9 @@ fn render_list(
                     let id = mapping::take_owner_id(ctx, None);
                     mapping::emit_token(ctx, &id, selector);
                     format!(
-                        "<{item_tag}{}>{}",
+                        "<{item_tag}{}{}>{}",
                         mapping::mapping_attrs(&id),
+                        paragraph_style_attr(ctx.doc(), item.node, ctx.par_indent),
                         insets::render_layout_inline(item.node, ctx, false, None)
                     )
                 }));
@@ -911,8 +914,9 @@ fn render_env(items: &[FlowItem], start: usize, ctx: &mut RenderCtx<'_>) -> (Str
             let id = mapping::take_owner_id(ctx, None);
             mapping::emit_token(ctx, &id, selector);
             format!(
-                "<{item}{}>{}</{item}>",
+                "<{item}{}{}>{}</{item}>",
                 mapping::mapping_attrs(&id),
+                paragraph_style_attr(ctx.doc(), items[i].node, ctx.par_indent),
                 insets::render_layout_inline(items[i].node, ctx, false, None)
             )
         }));
@@ -1081,21 +1085,74 @@ fn render_bib_env(items: &[FlowItem], start: usize, ctx: &mut RenderCtx<'_>) -> 
     (html, i)
 }
 
-fn align_attr(ast: &Document, node: NodeId) -> String {
-    let mut value = String::new();
+fn paragraph_style_attr(ast: &Document, node: NodeId, par_indent: bool) -> String {
+    let mut align = None;
+    let mut noindent = false;
+    let mut leftindent = None;
+    let mut spacing = None;
     for &c in &ast.node(node).children {
-        if let NodeKind::Property { key, value: v } = &ast.node(c).kind
-            && key == "align"
-            && let Some(v) = v
-        {
-            value = v.to_ascii_lowercase();
-            break;
+        let NodeKind::Property { key, value: v } = &ast.node(c).kind else {
+            continue;
+        };
+        match key.as_str() {
+            "align" => {
+                if let Some(v) = v {
+                    align = Some(v.to_ascii_lowercase());
+                }
+            }
+            "noindent" => noindent = true,
+            "indent" => noindent = false,
+            "leftindent" => leftindent = v.clone(),
+            "paragraph_spacing" => spacing = v.clone(),
+            _ => {}
         }
     }
-    if value == "center" || value == "left" || value == "right" {
-        format!(r#" style="text-align: {value}""#)
-    } else {
+    let mut styles = Vec::new();
+    match align.as_deref() {
+        Some("center") => styles.push("text-align: center".into()),
+        Some("left") => styles.push("text-align: left".into()),
+        Some("right") => styles.push("text-align: right".into()),
+        Some("block") => styles.push("text-align: justify".into()),
+        _ => {}
+    }
+    let center_or_right = matches!(align.as_deref(), Some("center" | "right"));
+    if noindent || (par_indent && center_or_right) {
+        styles.push("text-indent: 0".into());
+    }
+    if let Some(len) = leftindent
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        styles.push(format!("padding-left: {len}"));
+    }
+    if let Some(line_height) = spacing_line_height(spacing.as_deref()) {
+        styles.push(format!("line-height: {line_height}"));
+    }
+    if styles.is_empty() {
         String::new()
+    } else {
+        format!(r#" style="{}""#, styles.join("; "))
+    }
+}
+
+fn spacing_line_height(value: Option<&str>) -> Option<String> {
+    let raw = value?.trim();
+    let mut parts = raw.split_whitespace();
+    let kind = parts.next()?.to_ascii_lowercase();
+    match kind.as_str() {
+        "single" => Some("1".into()),
+        "onehalf" => Some("1.5".into()),
+        "double" => Some("2".into()),
+        "other" => {
+            let n = parts.next()?.trim();
+            if n.is_empty() {
+                None
+            } else {
+                Some(n.to_string())
+            }
+        }
+        _ => None,
     }
 }
 
