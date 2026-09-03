@@ -20,9 +20,9 @@ LyX Preview renders a read-only live preview of saved `.lyx` files directly insi
 
 ### 1. Prerequisites
 
-1. Set `lq`'s installation path in `lyx-preview.lqPath`. On load (and whenever that setting changes), LyX Preview downloads or updates the matching binary at that path from the latest GitHub Release. The development path `~/Github/lq_dev/lq/target/release` is preferred for Live preview when it exists. Keep the development path clean in production to use the managed `lqPath` binary.
-
-2. Run `npx skills add naivej/lq` to install the `use-lq` skill for AI agent workflows.
+1. Set `lq`'s installation path in `lyx-preview.lqPath`. On load (and whenever that setting changes), LyX Preview downloads or updates the matching binary at that path from the latest GitHub Release.
+2. Alternatively, set `lyx-preview.unmanagedLqPath` to use any `lq`. This path is not automatically updated but used first. The default is a development path.
+3. Run `npx skills add naivej/lq` to install the `use-lq` skill for AI agent workflows.
 
 ### 2. Open Preview
 1. Open any `.lyx` file in VS Code.

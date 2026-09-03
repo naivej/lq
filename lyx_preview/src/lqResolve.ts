@@ -1,51 +1,58 @@
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-/**
- * Development preference: Cargo release binary in the lq repo.
- * Preferred for Live spawn; never overwritten by GitHub download (DL155 §4.2 / DL034).
- */
-export const DEV_LQ_BIN_DIR = join(
-  homedir(),
-  "Github",
-  "lq_dev",
-  "lq",
-  "target",
-  "release",
-);
-
 export type LqResolveResult =
-  | { kind: "dev"; path: string }
+  | { kind: "unmanaged"; path: string }
   | { kind: "managed"; path: string }
   | { kind: "unset" };
 
-const CARGO_JUNK = /\.(d|pdb|rlib|rmeta|map)$/i;
+export type LqResolveDeps = {
+  home?: string;
+  platform?: NodeJS.Platform;
+  isFile?: (path: string) => boolean;
+};
 
-/** Cargo `lq.exe` / `lq`, else newest `lq*` that is not a build sidecar. */
-export function findLqInDir(dir: string): string | undefined {
-  if (!existsSync(dir)) return undefined;
-  for (const name of ["lq.exe", "lq"]) {
-    const full = join(dir, name);
-    const stat = statSync(full, { throwIfNoEntry: false });
-    if (stat?.isFile()) return full;
+function defaultIsFile(path: string): boolean {
+  const stat = statSync(path, { throwIfNoEntry: false });
+  return stat?.isFile() ?? false;
+}
+
+/** Expand a leading `~/` or `~\\` to `home`. Other paths are unchanged. */
+export function expandUserPath(input: string, home: string = homedir()): string {
+  const trimmed = input.trim();
+  if (trimmed === "~") return home;
+  if (trimmed.startsWith("~/") || trimmed.startsWith("~\\")) {
+    return join(home, trimmed.slice(2));
   }
-  let newest: { full: string; mtimeMs: number } | undefined;
-  for (const name of readdirSync(dir)) {
-    if (!/^lq/i.test(name) || CARGO_JUNK.test(name)) continue;
-    const full = join(dir, name);
-    const stat = statSync(full, { throwIfNoEntry: false });
-    if (!stat?.isFile()) continue;
-    if (!newest || stat.mtimeMs > newest.mtimeMs) {
-      newest = { full, mtimeMs: stat.mtimeMs };
-    }
-  }
-  return newest?.full;
+  return trimmed;
 }
 
 /**
- * Resolve which lq binary to spawn (DL155 / DL034):
- * 1. Dev `lq/target/release` Cargo binary if present
+ * Unmanaged spawn candidate (DL035): empty/missing → undefined.
+ * Windows: if `path` is missing, try `path.exe` (unless already `.exe`).
+ */
+export function resolveUnmanagedFile(
+  unmanagedSetting: string | undefined,
+  deps: LqResolveDeps = {},
+): string | undefined {
+  const raw = unmanagedSetting?.trim();
+  if (!raw) return undefined;
+  const home = deps.home ?? homedir();
+  const platform = deps.platform ?? process.platform;
+  const isFile = deps.isFile ?? defaultIsFile;
+  const expanded = expandUserPath(raw, home);
+  if (isFile(expanded)) return expanded;
+  if (platform === "win32" && !/\.exe$/i.test(expanded)) {
+    const withExe = `${expanded}.exe`;
+    if (isFile(withExe)) return withExe;
+  }
+  return undefined;
+}
+
+/**
+ * Resolve which lq binary to spawn (DL035 / DL034):
+ * 1. Unmanaged file if the setting is non-empty and the file exists
  * 2. Else `lqPath` setting if set
  * 3. Else unset — no PATH fallback
  *
@@ -54,26 +61,27 @@ export function findLqInDir(dir: string): string | undefined {
  */
 export function resolveLqBinary(
   lqPathSetting: string | undefined,
-  devBinDir: string = DEV_LQ_BIN_DIR,
+  unmanagedSetting: string | undefined,
+  deps: LqResolveDeps = {},
 ): LqResolveResult {
-  const devBinary = findLqInDir(devBinDir);
-  if (devBinary) return { kind: "dev", path: devBinary };
+  const unmanaged = resolveUnmanagedFile(unmanagedSetting, deps);
+  if (unmanaged) return { kind: "unmanaged", path: unmanaged };
   const configured = lqPathSetting?.trim();
   if (configured) return { kind: "managed", path: configured };
   return { kind: "unset" };
 }
 
-/** Non-empty `lqPath` is the managed download target (even when spawn is `dev`). */
+/** Non-empty `lqPath` is the managed download target (even when spawn is unmanaged). */
 export function managedEnsureTarget(lqPathSetting: string | undefined): string | undefined {
   const configured = lqPathSetting?.trim();
   return configured || undefined;
 }
 
 /**
- * Home-relative display path for the dev-loaded toast (strip `.exe`; use `~/…`).
+ * Home-relative display path for the unmanaged-loaded toast (strip `.exe`; use `~/…`).
  * Example: `~/Github/lq_dev/lq/target/release/lq is detected and loaded`
  */
-export function formatDevLqLoadedMessage(
+export function formatUnmanagedLqLoadedMessage(
   absolutePath: string,
   home: string = homedir(),
 ): string {
