@@ -4,7 +4,7 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
-import { findLqInDir, resolveLqBinary } from "./lqResolve";
+import { findLqInDir, formatDevLqLoadedMessage, managedEnsureTarget, resolveLqBinary } from "./lqResolve";
 import { parseSha256Sums, ensureManagedLq, LqEnsureError, sha256File } from "./lqEnsure";
 import { releaseAssetForPlatform, latestDownloadUrl } from "./lqPlatform";
 
@@ -81,6 +81,31 @@ describe("lqResolve", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("managedEnsureTarget ignores spawn preference", () => {
+    assert.equal(managedEnsureTarget("C:/managed/lq.exe"), "C:/managed/lq.exe");
+    assert.equal(managedEnsureTarget("  /tmp/my-lq  "), "/tmp/my-lq");
+    assert.equal(managedEnsureTarget(""), undefined);
+    assert.equal(managedEnsureTarget(undefined), undefined);
+  });
+
+  it("formats dev-loaded toast with ~/ and without .exe", () => {
+    assert.equal(
+      formatDevLqLoadedMessage(
+        "C:\\Users\\Shifu\\Github\\lq_dev\\lq\\target\\release\\lq.exe",
+        "C:\\Users\\Shifu",
+      ),
+      "~/Github/lq_dev/lq/target/release/lq is detected and loaded",
+    );
+    assert.equal(
+      formatDevLqLoadedMessage("/home/u/Github/lq_dev/lq/target/release/lq", "/home/u"),
+      "~/Github/lq_dev/lq/target/release/lq is detected and loaded",
+    );
+    assert.equal(
+      formatDevLqLoadedMessage("/opt/lq/lq", "/home/u"),
+      "/opt/lq/lq is detected and loaded",
+    );
   });
 });
 

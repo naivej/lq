@@ -4,7 +4,7 @@ import { join } from "node:path";
 
 /**
  * Development preference: Cargo release binary in the lq repo.
- * Unmanaged (no GitHub download) — DL155 §4.2, 0.8.0 Rust CLI.
+ * Preferred for Live spawn; never overwritten by GitHub download (DL155 §4.2 / DL034).
  */
 export const DEV_LQ_BIN_DIR = join(
   homedir(),
@@ -44,10 +44,13 @@ export function findLqInDir(dir: string): string | undefined {
 }
 
 /**
- * Resolve which lq binary to use (DL155):
- * 1. Dev `lq/target/release` Cargo binary if present (unmanaged)
- * 2. Else `lqPath` setting if set (managed)
+ * Resolve which lq binary to spawn (DL155 / DL034):
+ * 1. Dev `lq/target/release` Cargo binary if present
+ * 2. Else `lqPath` setting if set
  * 3. Else unset — no PATH fallback
+ *
+ * Management of `lqPath` is independent: when the setting is non-empty,
+ * the extension still hash-checks / downloads that file (DL034).
  */
 export function resolveLqBinary(
   lqPathSetting: string | undefined,
@@ -58,4 +61,30 @@ export function resolveLqBinary(
   const configured = lqPathSetting?.trim();
   if (configured) return { kind: "managed", path: configured };
   return { kind: "unset" };
+}
+
+/** Non-empty `lqPath` is the managed download target (even when spawn is `dev`). */
+export function managedEnsureTarget(lqPathSetting: string | undefined): string | undefined {
+  const configured = lqPathSetting?.trim();
+  return configured || undefined;
+}
+
+/**
+ * Home-relative display path for the dev-loaded toast (strip `.exe`; use `~/…`).
+ * Example: `~/Github/lq_dev/lq/target/release/lq is detected and loaded`
+ */
+export function formatDevLqLoadedMessage(
+  absolutePath: string,
+  home: string = homedir(),
+): string {
+  const normPath = absolutePath.replace(/\\/g, "/");
+  const normHome = home.replace(/\\/g, "/").replace(/\/$/, "");
+  let display = normPath;
+  if (normPath.toLowerCase().startsWith(normHome.toLowerCase() + "/")) {
+    display = `~/${normPath.slice(normHome.length + 1)}`;
+  } else if (normPath.toLowerCase() === normHome.toLowerCase()) {
+    display = "~";
+  }
+  display = display.replace(/\.exe$/i, "");
+  return `${display} is detected and loaded`;
 }
