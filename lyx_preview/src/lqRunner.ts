@@ -49,7 +49,10 @@ export function runLivePreview(
 
     const timer = setTimeout(() => {
       child.kill();
-      finish(new AdapterError("TIMEOUT", `lq preview timed out after ${timeoutMs} ms.`));
+      finish(new AdapterError(
+        "TIMEOUT",
+        `lq preview timed out after ${timeoutMs} ms. Increase lyx-preview.timeoutMs if the document is large.`,
+      ));
     }, timeoutMs);
 
     const onAbort = (): void => {
@@ -92,7 +95,10 @@ export function runLivePreview(
       stdoutBytes += Buffer.byteLength(chunk, "utf8");
       if (stdoutBytes > maxStdoutBytes) {
         child.kill();
-        finish(new AdapterError("OUTPUT_LIMIT", `lq preview stdout exceeded ${maxStdoutBytes} bytes.`));
+        finish(new AdapterError(
+          "OUTPUT_LIMIT",
+          `lq preview stdout exceeded ${maxStdoutBytes} bytes. Preview stopped to protect memory. Try a smaller document.`,
+        ));
         return;
       }
       stdout += chunk;
@@ -101,7 +107,10 @@ export function runLivePreview(
       stderrBytes += Buffer.byteLength(chunk, "utf8");
       if (stderrBytes > maxStderrBytes) {
         child.kill();
-        finish(new AdapterError("OUTPUT_LIMIT", `lq preview stderr exceeded ${maxStderrBytes} bytes.`));
+        finish(new AdapterError(
+          "OUTPUT_LIMIT",
+          `lq preview stderr exceeded ${maxStderrBytes} bytes. Preview stopped to protect memory. Try a smaller document.`,
+        ));
         return;
       }
       stderr += chunk;
@@ -121,5 +130,5 @@ export function runLivePreview(
 
 function missingBinaryMessage(lqPath: string, error: unknown): string {
   const detail = error instanceof Error ? error.message : String(error);
-  return `Could not start lq at '${lqPath}'. Set lyx-preview.lqPath to the compiled lq binary. ${detail}`;
+  return `Could not start lq at '${lqPath}'. Check that file, or set lyx-preview.lqPath / lyx-preview.unmanagedLqPath. ${detail}`;
 }

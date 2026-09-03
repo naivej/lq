@@ -13,6 +13,9 @@ export type LqResolveDeps = {
   isFile?: (path: string) => boolean;
 };
 
+export const UNSET_LQ_MESSAGE =
+  "Set lyx-preview.lqPath to download lq, or lyx-preview.unmanagedLqPath to a local file.";
+
 function defaultIsFile(path: string): boolean {
   const stat = statSync(path, { throwIfNoEntry: false });
   return stat?.isFile() ?? false;
@@ -79,7 +82,7 @@ export function managedEnsureTarget(lqPathSetting: string | undefined): string |
 
 /**
  * Home-relative display path for the unmanaged-loaded toast (strip `.exe`; use `~/…`).
- * Example: `~/Github/lq_dev/lq/target/release/lq is detected and loaded`
+ * Example: `Using local lq at ~/GitHub/lq_dev/lq/target/release/lq`
  */
 export function formatUnmanagedLqLoadedMessage(
   absolutePath: string,
@@ -94,5 +97,5 @@ export function formatUnmanagedLqLoadedMessage(
     display = "~";
   }
   display = display.replace(/\.exe$/i, "");
-  return `${display} is detected and loaded`;
+  return `Using local lq at ${display}`;
 }

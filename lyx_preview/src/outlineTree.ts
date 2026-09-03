@@ -75,7 +75,7 @@ export class NavigateTreeItem extends vscode.TreeItem {
       };
     } else if (node.type === "change") {
       const e = node.entry;
-      const verb = e.type === "inserted" ? "Insert" : "Delete";
+      const verb = e.type === "inserted" ? "Inserted" : "Deleted";
       super(
         `${e.ordinal} ${verb} — ${e.snippet}`,
         vscode.TreeItemCollapsibleState.None,

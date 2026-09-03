@@ -2,27 +2,26 @@
 
 A VS Code companion extension for [`lq`](https://github.com/naivej/lq) — the standalone CLI for querying, inspecting, and mutating LyX documents.
 
-LyX Preview renders a read-only live preview of saved `.lyx` files directly inside a VS Code webview, combining visual feedback, outline navigation, and AI-assisted workflows.
+LyX Preview renders a read-only preview of saved `.lyx` files directly inside a VS Code webview, combining visual feedback, outline navigation, and AI-assisted workflows.
 
 ## Features
 
 - **LyX-Familiar Appearance:** Renders layouts, sections, formatting, tables, images, and math with styling faithful to the LyX editor.
-- **Instant Live Refresh:** Automatically updates whenever the `.lyx` file is saved or modified on disk (when the editor buffer is clean).
+- **Instant refresh:** Automatically updates whenever the `.lyx` file is saved or modified on disk (when the editor buffer is clean).
 - **LyX Outline View:** Dedicated panel in the Explorer sidebar to navigate the Table of Contents, figures, tables, equations, tracked changes, footnotes, and labels/references across both the raw `.lyx` buffer and the preview.
 - **Tracked-Change Views:** Toggle between **Tracked** (markup shown), **Original** (pre-change), and **Clean** (post-change/accepted) views from the title bar.
 - **Agent Context Sharing:**
   - Selecting text or constructs in the preview generates a temporary `live-selection.json` sidecar next to the previewed `.lyx` file for AI agents using `lq`.
   - Integrates with VS Code Language Model Tools via `#lyxSelection`.
-- **Status Bar Inspection:** Displays active CST selectors, tracked-change author/timestamp metadata, and selection details in the VS Code status bar.
+- **Status Bar Inspection:** Displays the active selector, tracked-change author/timestamp metadata, and selection details in the VS Code status bar.
 - **Built-in Webview Search:** Full support for standard search (`Ctrl+F` / `Cmd+F`) inside the preview panel.
 
 ## Getting Started
 
 ### 1. Prerequisites
 
-1. Set `lq`'s installation path in `lyx-preview.lqPath`. On load (and whenever that setting changes), LyX Preview downloads or updates the matching binary at that path from the latest GitHub Release.
-2. Alternatively, set `lyx-preview.unmanagedLqPath` to use any `lq`. This path is not automatically updated but used first. The default is a development path.
-3. Run `npx skills add naivej/lq` to install the `use-lq` skill for AI agent workflows.
+1. Set `lq`'s installation path in `lyx-preview.unmanagedLqPath` (used first) or `lyx-preview.lqPath` (used second). LyX Preview downloads or updates the latter path from the latest GitHub Release. Both settings accept `~`.
+2. Run `npx skills add naivej/lq` to install the `use-lq` skill for AI agent workflows.
 
 ### 2. Open Preview
 1. Open any `.lyx` file in VS Code.

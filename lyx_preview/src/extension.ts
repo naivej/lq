@@ -457,7 +457,7 @@ export function activate(context: vscode.ExtensionContext): void {
       const picked = await vscode.window.showQuickPick(
         [
           { label: "Original", description: "Show the document before the changes", mode: "original" },
-          { label: "Tracked", description: "Show insertions and deletions marked (default)", mode: "tracked" },
+          { label: "Tracked", description: "Show insertions and deletions with markup (default)", mode: "tracked" },
           { label: "Clean", description: "Show the document after accepting all changes", mode: "clean" },
         ] as (vscode.QuickPickItem & { mode: ChangeViewMode })[],
         { placeHolder: "Tracked-change view" },

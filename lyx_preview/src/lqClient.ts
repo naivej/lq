@@ -2,12 +2,13 @@ import * as vscode from "vscode";
 import { AdapterError } from "./previewSession";
 import { ensureManagedLq, LqEnsureError } from "./lqEnsure";
 import {
+  UNSET_LQ_MESSAGE,
   formatUnmanagedLqLoadedMessage,
   managedEnsureTarget,
   resolveLqBinary,
 } from "./lqResolve";
 
-export { formatUnmanagedLqLoadedMessage, managedEnsureTarget } from "./lqResolve";
+export { formatUnmanagedLqLoadedMessage, managedEnsureTarget, UNSET_LQ_MESSAGE } from "./lqResolve";
 export type { LqResolveResult } from "./lqResolve";
 export { resolveLqBinary };
 
@@ -37,22 +38,21 @@ export function discoverLqBinary(documentUri?: vscode.Uri): string {
     readUnmanagedLqPathSetting(documentUri),
   );
   if (resolved.kind === "unset") {
-    throw new AdapterError(
-      "MISSING_BINARY",
-      "Set lyx-preview.lqPath to a file path. LyX Preview will download and update the lq binary at that path.",
-    );
+    throw new AdapterError("MISSING_BINARY", UNSET_LQ_MESSAGE);
   }
   return resolved.path;
 }
 
 let ensureFlight: Promise<void> | undefined;
 let unmanagedLoadedToastShown = false;
+/** Managed path last successfully checked this session (DL155: once until lqPath changes). */
+let ensuredPath: string | undefined;
 
 /**
  * When `lqPath` is set, ensure that file matches GitHub latest (hash), even if
  * Live will spawn the unmanaged binary (DL034 / DL035). Empty `lqPath` → no download.
  * Soft-fail: if ensure fails while spawn would be unmanaged, toast only (preview continues).
- * Single-flight across activate / config / preview.
+ * Single-flight across activate / config / preview; GitHub check once per path per session.
  */
 export async function ensureCompanionLq(documentUri?: vscode.Uri): Promise<void> {
   if (ensureFlight) return ensureFlight;
@@ -67,6 +67,7 @@ export async function ensureCompanionLq(documentUri?: vscode.Uri): Promise<void>
 
     const target = managedEnsureTarget(lqPath);
     if (!target) return;
+    if (ensuredPath === target) return;
 
     try {
       await vscode.window.withProgress(
@@ -80,10 +81,11 @@ export async function ensureCompanionLq(documentUri?: vscode.Uri): Promise<void>
             onProgress: (message) => progress.report({ message }),
           });
           if (result.updated) {
-            void vscode.window.showInformationMessage("lq ready");
+            void vscode.window.showInformationMessage("lq is ready to use.");
           }
         },
       );
+      ensuredPath = target;
     } catch (error) {
       const message = error instanceof LqEnsureError
         ? error.message
@@ -91,7 +93,10 @@ export async function ensureCompanionLq(documentUri?: vscode.Uri): Promise<void>
         ? error.message
         : String(error);
       void vscode.window.showErrorMessage(`lq update failed: ${message}`);
-      if (resolved.kind === "unmanaged") return;
+      if (resolved.kind === "unmanaged") {
+        ensuredPath = target;
+        return;
+      }
       throw error;
     }
   })().finally(() => {

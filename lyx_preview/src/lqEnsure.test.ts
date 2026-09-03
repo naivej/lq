@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it } from "node:test";
 import {
+  UNSET_LQ_MESSAGE,
   expandUserPath,
   formatUnmanagedLqLoadedMessage,
   managedEnsureTarget,
@@ -33,8 +34,8 @@ describe("lqPlatform", () => {
 });
 
 describe("lqResolve", () => {
-  const defaultUnmanaged = "~/Github/lq_dev/lq/target/release/lq";
-  const defaultRel = "Github/lq_dev/lq/target/release/lq";
+  const sampleUnmanaged = "~/Github/lq_dev/lq/target/release/lq";
+  const sampleRel = "Github/lq_dev/lq/target/release/lq";
 
   function withFakeHome(fn: (home: string) => void): void {
     const home = join(tmpdir(), `lq-home-${Date.now()}-${Math.random().toString(16).slice(2)}`);
@@ -46,20 +47,27 @@ describe("lqResolve", () => {
     }
   }
 
-  it("package.json default is the portable unmanaged path", () => {
+  it("package.json default for unmanagedLqPath is empty", () => {
     const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")) as {
+      version: string;
       contributes: { configuration: { properties: Record<string, { default?: string }> } };
     };
+    assert.equal(pkg.version, "0.1.5");
     assert.equal(
       pkg.contributes.configuration.properties["lyx-preview.unmanagedLqPath"]?.default,
-      defaultUnmanaged,
+      "",
     );
+  });
+
+  it("unset copy names both path settings", () => {
+    assert.match(UNSET_LQ_MESSAGE, /lyx-preview\.lqPath/);
+    assert.match(UNSET_LQ_MESSAGE, /lyx-preview\.unmanagedLqPath/);
   });
 
   it("expands ~/ to home", () => {
     assert.equal(
-      expandUserPath(defaultUnmanaged, "/home/u"),
-      join("/home/u", defaultRel),
+      expandUserPath(sampleUnmanaged, "/home/u"),
+      join("/home/u", sampleRel),
     );
     assert.equal(expandUserPath("~", "/home/u"), "/home/u");
     assert.equal(expandUserPath("/abs/lq", "/home/u"), "/abs/lq");
@@ -67,10 +75,10 @@ describe("lqResolve", () => {
 
   it("prefers unmanaged file over lqPath", () => {
     withFakeHome((home) => {
-      const file = join(home, defaultRel);
+      const file = join(home, sampleRel);
       mkdirSync(join(file, ".."), { recursive: true });
       writeFileSync(file, "bin");
-      const r = resolveLqBinary("C:/managed/lq.exe", defaultUnmanaged, { home });
+      const r = resolveLqBinary("C:/managed/lq.exe", sampleUnmanaged, { home });
       assert.equal(r.kind, "unmanaged");
       if (r.kind === "unmanaged") assert.equal(r.path, file);
     });
@@ -78,10 +86,10 @@ describe("lqResolve", () => {
 
   it("uses Windows .exe when unmanaged path has no suffix", () => {
     withFakeHome((home) => {
-      const file = join(home, `${defaultRel}.exe`);
+      const file = join(home, `${sampleRel}.exe`);
       mkdirSync(join(file, ".."), { recursive: true });
       writeFileSync(file, "bin");
-      const r = resolveLqBinary("/managed", defaultUnmanaged, {
+      const r = resolveLqBinary("/managed", sampleUnmanaged, {
         home,
         platform: "win32",
       });
@@ -92,10 +100,10 @@ describe("lqResolve", () => {
 
   it("does not add .exe on non-Windows", () => {
     withFakeHome((home) => {
-      const file = join(home, `${defaultRel}.exe`);
+      const file = join(home, `${sampleRel}.exe`);
       mkdirSync(join(file, ".."), { recursive: true });
       writeFileSync(file, "bin");
-      const r = resolveLqBinary("/tmp/my-lq", defaultUnmanaged, {
+      const r = resolveLqBinary("/tmp/my-lq", sampleUnmanaged, {
         home,
         platform: "linux",
       });
@@ -105,7 +113,7 @@ describe("lqResolve", () => {
 
   it("skips empty unmanaged path", () => {
     withFakeHome((home) => {
-      const file = join(home, defaultRel);
+      const file = join(home, sampleRel);
       mkdirSync(join(file, ".."), { recursive: true });
       writeFileSync(file, "bin");
       const r = resolveLqBinary("/tmp/my-lq", "", { home });
@@ -115,15 +123,16 @@ describe("lqResolve", () => {
 
   it("skips missing unmanaged file and uses lqPath", () => {
     withFakeHome((home) => {
-      const r = resolveLqBinary("/tmp/my-lq", defaultUnmanaged, { home });
+      const r = resolveLqBinary("/tmp/my-lq", sampleUnmanaged, { home });
       assert.deepEqual(r, { kind: "managed", path: "/tmp/my-lq" });
     });
   });
 
   it("returns unset when unmanaged missing and lqPath empty", () => {
     withFakeHome((home) => {
-      assert.deepEqual(resolveLqBinary("", defaultUnmanaged, { home }), { kind: "unset" });
+      assert.deepEqual(resolveLqBinary("", sampleUnmanaged, { home }), { kind: "unset" });
       assert.deepEqual(resolveLqBinary(undefined, undefined, { home }), { kind: "unset" });
+      assert.deepEqual(resolveLqBinary("", "", { home }), { kind: "unset" });
     });
   });
 
@@ -140,15 +149,15 @@ describe("lqResolve", () => {
         "C:\\Users\\Shifu\\Github\\lq_dev\\lq\\target\\release\\lq.exe",
         "C:\\Users\\Shifu",
       ),
-      "~/Github/lq_dev/lq/target/release/lq is detected and loaded",
+      "Using local lq at ~/Github/lq_dev/lq/target/release/lq",
     );
     assert.equal(
       formatUnmanagedLqLoadedMessage("/home/u/Github/lq_dev/lq/target/release/lq", "/home/u"),
-      "~/Github/lq_dev/lq/target/release/lq is detected and loaded",
+      "Using local lq at ~/Github/lq_dev/lq/target/release/lq",
     );
     assert.equal(
       formatUnmanagedLqLoadedMessage("/opt/lq/lq", "/home/u"),
-      "/opt/lq/lq is detected and loaded",
+      "Using local lq at /opt/lq/lq",
     );
   });
 });
@@ -247,7 +256,43 @@ describe("lqEnsure", () => {
             platform: "linux",
             arch: "x64",
           }),
-        (err: unknown) => err instanceof LqEnsureError && err.code === "HASH_MISMATCH",
+        (err: unknown) =>
+          err instanceof LqEnsureError &&
+          err.code === "HASH_MISMATCH" &&
+          /lyx-preview\.lqPath/.test(err.message) &&
+          /unmanagedLqPath/.test(err.message),
+      );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects SHA256SUMS with no platform asset and names a next step", async () => {
+    const dir = join(tmpdir(), `lq-ensure-sums-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const managed = join(dir, "lq");
+    try {
+      const fetchFn = async (url: string): Promise<Response> => {
+        if (url.endsWith("SHA256SUMS")) {
+          return new Response(
+            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa  other_asset\n",
+            { status: 200 },
+          );
+        }
+        throw new Error(`unexpected fetch ${url}`);
+      };
+      await assert.rejects(
+        () =>
+          ensureManagedLq(managed, {
+            fetchFn,
+            platform: "linux",
+            arch: "x64",
+          }),
+        (err: unknown) =>
+          err instanceof LqEnsureError &&
+          err.code === "MISSING_ASSET" &&
+          /SHA256SUMS/.test(err.message) &&
+          /unmanagedLqPath/.test(err.message),
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });

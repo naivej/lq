@@ -1,8 +1,8 @@
 {
   "name": "lyx-preview",
   "displayName": "LyX Preview",
-  "description": "Read-only Live preview of saved .lyx files.",
-  "version": "0.1.4",
+  "description": "Read-only preview of saved .lyx files.",
+  "version": "0.1.5",
   "publisher": "CoconutWater",
   "license": "MIT",
   "repository": {
@@ -131,17 +131,17 @@
         "lyx-preview.lqPath": {
           "type": "string",
           "default": "",
-          "description": "Managed lq binary. LyX Preview downloads and updates this file from the latest GitHub Release. Leave empty to manage lq yourself. Live preview prefers unmanagedLqPath when that file exists."
+          "description": "Path of the lq binary to use second, when lyx-preview.unmanagedLqPath is empty. Downloaded and updated from GitHub."
         },
         "lyx-preview.unmanagedLqPath": {
           "type": "string",
-          "default": "~/Github/lq_dev/lq/target/release/lq",
-          "description": "Preferred lq binary for Live preview. Used first if the file exists. Never downloaded or overwritten. Leave empty to skip."
+          "default": "",
+          "description": "Path of the lq binary to use first. Never downloaded or overwritten."
         },
         "lyx-preview.timeoutMs": {
           "type": "number",
           "default": 30000,
-          "description": "Milliseconds to wait for preview before terminating the process."
+          "description": "How long to wait for the preview, in milliseconds."
         }
       }
     },

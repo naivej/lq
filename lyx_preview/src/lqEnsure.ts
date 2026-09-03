@@ -114,7 +114,10 @@ export async function ensureManagedLq(
   const sums = parseSha256Sums(sumsText);
   const expected = sums.get(asset);
   if (!expected) {
-    throw new LqEnsureError(`SHA256SUMS has no entry for ${asset}`, "MISSING_ASSET");
+    throw new LqEnsureError(
+      `SHA256SUMS has no entry for ${asset}. The GitHub release looks incomplete. Try later, or set lyx-preview.unmanagedLqPath to a binary you built.`,
+      "MISSING_ASSET",
+    );
   }
 
   try {
@@ -132,7 +135,7 @@ export async function ensureManagedLq(
   const got = sha256Buffer(body);
   if (got !== expected) {
     throw new LqEnsureError(
-      `Downloaded ${asset} hash mismatch (expected ${expected}, got ${got})`,
+      `Downloaded ${asset} hash mismatch (expected ${expected}, got ${got}). Retry the download, check that lyx-preview.lqPath is writable, or set lyx-preview.unmanagedLqPath to a binary you built.`,
       "HASH_MISMATCH",
     );
   }
@@ -172,9 +175,12 @@ export async function ensureManagedLq(
 
   const verify = await sha256File(managedPath);
   if (verify !== expected) {
-    throw new LqEnsureError("Post-write hash mismatch", "HASH_MISMATCH");
+    throw new LqEnsureError(
+      "Post-write hash mismatch. Retry the download, check that lyx-preview.lqPath is writable, or set lyx-preview.unmanagedLqPath to a binary you built.",
+      "HASH_MISMATCH",
+    );
   }
 
-  deps.onProgress?.("lq ready");
+  deps.onProgress?.("lq is ready to use.");
   return { updated: true, asset };
 }

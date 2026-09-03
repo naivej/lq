@@ -38,6 +38,16 @@ function isAdapterError(code: string): (err: unknown) => boolean {
   return (err) => err instanceof AdapterError && err.code === code;
 }
 
+function adapterMessage(
+  code: string,
+  ...needles: RegExp[]
+): (err: unknown) => boolean {
+  return (err) =>
+    err instanceof AdapterError &&
+    err.code === code &&
+    needles.every((n) => n.test(err.message));
+}
+
 function tempDir(): string {
   return mkdtempSync(join(tmpdir(), "lq-runner-"));
 }
@@ -96,7 +106,7 @@ describe("runLivePreview", () => {
       const lq = writeFake(dir, "slow", "setTimeout(function () { process.exit(0); }, 5000);\n");
       await assert.rejects(
         runLivePreview("fake", "C:/tmp/a.lyx", 200, undefined, undefined, undefined, lq),
-        isAdapterError("TIMEOUT"),
+        adapterMessage("TIMEOUT", /timeoutMs/, /large/),
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -113,7 +123,7 @@ describe("runLivePreview", () => {
       );
       await assert.rejects(
         runLivePreview("fake", "C:/tmp/a.lyx", 5000, undefined, 64, 64, lq),
-        isAdapterError("OUTPUT_LIMIT"),
+        adapterMessage("OUTPUT_LIMIT", /protect memory/, /smaller document/),
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
@@ -130,10 +140,17 @@ describe("runLivePreview", () => {
       );
       await assert.rejects(
         runLivePreview("fake", "C:/tmp/a.lyx", 5000, undefined, 16 * 1024 * 1024, 64, lq),
-        isAdapterError("OUTPUT_LIMIT"),
+        adapterMessage("OUTPUT_LIMIT", /protect memory/, /smaller document/),
       );
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  it("rejects with MISSING_BINARY naming both settings", async () => {
+    await assert.rejects(
+      runLivePreview(join(tmpdir(), "no-such-lq-binary"), "C:/tmp/a.lyx", 5000),
+      adapterMessage("MISSING_BINARY", /lyx-preview\.lqPath/, /unmanagedLqPath/),
+    );
   });
 });

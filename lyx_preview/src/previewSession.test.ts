@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 import {
   AdapterError,
   LIVE_CONTRACT,
+  LIVE_MISMATCH_HINT,
   PreviewSession,
   emptyNavigate,
   formatChangeTime,
@@ -49,7 +50,14 @@ describe("parseLiveStdout", () => {
   });
 
   it("rejects malformed JSON", () => {
-    assert.throws(() => parseLiveStdout("not-json"), (e: unknown) => e instanceof AdapterError && e.code === "MALFORMED_JSON");
+    assert.throws(
+      () => parseLiveStdout("not-json"),
+      (e: unknown) =>
+        e instanceof AdapterError &&
+        e.code === "MALFORMED_JSON" &&
+        e.message.includes("invalid JSON") &&
+        e.message.includes(LIVE_MISMATCH_HINT.trim()),
+    );
   });
 
   it("classifies parse failures", () => {
@@ -62,7 +70,11 @@ describe("parseLiveStdout", () => {
   it("rejects deferred review/edit fields", () => {
     assert.throws(
       () => parseLiveStdout(validRender({ editTargets: [] })),
-      (e: unknown) => e instanceof AdapterError && e.code === "CONTRACT",
+      (e: unknown) =>
+        e instanceof AdapterError &&
+        e.code === "CONTRACT" &&
+        e.message.includes("editTargets") &&
+        e.message.includes(LIVE_MISMATCH_HINT.trim()),
     );
     assert.throws(
       () => parseLiveStdout(validRender({ reviewRegions: [] })),
