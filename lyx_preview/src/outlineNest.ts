@@ -132,22 +132,6 @@ export function attachApproxLines(
   });
 }
 
-/** Best outline id whose heading line is at or above `line` (0-based). */
-export function outlineIdForLine(
-  entries: OutlineEntryLike[],
-  lines: string[],
-  line: number,
-): string | undefined {
-  const withLines = attachApproxLines(entries, lines);
-  let best: OutlineEntryLike | undefined;
-  for (const e of withLines) {
-    if (typeof e.line !== "number") continue;
-    if (e.line <= line) best = e;
-    else break;
-  }
-  return best?.id;
-}
-
 export interface NavEntryLike {
   kind: string;
   number: string;
@@ -212,7 +196,6 @@ function attachList(
  */
 export function dedupeNavigateLabels(
   navigate: NavigateLike,
-  _outline: OutlineEntryLike[],
 ): NavigateLike {
   const eqNames = new Set(
     navigate.equations.map((e) => e.name).filter((n): n is string => !!n),

@@ -4,8 +4,6 @@ export function liveWebviewCsp(imgSrc = "'none'", scriptSrc = "'none'"): string 
   return `default-src 'none'; img-src ${imgSrc}; style-src 'unsafe-inline'; script-src ${scriptSrc}; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'`;
 }
 
-export const WEBVIEW_CSP = liveWebviewCsp("'none'");
-
 export function escapeHostText(value: string): string {
   return value
     .replaceAll("&", "&amp;")

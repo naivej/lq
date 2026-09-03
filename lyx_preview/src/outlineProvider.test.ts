@@ -6,7 +6,6 @@ import {
   buildNavigateRoots,
   dedupeNavigateLabels,
   nestOutlineEntries,
-  outlineIdForLine,
   scanLyxHeadingLines,
 } from "./outlineNest";
 import {
@@ -89,19 +88,6 @@ describe("attachApproxLines", () => {
   });
 });
 
-describe("outlineIdForLine", () => {
-  it("picks the heading at or above the cursor line", () => {
-    const entries = [
-      { level: 1, number: "1", text: "One", id: "sec-1" },
-      { level: 1, number: "2", text: "Two", id: "sec-2" },
-    ];
-    const lines = ["x", "One", "body", "Two", "more"];
-    assert.equal(outlineIdForLine(entries, lines, 1), "sec-1");
-    assert.equal(outlineIdForLine(entries, lines, 2), "sec-1");
-    assert.equal(outlineIdForLine(entries, lines, 3), "sec-2");
-  });
-});
-
 describe("dedupeNavigateLabels", () => {
   it("drops labels already covered by floats/equations, keeps outline-title leftovers", () => {
     const nav = dedupeNavigateLabels(
@@ -119,7 +105,6 @@ describe("dedupeNavigateLabels", () => {
         listings: [],
         algorithms: [],
       },
-      [{ level: 1, number: "1", text: "Intro", id: "sec-1" }],
     );
     assert.deepEqual(nav.labels.map((l) => l.name).sort(), ["note:custom-hook", "orphan"]);
   });

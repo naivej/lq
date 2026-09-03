@@ -243,7 +243,7 @@ class LivePreviewPanel {
     const withLines = attachApproxLines(entries, lines);
     const rawNav = navigate ?? this.session.lastValid?.navigate;
     const nav = rawNav
-      ? attachNavigateLines(dedupeNavigateLabels(rawNav, withLines), lines)
+      ? attachNavigateLines(dedupeNavigateLabels(rawNav), lines)
       : undefined;
     const cachedChanges = changes ?? this.session.lastValid?.changes;
     rememberOutline(this.filePath, entries, nav, cachedChanges);
@@ -413,7 +413,7 @@ export function activate(context: vscode.ExtensionContext): void {
       : scanLyxHeadingLines(lines);
     const cachedNav = getCachedNavigate(doc.uri.fsPath);
     const navigate = cachedNav
-      ? attachNavigateLines(dedupeNavigateLabels(cachedNav, outline), lines)
+      ? attachNavigateLines(dedupeNavigateLabels(cachedNav), lines)
       : undefined;
     outlineTree.refresh(doc.uri.fsPath, outline, navigate, getCachedChanges(doc.uri.fsPath));
   };
