@@ -224,11 +224,11 @@ pub static HELP_PAGES: &[HelpPage] = &[
             },
             HelpSection {
                 heading: "Opting into note prose",
-                body: "This rule suggests leaving private notes alone unless the operation explicitly concerns them. To opt into note prose on the content axis, make the selector note-scoped using a `:note` part or an explicit `inset[Note ...]` path (e.g. `inset[Note Note] layout[Plain Layout]`); note-scope is per `,` group, so `text, text:note` is \"visible text + note text\".",
+                body: "Leave private notes alone unless the operation explicitly concerns them. To opt into note prose on the content axis, make the selector note-scoped using a `:note` part or an explicit `inset[Note ...]` path (e.g. `inset[Note Note] layout[Plain Layout]`); note-scope is per `,` group, so `text, text:note` is \"visible text + note text\".",
             },
             HelpSection {
                 heading: "Greyedout notes",
-                body: "`Note Greyedout` is different. It is visible output and is not excluded by the private-note rule, so `:note(Greyedout)` is rejected.",
+                body: "`Note Greyedout` is visible output and is not excluded by the private-note rule, so `:note(Greyedout)` is rejected.",
             },
         ],
         further_reading: &[
