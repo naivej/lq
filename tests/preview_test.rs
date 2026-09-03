@@ -1301,6 +1301,12 @@ fn live_renderer_disclosure_collapsibles_covers_foldable_inset_set() {
     assert!(html.contains("IndexTerm"));
     assert!(html.contains("SubTerm"));
     assert!(html.contains("SeeAlso"));
+    assert!(html.contains(r#">Nom</summary>"#));
+    assert!(html.contains(r#">Sort as</summary>"#));
+    assert!(html.contains(r#">Description</summary>"#));
+    assert!(html.contains("NomSymbol"));
+    assert!(html.contains("NomSort"));
+    assert!(html.contains("Nom description"));
     assert!(html.contains("phantom body"));
     assert!(!html.contains("box-full"));
 }
@@ -2208,6 +2214,9 @@ fn live_renderer_help_userguide_lyx_script_line_nomencl_flex_emph() {
     assert!(html.contains(r#"<div class="nomencl">"#));
     assert!(html.contains(">Tab</a></dt>"));
     assert!(html.contains(">Tabulator key</dd>"));
+    assert!(html.contains(r#">Nom</summary>"#));
+    assert!(html.contains(r#">Description</summary>"#));
+    assert!(html.contains(r#">Sort as</summary>"#));
     assert!(
         !html.contains("UNKNOWN_INSET"),
         "UserGuide must not dump unknown-inset fallbacks"

@@ -645,6 +645,9 @@ fn render_inset_body(
         );
     }
     if kind == "Argument 1" {
+        if ctx.in_nomencl {
+            return render_nomencl_argument(block, kind, parent_state, ctx, owner_parent);
+        }
         let text = {
             let ast = ctx.doc();
             let n = mapping::nomencl_text(ast, block);
@@ -658,33 +661,7 @@ fn render_inset_body(
     }
     if kind == "Argument" || kind.starts_with("Argument ") {
         if ctx.in_nomencl {
-            let nested = flatten_flow(ctx.doc(), &ctx.doc().node(block).children, 0);
-            let owner_ok = owner_parent.is_some_and(|p| {
-                let k = inset_kind(ctx.doc(), p);
-                k == "Nomenclature" || k.starts_with("Nomenclature ")
-            });
-            let inner = if owner_ok && !nested.is_empty() {
-                let owner = owner_parent.expect("invariant: owner_ok");
-                nested
-                    .iter()
-                    .map(|item| {
-                        with_caption_layout(ctx, owner, block, item, |ctx, selector| {
-                            let id = take_owner_id(ctx, None);
-                            emit_token(ctx, &id, selector);
-                            let body =
-                                render_layout_inline(item.node, ctx, false, Some(parent_state));
-                            format!(
-                                r#"<div class="{}"{}>{body}</div>"#,
-                                layout_slug(&item.layout),
-                                mapping_attrs(&id)
-                            )
-                        })
-                    })
-                    .collect::<String>()
-            } else {
-                render_inset_layouts(block, parent_state, ctx)
-            };
-            return wrap_disclosure(ctx, "argument", "Argument", &inner, None);
+            return render_nomencl_argument(block, kind, parent_state, ctx, owner_parent);
         }
         return String::new();
     }
@@ -781,11 +758,6 @@ fn render_inset_body(
     }
     if kind == "Nomenclature" || kind.starts_with("Nomenclature ") {
         let entry = collect_nomencl_entry(block, ctx);
-        let label = if entry.symbol.is_empty() {
-            "Nomencl".into()
-        } else {
-            entry.symbol.clone()
-        };
         ctx.nomencl.push(entry.clone());
         let prev = ctx.in_nomencl;
         ctx.in_nomencl = true;
@@ -794,7 +766,7 @@ fn render_inset_body(
         return format!(
             r#"<a id="{}"></a>{}"#,
             escape_live_html(&entry.id),
-            wrap_disclosure(ctx, "nomencl", &label, &inner, None)
+            wrap_disclosure(ctx, "nomencl", "Nom", &inner, None)
         );
     }
     if kind == "Preview" || kind.starts_with("Preview ") {
@@ -1366,6 +1338,62 @@ fn phantom_summary_label(kind: &str) -> String {
         "VPhantom".into()
     } else {
         "Phantom".into()
+    }
+}
+
+fn render_nomencl_argument(
+    block: NodeId,
+    kind: &str,
+    parent_state: &TraversalState,
+    ctx: &mut RenderCtx<'_>,
+    owner_parent: Option<NodeId>,
+) -> String {
+    let nested = flatten_flow(ctx.doc(), &ctx.doc().node(block).children, 0);
+    let owner_ok = owner_parent.is_some_and(|p| {
+        let k = inset_kind(ctx.doc(), p);
+        k == "Nomenclature" || k.starts_with("Nomenclature ")
+    });
+    let inner = if owner_ok && !nested.is_empty() {
+        let owner = owner_parent.expect("invariant: owner_ok");
+        nested
+            .iter()
+            .map(|item| {
+                with_caption_layout(ctx, owner, block, item, |ctx, selector| {
+                    let id = take_owner_id(ctx, None);
+                    emit_token(ctx, &id, selector);
+                    let body = render_layout_inline(item.node, ctx, false, Some(parent_state));
+                    format!(
+                        r#"<div class="{}"{}>{body}</div>"#,
+                        layout_slug(&item.layout),
+                        mapping_attrs(&id)
+                    )
+                })
+            })
+            .collect::<String>()
+    } else {
+        render_inset_layouts(block, parent_state, ctx)
+    };
+    wrap_disclosure(
+        ctx,
+        "argument",
+        nomencl_argument_summary_label(kind),
+        &inner,
+        None,
+    )
+}
+
+fn nomencl_argument_summary_label(kind: &str) -> &'static str {
+    let slot = kind
+        .strip_prefix("Argument")
+        .unwrap_or(kind)
+        .trim()
+        .to_ascii_lowercase();
+    match slot.as_str() {
+        "1" => "Sort as",
+        "post:1" => "Description",
+        "post:2" => "Unit",
+        "post:3" => "Note",
+        _ => "Argument",
     }
 }
 
