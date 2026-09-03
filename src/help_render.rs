@@ -11,17 +11,8 @@ pub enum RichMode {
 }
 
 const ANSI_RESET: &str = "\x1b[0m";
-const ANSI_HEADING: &str = "\x1b[1;36m";
+const ANSI_HEADING: &str = "\x1b[1;37m";
 const ANSI_CODE: &str = "\x1b[36m";
-const ANSI_SAFETY: &str = "\x1b[1;33m";
-
-const SAFETY_TERMS: &[&str] = &[
-    "rejected",
-    "hard error",
-    "writes nothing",
-    "cannot",
-    "never",
-];
 
 const SPLASH: &str = concat!(
     "\n",
@@ -182,17 +173,7 @@ fn style_inline(line: &str) -> String {
             out.push_str(part);
             out.push_str(ANSI_RESET);
         } else {
-            out.push_str(&emphasize_safety(part));
-        }
-    }
-    out
-}
-
-fn emphasize_safety(text: &str) -> String {
-    let mut out = text.to_string();
-    for term in SAFETY_TERMS {
-        if out.contains(term) {
-            out = out.replace(term, &format!("{ANSI_SAFETY}{term}{ANSI_RESET}"));
+            out.push_str(part);
         }
     }
     out

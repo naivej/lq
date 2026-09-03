@@ -99,8 +99,12 @@ pub static HELP_PAGES: &[HelpPage] = &[
                 body: "Document mutations validate flags, selectors, schema context, and tracking boundaries before committing the file. A hard error has a non-zero exit status and does not commit a partial mutation. A successful JSON response may contain warnings: warnings are non-fatal diagnostics, not proof that the operation failed. Refresh confirmation is a separate outcome from dispatch; an unconfirmed refresh can follow a successfully written file.",
             },
             HelpSection {
-                heading: "Validation",
-                body: "Mutations validate before committing the file. Built-in insets (such as `Formula` or `Note`) and inline properties (such as `change_inserted`) are recognized everywhere, regardless of document class.\n- Core CST guards: `document`, `body`, and `header` cannot be mutated directly.\n- Malformed `--raw-file` syntax that does not parse as valid LyX is rejected entirely.\n- Unknown inset types in a raw payload produce a warning but do not block the insertion, because LyX's reader is permissive about inset names. `lq` checks against a hardcoded registry of inset types (sourced from LyX's inset definitions), because no inset type is defined by a document class.\n\nDocument-class constructs are validated against the `.layout` file selected by the header's `\\textclass`; these checks are skipped when no layout files can be found. `insert` is the only mutation that creates new structure, so it validates what it adds. Valid values for a document come from `lq schema`.\n- Layout name: an unrecognized layout is rejected with the list of valid alternatives.\n- Context boundaries: document layouts (e.g. `Section`) cannot be inserted inside insets (e.g. `Foot`); `Plain Layout` is the normal layout inside insets, and insets must sit inside a layout rather than at the body level.\n- Cross-class: layouts from another document class (e.g. `Frame` in an `article` document) are rejected.\n- Inline properties: unknown property keys are rejected with the list of valid alternatives.",
+                heading: "Core and built-in validation",
+                body: "Mutations validate before committing the file. Built-in insets (such as `Formula` or `Note`) and inline properties (such as `change_inserted`) are recognized everywhere, regardless of document class.\n- Core CST guards: `document`, `body`, and `header` cannot be mutated directly.\n- Malformed `--raw-file` syntax that does not parse as valid LyX is rejected entirely.\n- Unknown inset types in a raw payload produce a warning but do not block the insertion, because LyX's reader is permissive about inset names. `lq` checks against a hardcoded registry of inset types (sourced from LyX's inset definitions), because no inset type is defined by a document class.\n- Inline properties: unknown property keys are rejected with the list of valid alternatives.",
+            },
+            HelpSection {
+                heading: "Document-class validation",
+                body: "Document-class constructs are validated against the `.layout` file selected by the header's `\\textclass`; these checks are skipped when no layout files can be found. `insert` is the only mutation that creates new structure, so it validates what it adds. Valid values for a document come from `lq schema`.\n- Layout name: an unrecognized layout is rejected with the list of valid alternatives.\n- Context boundaries: document layouts (e.g. `Section`) cannot be inserted inside insets (e.g. `Foot`); `Plain Layout` is the normal layout inside insets, and insets must sit inside a layout rather than at the body level.\n- Cross-class: layouts from another document class (e.g. `Frame` in an `article` document) are rejected.",
             },
         ],
         further_reading: &[
@@ -213,10 +217,20 @@ pub static HELP_PAGES: &[HelpPage] = &[
     HelpPage {
         id: "concepts/private-notes",
         title: "note visibility on the content/state/structure axes",
-        sections: &[HelpSection {
-            heading: "Visibility rule",
-            body: "LyX private notes `Note Note` and `Note Comment` are source content that is retained in the `.lyx` file and CST but omitted from the visible document output, including generated PDF.\n\n`lq`'s visibility rule has three axes, with every surface living on exactly one axis:\n\n```text\nContent  — matching / extracting text\n  Surfaces: :contains(), bare text, --find, split-after, --text-only\n  Default:  visible-only: private-note prose is excluded unless the\n            selector is note-scoped.\n\nState  — matching change regions / styles\n  Surfaces: :change(), :property()\n  Default:  always visible: state predicates see note prose (a deleted\n            note's text is still :change(deleted)).\n\nStructure  — locating nodes / lossless views\n  Surfaces: structural tags, ~, read/dump CST, --toc\n  Default:  lossless: note nodes stay present; the TOC never surfaces\n            note headings or note text.\n```\n\nThis rule suggests leaving private notes alone unless the operation explicitly concerns them. To opt into note prose on the content axis, make the selector note-scoped using a `:note` part or an explicit `inset[Note ...]` path (e.g. `inset[Note Note] layout[Plain Layout]`); note-scope is per `,` group, so `text, text:note` is \"visible text + note text\".\n\n`Note Greyedout` is different. It is visible output and is not excluded by the private-note rule, so `:note(Greyedout)` is rejected.",
-        }],
+        sections: &[
+            HelpSection {
+                heading: "Visibility rule across three axes",
+                body: "LyX private notes `Note Note` and `Note Comment` are source content that is retained in the `.lyx` file and CST but omitted from the visible document output, including generated PDF.\n\n`lq`'s visibility rule has three axes, with every surface living on exactly one axis:\n\n```text\nContent  — matching / extracting text\n  Surfaces: :contains(), bare text, --find, split-after, --text-only\n  Default:  visible-only: private-note prose is excluded unless the\n            selector is note-scoped.\n\nState  — matching change regions / styles\n  Surfaces: :change(), :property()\n  Default:  always visible: state predicates see note prose (a deleted\n            note's text is still :change(deleted)).\n\nStructure  — locating nodes / lossless views\n  Surfaces: structural tags, ~, read/dump CST, --toc\n  Default:  lossless: note nodes stay present; the TOC never surfaces\n            note headings or note text.\n```",
+            },
+            HelpSection {
+                heading: "Opting into note prose",
+                body: "This rule suggests leaving private notes alone unless the operation explicitly concerns them. To opt into note prose on the content axis, make the selector note-scoped using a `:note` part or an explicit `inset[Note ...]` path (e.g. `inset[Note Note] layout[Plain Layout]`); note-scope is per `,` group, so `text, text:note` is \"visible text + note text\".",
+            },
+            HelpSection {
+                heading: "Greyedout notes",
+                body: "`Note Greyedout` is different. It is visible output and is not excluded by the private-note rule, so `:note(Greyedout)` is rejected.",
+            },
+        ],
         further_reading: &[
             FurtherReading {
                 page: "concepts/selectors",
@@ -480,7 +494,15 @@ pub static HELP_PAGES: &[HelpPage] = &[
             },
             HelpSection {
                 heading: "Config precedence",
-                body: "  New config: built-in defaults, then explicit options. 'layoutsDir' is only\n  written when --layouts-dir is passed.\n  Existing config: existing values, then explicit options; omitted values\n  persist, including a previously stored 'layoutsDir' (user-tier overlay).\n\nLayout search: optional overlay → LyX user-dir →\ninstall layouts → document LocalLayout. Init JSON reports layoutSearch\n(order) and layoutRoots (resolved paths).\n\nSetting a non-'none' refresh mode runs a fast reachability probe; a probe\nwarning does not abort init. A refresh that is dispatched but not confirmed\nproceeds with a warning rather than aborting.",
+                body: "  New config: built-in defaults, then explicit options. 'layoutsDir' is only\n  written when --layouts-dir is passed.\n  Existing config: existing values, then explicit options; omitted values\n  persist, including a previously stored 'layoutsDir' (user-tier overlay).",
+            },
+            HelpSection {
+                heading: "Layout search order",
+                body: "Layout search: optional overlay → LyX user-dir →\ninstall layouts → document LocalLayout. Init JSON reports layoutSearch\n(order) and layoutRoots (resolved paths).",
+            },
+            HelpSection {
+                heading: "Refresh reachability probe",
+                body: "Setting a non-'none' refresh mode runs a fast reachability probe; a probe\nwarning reports if LyXServer is currently unreachable but does not abort init.",
             },
         ],
         further_reading: &[FurtherReading {
