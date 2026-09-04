@@ -1616,6 +1616,65 @@ fn live_mapping_longtable_caption_is_owner_prefixed() {
     );
 }
 
+/// LyX window: every multi-page table steps the table counter, caption or not.
+/// EmbeddedObjects §2.5 is Table 2.1; two uncaptioned longtables then §2.6.3 is Table 2.4.
+#[test]
+fn live_renderer_help_embeddedobjects_longtable_steps_table_counter() {
+    let path = help_file("EmbeddedObjects.lyx");
+    let Some((html, response)) = render_path(&path) else {
+        return;
+    };
+    let float_at = html
+        .find("A table float")
+        .expect("§2.5 table float caption");
+    let float_before = &html[float_at.saturating_sub(180)..float_at];
+    assert!(
+        float_before.contains("Table 2.1:"),
+        "§2.5 float must stay Table 2.1; nearby markup: {float_before}"
+    );
+    let long_at = html
+        .find("Multi-page table with caption")
+        .expect("§2.6.3 longtable caption");
+    let long_before = &html[long_at.saturating_sub(220)..long_at];
+    assert!(
+        long_before.contains("Table 2.4:"),
+        "§2.6.3 longtable must be Table 2.4 like the LyX window; nearby markup: {long_before}"
+    );
+    let prefix_at = html[..long_at]
+        .rfind(r#"class="float-caption-prefix""#)
+        .expect("Table 2.4 prefix before the caption text");
+    let between = &html[prefix_at..long_at];
+    assert!(
+        !between.contains("<div"),
+        "Table 2.4: and the caption must stay on one line; markup between them: {between}"
+    );
+    let t24 = response
+        .navigate
+        .tables
+        .iter()
+        .find(|e| e.number == "2.4")
+        .expect("list of tables includes 2.4");
+    assert!(
+        t24.text.contains("Multi-page table with caption"),
+        "2.4 list text: {}",
+        t24.text
+    );
+    assert_eq!(t24.id, "float-table-2-4");
+    assert!(html.contains(r#"id="float-table-2-4""#));
+    assert!(
+        !response.navigate.tables.iter().any(|e| e.number == "2.2"),
+        "uncaptioned longtables must not appear in the list of tables"
+    );
+    assert!(
+        !response.navigate.tables.iter().any(|e| e.number == "2.3"),
+        "uncaptioned longtables must not appear in the list of tables"
+    );
+    assert!(
+        html.contains(r##"href="#tab_Referenced_multi_page_table">2.5</a>"##),
+        "longtable label must resolve to the table number"
+    );
+}
+
 #[test]
 fn live_mapping_intro_table_phrase_is_a_cell_layout() {
     let path = help_file("Intro.lyx");
@@ -2581,10 +2640,12 @@ fn live_renderer_help_embeddedobjects_lyx_margin_notes_wrap_listings() {
     assert!(html.contains(r#"class="float-caption-Unnumbered""#));
     assert!(html.contains("Continued Example Phone List"));
     let cont_at = html.find("Continued Example Phone List").unwrap();
-    let cont_span = html[..cont_at].rfind("<span").unwrap();
+    let cont_wrap = html[..cont_at]
+        .rfind(r#"class="float-caption-Unnumbered""#)
+        .expect("Unnumbered class on the continued caption");
     assert!(
-        html[cont_span..cont_at].contains("float-caption-Unnumbered"),
-        "longtable Caption Unnumbered wraps with float-caption-Unnumbered"
+        cont_at - cont_wrap < 400,
+        "float-caption-Unnumbered must wrap Continued Example Phone List"
     );
     assert!(
         !html[cont_at.saturating_sub(80)..cont_at].contains("Table "),

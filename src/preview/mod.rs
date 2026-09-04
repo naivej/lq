@@ -636,6 +636,7 @@ pub fn render_live_html(
         float_type_counts: HashMap::new(),
         sub_float_counts: HashMap::new(),
         in_float: false,
+        longtable_number: None,
         float_number_stack: Vec::new(),
         float_stack: Vec::new(),
         float_list_entries: Vec::new(),
@@ -834,6 +835,8 @@ pub(crate) struct RenderCtx<'a> {
     pub float_type_counts: HashMap<String, u32>,
     pub sub_float_counts: HashMap<String, u32>,
     pub in_float: bool,
+    /// Number taken for the current multi-page table (LyX steps once per longtable).
+    pub longtable_number: Option<String>,
     pub float_number_stack: Vec<String>,
     pub float_stack: Vec<FloatListEntry>,
     pub float_list_entries: Vec<FloatListEntry>,

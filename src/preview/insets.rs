@@ -707,7 +707,7 @@ fn render_inset_body(
                         emit_token(ctx, &id, selector);
                         let body = render_layout_inline(item.node, ctx, false, Some(parent_state));
                         format!(
-                            r#"<div class="{}"{}>{body}</div>"#,
+                            r#"<span class="{}"{}>{body}</span>"#,
                             layout_slug(&item.layout),
                             mapping_attrs(&id)
                         )
@@ -717,8 +717,9 @@ fn render_inset_body(
         } else {
             render_inset_layouts(block, parent_state, ctx)
         };
+        let prefix = longtable_caption_prefix_html(ctx, &type_);
         return format!(
-            r#"<span class="float-caption-{}">{inner}</span>"#,
+            r#"<span class="float-caption-{}">{prefix}{inner}</span>"#,
             escape_live_html(&type_)
         );
     }
@@ -1519,13 +1520,22 @@ fn width_to_css(width: Option<&str>) -> String {
     w.to_string()
 }
 
-fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut RenderCtx<'_>) -> String {
+fn tabular_xml_meta(ast: &Document, block: NodeId) -> String {
     let mut meta = String::new();
-    for &c in &ctx.doc().node(block).children {
-        if let NodeKind::Text { text } = &ctx.doc().node(c).kind {
+    for &c in &ast.node(block).children {
+        if let NodeKind::Text { text } = &ast.node(c).kind {
             meta.push_str(text);
         }
     }
+    meta
+}
+
+pub(crate) fn tabular_is_longtable(ast: &Document, block: NodeId) -> bool {
+    tabular_xml_meta(ast, block).contains("islongtable=\"true\"")
+}
+
+fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut RenderCtx<'_>) -> String {
+    let meta = tabular_xml_meta(ctx.doc(), block);
     let cols = attr_after(&meta, "columns=\"")
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(0);
@@ -1557,7 +1567,16 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
     } else {
         ""
     };
-    let mut html = format!("<table{table_class}><tbody>");
+    let prev_lt = ctx.longtable_number.take();
+    if is_long {
+        ctx.longtable_number = take_float_number(ctx, "table", false);
+    }
+    let id_attr = ctx
+        .longtable_number
+        .as_deref()
+        .map(|n| format!(r#" id="float-table-{}""#, n.replace('.', "-")))
+        .unwrap_or_default();
+    let mut html = format!("<table{table_class}{id_attr}><tbody>");
     let mut c = 0usize;
     for i in 0..cell_attrs.len() {
         let attr = &cell_attrs[i];
@@ -1695,6 +1714,7 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         html.push_str("</tr>");
     }
     html.push_str("</tbody></table>");
+    ctx.longtable_number = prev_lt;
     html
 }
 
@@ -1954,6 +1974,20 @@ fn float_caption_prefix(variant: &str, num: Option<&str>) -> String {
         return String::new();
     };
     format!("{} {num}: ", float_nameref_prefix(variant))
+}
+
+fn longtable_caption_prefix_html(ctx: &RenderCtx<'_>, caption_type: &str) -> String {
+    if caption_type == "Unnumbered" {
+        return String::new();
+    }
+    let prefix = float_caption_prefix("table", ctx.longtable_number.as_deref());
+    if prefix.is_empty() {
+        return String::new();
+    }
+    format!(
+        r#"<span class="float-caption-prefix">{}</span>"#,
+        escape_live_html(&prefix)
+    )
 }
 
 fn subfloat_caption_prefix(variant: &str, num: Option<&str>) -> String {

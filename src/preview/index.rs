@@ -112,6 +112,7 @@ pub(crate) fn index_document(nodes: &[NodeId], ctx: &mut RenderCtx<'_>) {
     ctx.float_number_stack.clear();
     ctx.float_stack.clear();
     ctx.in_float = false;
+    ctx.longtable_number = None;
     ctx.nomencl_seq = 0;
     ctx.index_seq = 0;
     ctx.subeq = None;
@@ -311,6 +312,40 @@ fn walk_index(
             }
             if listed {
                 insets::pop_float_list_entry(ctx, nested);
+            }
+            *current_float_caption = prev_cap;
+            continue;
+        }
+        if (kind == "Tabular" || kind.starts_with("Tabular "))
+            && insets::tabular_is_longtable(ctx.doc(), id)
+        {
+            let deleted = state.deleted_depth > 0 || state.outer_deleted_depth > 0;
+            // LyX steps once per longtable, including tracked-deleted ones.
+            let taken = insets::take_float_number(ctx, "table", false);
+            let caps = insets::float_own_captions(ctx.doc(), id);
+            let listed = !deleted
+                && !caps.is_empty()
+                && insets::note_float_list_entry(ctx, id, "table", taken.as_deref(), false);
+            let prev_cap = current_float_caption.clone();
+            if let Some(ref taken) = taken {
+                *current_float_caption =
+                    format!("{} {taken}", insets::float_nameref_prefix("table"));
+            }
+            walk_index(
+                &children,
+                ctx,
+                headings,
+                taken.or_else(|| float_no.clone()),
+                false,
+                false,
+                &enter_traversal_state(&state),
+                in_float,
+                current_heading,
+                current_heading_title,
+                current_float_caption,
+            );
+            if listed {
+                insets::pop_float_list_entry(ctx, false);
             }
             *current_float_caption = prev_cap;
             continue;

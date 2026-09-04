@@ -585,6 +585,7 @@ struct CounterSnap {
     float_type_counts: std::collections::HashMap<String, u32>,
     sub_float_counts: std::collections::HashMap<String, u32>,
     in_float: bool,
+    longtable_number: Option<String>,
     float_number_stack: Vec<String>,
     subeq: Option<super::SubeqState>,
     tokens: Vec<super::LiveToken>,
@@ -612,6 +613,7 @@ fn snapshot_counters(ctx: &RenderCtx<'_>) -> CounterSnap {
         float_type_counts: ctx.float_type_counts.clone(),
         sub_float_counts: ctx.sub_float_counts.clone(),
         in_float: ctx.in_float,
+        longtable_number: ctx.longtable_number.clone(),
         float_number_stack: ctx.float_number_stack.clone(),
         subeq: ctx.subeq.as_ref().map(|s| super::SubeqState {
             parent: s.parent,
@@ -642,6 +644,7 @@ fn restore_counters(ctx: &mut RenderCtx<'_>, snap: CounterSnap) {
     ctx.float_type_counts = snap.float_type_counts;
     ctx.sub_float_counts = snap.sub_float_counts;
     ctx.in_float = snap.in_float;
+    ctx.longtable_number = snap.longtable_number;
     ctx.float_number_stack = snap.float_number_stack;
     ctx.subeq = snap.subeq;
     ctx.tokens = snap.tokens;
