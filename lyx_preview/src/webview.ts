@@ -378,12 +378,21 @@ details.disclose[open] > .disclose-body > .standard {
   max-width: 100%;
   box-sizing: border-box;
 }
-/* Open wrap still takes the column (043). Open floats hug like other chips
- * so a Standard paragraph's first-line indent can sit the box (DL045). */
+/* Open wrap chip uses the wrap's stored width and side so following text
+ * sits beside it, like the LyX window (DL043). Open floats hug (DL045). */
 details.disclose.wrap[open] {
   display: block;
-  width: 100%;
+  width: var(--wrap-width, 50%);
   max-width: 100%;
+  box-sizing: border-box;
+}
+details.disclose.wrap.wrap-left[open] {
+  float: left;
+  margin: 0.4em 1em 1em 0;
+}
+details.disclose.wrap.wrap-right[open] {
+  float: right;
+  margin: 0.4em 0 1em 1em;
 }
 details.disclose.wrap[open] > .disclose-body {
   width: 100%;
@@ -507,10 +516,9 @@ details.disclose.float-table[open] > .disclose-body,
 details.disclose.wrap.wrap-table[open] > .disclose-body {
   border-color: #2a5aaa;
 }
-/* Contain floated wrap content inside the open disclosure box.
- * Closed chip stays inline; when open, kill the page-level float so the
- * figure/table stays inside the bordered .disclose-body (not beside it).
- * Do not force width: 100% — that stretched wrap pictures to the full pane (DL041). */
+/* The chip is the float (DL043). Inner wrap fills the chip: keep float off
+ * so the picture stays inside the box, and fill width so stored 40col% does
+ * not nest as 40% of the already-40% chip. Closed chip stays inline. */
 details.disclose.wrap[open] > .disclose-body {
   overflow: auto;
   display: flow-root;
@@ -518,6 +526,7 @@ details.disclose.wrap[open] > .disclose-body {
 details.disclose.wrap[open] .wrap {
   float: none !important;
   margin: 0 !important;
+  width: 100% !important;
   max-width: 100%;
 }
 details.disclose.wrap[open] .wrap figure {

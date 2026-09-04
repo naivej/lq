@@ -2562,6 +2562,13 @@ fn live_renderer_help_embeddedobjects_lyx_margin_notes_wrap_listings() {
     let wrap_at = html
         .find(r#"class="wrap wrap-left" style="width: 40%""#)
         .expect("wrap box at 40% of the column");
+    let wrap_chip_at = html[..wrap_at]
+        .rfind(r#"class="disclose wrap wrap-left"#)
+        .expect("wrap chip around the 40% box");
+    assert!(
+        html[wrap_chip_at..wrap_at].contains(r#"--wrap-width: 40%"#),
+        "wrap chip carries the stored width so open layout can sit text beside it"
+    );
     let wrap_region_end = (wrap_at + 12_000).min(html.len());
     let wrap_plot = img_tag_for(&html[wrap_at..wrap_region_end], "2D-intensity-plot.pdf")
         .expect("plot inside the wrap");

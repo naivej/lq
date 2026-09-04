@@ -154,7 +154,7 @@ describe("renderWebviewHtml change views", () => {
     assert.match(block, /text-indent:\s*0/);
   });
 
-  it("open float chips hug content; open wrap still takes the column (DL045)", () => {
+  it("open float chips hug content; open wrap floats at stored width (DL043/DL045)", () => {
     const html = render("tracked");
     const wrapStart = html.indexOf("details.disclose.wrap[open] {");
     assert.notEqual(wrapStart, -1);
@@ -162,7 +162,10 @@ describe("renderWebviewHtml change views", () => {
       wrapStart,
       html.indexOf("details.disclose.wrap[open] > .disclose-body {", wrapStart),
     );
-    assert.match(wrapBlock, /width:\s*100%/);
+    assert.match(wrapBlock, /width:\s*var\(--wrap-width/);
+    assert.doesNotMatch(wrapBlock, /^\s*width:\s*100%/m);
+    assert.match(html, /details\.disclose\.wrap\.wrap-left\[open\]\s*\{[^}]*float:\s*left/);
+    assert.match(html, /details\.disclose\.wrap\.wrap-right\[open\]\s*\{[^}]*float:\s*right/);
     assert.doesNotMatch(
       html,
       /details\.disclose\.float\[open\],\s*details\.disclose\.wrap\[open\]/,

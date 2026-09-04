@@ -1290,6 +1290,17 @@ fn wrap_disclosure(
     body_html: &str,
     opts: Option<(&str, &str)>,
 ) -> String {
+    wrap_disclosure_attrs(ctx, class_name, summary_label, body_html, opts, "")
+}
+
+fn wrap_disclosure_attrs(
+    ctx: &mut RenderCtx<'_>,
+    class_name: &str,
+    summary_label: &str,
+    body_html: &str,
+    opts: Option<(&str, &str)>,
+    extra_attrs: &str,
+) -> String {
     let (sum_cls, body_cls) = opts.unwrap_or(("disclose-summary", "disclose-body"));
     let mut id_attr = String::new();
     if ctx.current_inset_selector.is_some() {
@@ -1302,7 +1313,7 @@ fn wrap_disclosure(
         id_attr = mapping_attrs(&id);
     }
     format!(
-        r#"<details class="disclose {}"{id_attr}><summary class="{}">{}</summary><span class="{}">{body_html}</span></details>"#,
+        r#"<details class="disclose {}"{id_attr}{extra_attrs}><summary class="{}">{}</summary><span class="{}">{body_html}</span></details>"#,
         escape_live_html(class_name),
         escape_live_html(sum_cls),
         escape_live_html(summary_label),
@@ -2379,12 +2390,14 @@ fn render_wrap(block: NodeId, parent_state: &TraversalState, ctx: &mut RenderCtx
         r#"<div class="wrap wrap-{side}" style="width: {}">{inner}</div>"#,
         escape_live_html(&width)
     );
-    wrap_disclosure(
+    let style = format!(r#" style="--wrap-width: {}""#, escape_live_html(&width));
+    wrap_disclosure_attrs(
         ctx,
         &format!("wrap wrap-{side} wrap-{}", layout_slug(&variant)),
         &float_type_label("Wrap", &variant),
         &wrap,
         None,
+        &style,
     )
 }
 
