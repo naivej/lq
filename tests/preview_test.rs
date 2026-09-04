@@ -2746,7 +2746,9 @@ fn live_renderer_help_userguide_lyx_script_line_nomencl_flex_emph() {
         .expect("right-hand text");
     let after_right = &fill_demo[right_at..];
     let next_div = after_right.find("</div>").expect("end of first quote line");
-    let second_left = after_right.find(">Left").or_else(|| after_right.find("Left"));
+    let second_left = after_right
+        .find(">Left")
+        .or_else(|| after_right.find("Left"));
     assert!(
         second_left.is_some_and(|at| at > next_div),
         "each Quote line is its own inner div so fills cannot collapse the three examples onto one row; nearby: {fill_demo}"
