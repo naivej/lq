@@ -730,13 +730,13 @@ fn render_inset_body(
         return render_command_inset(block, kind, ctx);
     }
     if kind == "Newline" || kind.starts_with("Newline ") {
-        return "<br>".into();
+        return newline_html(kind);
     }
     if kind.starts_with("Quotes ") {
         return escape_live_html(&quote_char(kind));
     }
     if kind.starts_with("space ") || kind == "space" {
-        return space_char(kind);
+        return space_html(kind);
     }
     if kind.starts_with("Index ") || kind == "Index" {
         let entry = collect_index_entry(block, ctx);
@@ -1521,6 +1521,9 @@ fn width_to_css(width: Option<&str>) -> String {
         return String::new();
     }
     let w = width.trim_matches(|c| c == '"' || c == '\'').trim();
+    if is_zero_length(w) {
+        return String::new();
+    }
     let lower = w.to_ascii_lowercase();
     if let Some(stripped) = lower
         .strip_suffix("col%")
@@ -1529,6 +1532,151 @@ fn width_to_css(width: Option<&str>) -> String {
         return format!("{stripped}%");
     }
     w.to_string()
+}
+
+fn is_zero_length(w: &str) -> bool {
+    let s = w.trim();
+    if s.is_empty() {
+        return true;
+    }
+    let num: String = s
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+')
+        .collect();
+    if num.is_empty() {
+        return false;
+    }
+    num.parse::<f64>().ok() == Some(0.0)
+}
+
+fn attr_true(attr: &HashMap<String, String>, key: &str) -> bool {
+    attr.get(key).map(String::as_str) == Some("true")
+}
+
+fn cell_at(
+    cell_attrs: &[HashMap<String, String>],
+    used_cols: usize,
+    row: usize,
+    col: usize,
+) -> Option<&HashMap<String, String>> {
+    if used_cols == 0 || col >= used_cols {
+        return None;
+    }
+    cell_attrs.get(row.saturating_mul(used_cols).saturating_add(col))
+}
+
+/// Adjacent column already paints this same horizontal edge (this row, or the
+/// cell across the row boundary). Used so meeting short rules join.
+fn col_has_h_edge(
+    cell_attrs: &[HashMap<String, String>],
+    used_cols: usize,
+    row: usize,
+    col: usize,
+    at_top: bool,
+    other_row: usize,
+) -> bool {
+    let Some(here) = cell_at(cell_attrs, used_cols, row, col) else {
+        return false;
+    };
+    if at_top {
+        if attr_true(here, "topline") {
+            return true;
+        }
+        return row
+            .checked_sub(1)
+            .and_then(|r| cell_at(cell_attrs, used_cols, r, col))
+            .is_some_and(|a| attr_true(a, "bottomline"));
+    }
+    if attr_true(here, "bottomline") {
+        return true;
+    }
+    cell_at(cell_attrs, used_cols, other_row, col).is_some_and(|a| attr_true(a, "topline"))
+}
+
+/// LyX only opens a horizontal double line when every cell in the upper row
+/// has a bottom line and every cell in the lower row has a top line
+/// (`rowBottomLine` && `rowTopLine`, then `WIDTH_OF_LINE` gap).
+fn row_line_all(
+    cell_attrs: &[HashMap<String, String>],
+    row: usize,
+    used_cols: usize,
+    key: &str,
+) -> bool {
+    if used_cols == 0 {
+        return false;
+    }
+    let start = row.saturating_mul(used_cols);
+    let end = start.saturating_add(used_cols);
+    if end > cell_attrs.len() || start >= cell_attrs.len() {
+        return false;
+    }
+    cell_attrs[start..end]
+        .iter()
+        .all(|a| attr_true(a, key))
+}
+
+fn lyx_paint_color(name: &str) -> Option<String> {
+    let n = name.trim();
+    if n.is_empty() || n.eq_ignore_ascii_case("default") || n.eq_ignore_ascii_case("none") {
+        return None;
+    }
+    Some(mapping::css_lyx_color(n))
+}
+
+fn row_space_css(value: Option<&str>) -> Option<String> {
+    let v = value.map(str::trim).filter(|s| !s.is_empty())?;
+    if v.eq_ignore_ascii_case("default") {
+        return Some("10px".into());
+    }
+    if is_zero_length(v) {
+        return None;
+    }
+    Some(v.to_string())
+}
+
+fn newline_html(kind: &str) -> String {
+    let cls = if kind.contains("linebreak") {
+        "newline linebreak"
+    } else {
+        "newline"
+    };
+    format!(r#"<span class="{cls}" aria-hidden="true"></span><br>"#)
+}
+
+fn space_html(kind: &str) -> String {
+    let arg = kind.strip_prefix("space ").map(str::trim).unwrap_or("");
+    if let Some(cls) = fill_class(arg) {
+        return format!(r#"<span class="{cls}" aria-hidden="true"></span>"#);
+    }
+    escape_live_html(&space_char(kind))
+}
+
+fn fill_class(arg: &str) -> Option<&'static str> {
+    if arg.contains("dotfill") {
+        return Some("hfill dotfill");
+    }
+    if arg.contains("hrulefill") {
+        return Some("hfill hrulefill");
+    }
+    if arg.contains("leftarrowfill") {
+        return Some("hfill leftarrowfill");
+    }
+    if arg.contains("rightarrowfill") {
+        return Some("hfill rightarrowfill");
+    }
+    if arg.contains("upbracefill") {
+        return Some("hfill upbracefill");
+    }
+    if arg.contains("downbracefill") {
+        return Some("hfill downbracefill");
+    }
+    if arg.contains("hfill") {
+        return Some("hfill");
+    }
+    if arg.contains("hspace*") && arg.contains("fill") {
+        return Some("hfill hfill-protected");
+    }
+    None
 }
 
 fn tabular_xml_meta(ast: &Document, block: NodeId) -> String {
@@ -1550,7 +1698,16 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
     let cols = attr_after(&meta, "columns=\"")
         .and_then(|s| s.parse::<usize>().ok())
         .unwrap_or(0);
+    let features = find_tags(&meta, "features")
+        .into_iter()
+        .next()
+        .map(|raw| parse_xml_attrs(&raw))
+        .unwrap_or_default();
     let col_attrs: Vec<HashMap<String, String>> = find_tags(&meta, "column")
+        .into_iter()
+        .map(|raw| parse_xml_attrs(&raw))
+        .collect();
+    let row_attrs: Vec<HashMap<String, String>> = find_tags(&meta, "row")
         .into_iter()
         .map(|raw| parse_xml_attrs(&raw))
         .collect();
@@ -1568,7 +1725,38 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         None,
     );
     let used_cols = if cols > 0 { cols } else { cells.len().max(1) };
+    let nrows = if used_cols > 0 {
+        cell_attrs.len().div_ceil(used_cols)
+    } else {
+        0
+    };
     let is_long = meta.contains("islongtable=\"true\"");
+    let booktabs = features.get("booktabs").map(String::as_str) == Some("true");
+    let line_color = features
+        .get("borderColor")
+        .and_then(|n| lyx_paint_color(n))
+        .unwrap_or_else(|| "black".into());
+    let table_valign = match features
+        .get("tabularvalignment")
+        .map(String::as_str)
+        .unwrap_or("middle")
+    {
+        "top" => "top",
+        "bottom" => "bottom",
+        _ => "middle",
+    };
+    let odd_row_color = features
+        .get("oddRowsColor")
+        .map(String::as_str)
+        .unwrap_or("");
+    let even_row_color = features
+        .get("evenRowsColor")
+        .map(String::as_str)
+        .unwrap_or("");
+    let alt_start = features
+        .get("startAltRowColors")
+        .and_then(|s| s.parse::<i32>().ok())
+        .unwrap_or(0);
     let table_class = if is_long {
         match attr_after(&meta, "longtabularalignment=\"") {
             Some("left") => r#" class="longtable longtable-left""#,
@@ -1587,7 +1775,64 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         .as_deref()
         .map(|n| format!(r#" id="float-table-{}""#, n.replace('.', "-")))
         .unwrap_or_default();
-    let mut html = format!("<table{table_class}{id_attr}><tbody>");
+    let decimal_point_of = |col: usize| -> String {
+        col_attrs
+            .get(col)
+            .and_then(|a| a.get("decimal_point"))
+            .cloned()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| ".".into())
+    };
+    let is_decimal_col = |col: usize| -> bool {
+        col_attrs
+            .get(col)
+            .and_then(|a| a.get("alignment"))
+            .map(String::as_str)
+            == Some("decimal")
+    };
+    let mut decimal_widths: Vec<(usize, usize)> = vec![(0, 0); used_cols];
+    for (col, widths) in decimal_widths.iter_mut().enumerate() {
+        if !is_decimal_col(col) {
+            continue;
+        }
+        let point = decimal_point_of(col);
+        let mut left = 0usize;
+        let mut right = 0usize;
+        for row in 0..nrows {
+            let i = row * used_cols + col;
+            let Some(id) = cells.get(i).copied() else {
+                continue;
+            };
+            let plain = collect_visible_text(ctx.doc(), id);
+            if let Some(pos) = plain.find(&point) {
+                left = left.max(plain[..pos].chars().count());
+                right = right.max(plain[pos..].chars().count());
+            }
+        }
+        *widths = (left, right);
+    }
+    let mut colgroup = String::new();
+    if col_attrs
+        .iter()
+        .any(|a| !width_to_css(a.get("width").map(String::as_str)).is_empty())
+    {
+        colgroup.push_str("<colgroup>");
+        for col in 0..used_cols {
+            let w = width_to_css(
+                col_attrs
+                    .get(col)
+                    .and_then(|a| a.get("width"))
+                    .map(String::as_str),
+            );
+            if w.is_empty() {
+                colgroup.push_str("<col>");
+            } else {
+                colgroup.push_str(&format!(r#"<col style="width: {}">"#, escape_live_html(&w)));
+            }
+        }
+        colgroup.push_str("</colgroup>");
+    }
+    let mut html = format!("<table{table_class}{id_attr}>{colgroup}<tbody>");
     let mut c = 0usize;
     for i in 0..cell_attrs.len() {
         let attr = &cell_attrs[i];
@@ -1605,6 +1850,7 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         if c == 0 {
             html.push_str("<tr>");
         }
+        let row = i.checked_div(used_cols).unwrap_or(0);
         let mut span = 1usize;
         if attr.get("multicolumn").map(String::as_str) == Some("1") {
             let mut j = i + 1;
@@ -1633,10 +1879,21 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
             }
         }
         let mut styles = Vec::new();
-        let align = attr
-            .get("alignment")
-            .cloned()
-            .or_else(|| col_attrs.get(c).and_then(|a| a.get("alignment").cloned()));
+        let mut classes = Vec::new();
+        let decimal_col = is_decimal_col(c);
+        let point = decimal_point_of(c);
+        let cell = cells.get(i).copied();
+        let plain = cell
+            .map(|id| collect_visible_text(ctx.doc(), id))
+            .unwrap_or_default();
+        let has_decimal = decimal_col && plain.contains(&point);
+        let align = if has_decimal {
+            None
+        } else {
+            attr.get("alignment")
+                .cloned()
+                .or_else(|| col_attrs.get(c).and_then(|a| a.get("alignment").cloned()))
+        };
         let valign = attr
             .get("valignment")
             .cloned()
@@ -1647,31 +1904,151 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
                 .and_then(|a| a.get("width"))
                 .map(String::as_str)
         }));
-        if let Some(a) = align {
+        if let Some(a) = align.filter(|a| a != "decimal") {
             styles.push(format!("text-align: {a}"));
+        } else if decimal_col && !has_decimal {
+            styles.push("text-align: center".into());
+        }
+        if has_decimal {
+            classes.push("decimal".into());
         }
         if let Some(v) = valign {
             styles.push(format!("vertical-align: {v}"));
         }
-        if !width.is_empty() && width != "0" && width != "0pt" {
-            styles.push(format!("width: {width}"));
+        if !width.is_empty() {
+            let w = escape_live_html(&width);
+            styles.push(format!("width: {w}"));
+            styles.push(format!("max-width: {w}"));
+            styles.push("overflow-wrap: anywhere".into());
         }
-        if attr.get("topline").map(String::as_str) == Some("true") {
-            styles.push("border-top: 1px solid".into());
+        if let Some(pad) = row_space_css(
+            row_attrs
+                .get(row)
+                .and_then(|a| a.get("topspace"))
+                .map(String::as_str),
+        ) {
+            styles.push(format!("padding-top: {pad}"));
         }
-        if attr.get("bottomline").map(String::as_str) == Some("true") {
-            styles.push("border-bottom: 1px solid".into());
+        if let Some(pad) = row_space_css(
+            row_attrs
+                .get(row)
+                .and_then(|a| a.get("bottomspace"))
+                .map(String::as_str),
+        ) {
+            styles.push(format!("padding-bottom: {pad}"));
         }
-        if attr.get("leftline").map(String::as_str) == Some("true") {
-            styles.push("border-left: 1px solid".into());
+        let bg = resolve_cell_bg(
+            attr,
+            row_attrs.get(row),
+            col_attrs.get(c),
+            row,
+            odd_row_color,
+            even_row_color,
+            alt_start,
+        );
+        if let Some(bg) = bg {
+            styles.push(format!("background-color: {}", escape_live_html(&bg)));
         }
-        if attr.get("rightline").map(String::as_str) == Some("true") {
-            styles.push("border-right: 1px solid".into());
-        }
+        let color = escape_live_html(&line_color);
+        let below = cell_attrs.get(i + rowspan * used_cols);
+        let right = if c + span < used_cols {
+            cell_attrs.get(i + span)
+        } else {
+            None
+        };
+        let above = if row > 0 {
+            cell_attrs.get(i.saturating_sub(used_cols))
+        } else {
+            None
+        };
+        let left = if c > 0 { cell_attrs.get(i - 1) } else { None };
+        let last_row = row + rowspan >= nrows;
+        let heavy_top = booktabs && row == 0 && attr_true(attr, "topline");
+        let heavy_bottom = booktabs && last_row && attr_true(attr, "bottomline");
+        // LyX ignores vertical lines on booktabs tables (Tabular::leftLine/rightLine).
+        let vline = |has: bool| !booktabs && has;
+        let h_double = |upper: usize, lower: usize| {
+            row_line_all(&cell_attrs, upper, used_cols, "bottomline")
+                && row_line_all(&cell_attrs, lower, used_cols, "topline")
+        };
+        let top_on = attr_true(attr, "topline");
+        let top_nb = above.is_some_and(|a| attr_true(a, "bottomline"));
+        // Meeting short rules are one line, including when one trim is this
+        // row's bottom and the next is the cell below-right's top (Table 2.15).
+        let top_trim_l = attr_true(attr, "toplineltrim")
+            && !(c > 0 && col_has_h_edge(&cell_attrs, used_cols, row, c - 1, true, row));
+        let top_trim_r = attr_true(attr, "toplinertrim")
+            && !(c + span < used_cols
+                && col_has_h_edge(&cell_attrs, used_cols, row, c + span, true, row));
+        push_box_edge(
+            &mut styles,
+            &mut classes,
+            "top",
+            top_on,
+            top_nb,
+            heavy_top,
+            top_trim_l,
+            top_trim_r,
+            &color,
+            top_on && top_nb && row > 0 && h_double(row - 1, row),
+        );
+        let bot_on = attr_true(attr, "bottomline");
+        let bot_nb = below.is_some_and(|a| attr_true(a, "topline"));
+        let below_row = row + rowspan;
+        let bot_trim_l = attr_true(attr, "bottomlineltrim")
+            && !(c > 0 && col_has_h_edge(&cell_attrs, used_cols, row, c - 1, false, below_row));
+        let bot_trim_r = attr_true(attr, "bottomlinertrim")
+            && !(c + span < used_cols
+                && col_has_h_edge(&cell_attrs, used_cols, row, c + span, false, below_row));
+        push_box_edge(
+            &mut styles,
+            &mut classes,
+            "bottom",
+            bot_on,
+            bot_nb,
+            heavy_bottom,
+            bot_trim_l,
+            bot_trim_r,
+            &color,
+            bot_on && bot_nb && h_double(row + rowspan - 1, row + rowspan),
+        );
+        let left_on = vline(attr_true(attr, "leftline"));
+        let left_nb = left.is_some_and(|a| vline(attr_true(a, "rightline")));
+        push_box_edge(
+            &mut styles,
+            &mut classes,
+            "left",
+            left_on,
+            left_nb,
+            false,
+            false,
+            false,
+            &color,
+            left_on && left_nb,
+        );
+        let right_on = vline(attr_true(attr, "rightline"));
+        let right_nb = right.is_some_and(|a| vline(attr_true(a, "leftline")));
+        push_box_edge(
+            &mut styles,
+            &mut classes,
+            "right",
+            right_on,
+            right_nb,
+            false,
+            false,
+            false,
+            &color,
+            right_on && right_nb,
+        );
         let style = if styles.is_empty() {
             String::new()
         } else {
             format!(r#" style="{}""#, styles.join("; "))
+        };
+        let class_attr = if classes.is_empty() {
+            String::new()
+        } else {
+            format!(r#" class="{}""#, classes.join(" "))
         };
         let span_attr = if span > 1 {
             format!(r#" colspan="{span}""#)
@@ -1683,7 +2060,6 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         } else {
             String::new()
         };
-        let cell = cells.get(i).copied();
         let nested = cell
             .map(|id| flatten_flow(ctx.doc(), &ctx.doc().node(id).children, 0))
             .unwrap_or_default();
@@ -1708,11 +2084,15 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         };
         let id = take_owner_id(ctx, None);
         emit_token(ctx, &id, &td_selector);
-        let inner = cell
+        let mut inner = cell
             .map(|cell| render_cell(cell, parent_state, ctx, block))
             .unwrap_or_default();
+        if has_decimal {
+            let (left_ch, right_ch) = decimal_widths[c];
+            inner = wrap_decimal_inner(&inner, &plain, &point, left_ch, right_ch);
+        }
         html.push_str(&format!(
-            "<td{span_attr}{row_attr}{style}{}>{inner}</td>",
+            "<td{span_attr}{row_attr}{class_attr}{style}{}>{inner}</td>",
             mapping_attrs(&id)
         ));
         c += span;
@@ -1725,8 +2105,125 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         html.push_str("</tr>");
     }
     html.push_str("</tbody></table>");
+    if !is_long {
+        // LyX pins the first/last table line to the surrounding text baseline
+        // (Tabular::offsetVAlignment). CSS top/middle/bottom on <table> does
+        // nothing when the tables are the same height. The wrapper is the
+        // inline box; CSS pins its baseline. Top needs a 0-height strut so
+        // that baseline sits at the top of the table, not the bottom.
+        let strut = if table_valign == "top" {
+            r#"<span class="lyx-tabular-strut"></span>"#
+        } else {
+            ""
+        };
+        html = format!(
+            r#"<span class="lyx-tabular lyx-tabular-{table_valign}">{strut}{html}</span>"#
+        );
+    }
     ctx.longtable_number = prev_lt;
     html
+}
+
+fn resolve_cell_bg(
+    cell: &HashMap<String, String>,
+    row: Option<&HashMap<String, String>>,
+    col: Option<&HashMap<String, String>>,
+    row_idx: usize,
+    odd_row_color: &str,
+    even_row_color: &str,
+    alt_start: i32,
+) -> Option<String> {
+    if let Some(c) = cell.get("color").and_then(|n| lyx_paint_color(n)) {
+        return Some(c);
+    }
+    if let Some(c) = row
+        .and_then(|r| r.get("color"))
+        .and_then(|n| lyx_paint_color(n))
+    {
+        return Some(c);
+    }
+    if let Some(c) = col
+        .and_then(|r| r.get("color"))
+        .and_then(|n| lyx_paint_color(n))
+    {
+        return Some(c);
+    }
+    let real = (row_idx as i32) + 1;
+    if alt_start <= real {
+        let name = if real % 2 == 0 {
+            even_row_color
+        } else {
+            odd_row_color
+        };
+        return lyx_paint_color(name);
+    }
+    None
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_box_edge(
+    styles: &mut Vec<String>,
+    classes: &mut Vec<String>,
+    side: &str,
+    on: bool,
+    neighbor_on: bool,
+    heavy: bool,
+    trim_l: bool,
+    trim_r: bool,
+    color: &str,
+    double: bool,
+) {
+    if (trim_l || trim_r) && on && (side == "top" || side == "bottom") {
+        // Real border so the line shares the collapsed edge with neighbours.
+        // CSS punches a 10px gap at the trimmed end; a padding-box gradient
+        // sat inside the cell and looked like a second, thick rule.
+        let thick = if heavy { "2px" } else { "1px" };
+        styles.push(format!("border-{side}: {thick} solid {color}"));
+        classes.push(format!("lyx-trim-{side}"));
+        if trim_l {
+            classes.push("lyx-trim-l".into());
+        }
+        if trim_r {
+            classes.push("lyx-trim-r".into());
+        }
+        if heavy {
+            classes.push("lyx-trim-heavy".into());
+        }
+        return;
+    }
+    if double {
+        styles.push(format!("border-{side}: 3px double {color}"));
+    } else if on && heavy {
+        styles.push(format!("border-{side}: 2px solid {color}"));
+    } else if on {
+        styles.push(format!("border-{side}: 1px solid {color}"));
+    } else if neighbor_on {
+        styles.push(format!("border-{side}: none"));
+    } else {
+        styles.push(format!("border-{side}: 1px dashed #b0c4de"));
+    }
+}
+
+fn wrap_decimal_inner(
+    inner: &str,
+    plain: &str,
+    point: &str,
+    left_ch: usize,
+    right_ch: usize,
+) -> String {
+    let Some(pos) = plain.find(point) else {
+        return inner.to_string();
+    };
+    let Some(at) = inner.find(plain) else {
+        return inner.to_string();
+    };
+    format!(
+        r#"{}<span class="decimal-int" style="min-width: {left_ch}ch">{}</span><span class="decimal-frac" style="min-width: {right_ch}ch">{}</span>{}"#,
+        &inner[..at],
+        escape_live_html(&plain[..pos]),
+        escape_live_html(&plain[pos..]),
+        &inner[at + plain.len()..]
+    )
 }
 
 fn attr_after<'a>(meta: &'a str, key: &str) -> Option<&'a str> {
@@ -1763,6 +2260,7 @@ fn render_cell(
         let mut state = enter_traversal_state(parent_state);
         return render_children(&children, &mut state, ctx);
     }
+    let blockish = nested.len() > 1;
     nested
         .iter()
         .map(|item| {
@@ -1770,7 +2268,12 @@ fn render_cell(
                 let id = take_owner_id(ctx, None);
                 emit_token(ctx, &id, selector);
                 let inner = render_layout_inline(item.node, ctx, false, Some(parent_state));
-                format!("<span{}>{inner}</span>", mapping_attrs(&id))
+                let extra = if blockish {
+                    r#" style="display:block""#
+                } else {
+                    ""
+                };
+                format!("<span{extra}{}>{inner}</span>", mapping_attrs(&id))
             })
         })
         .collect()
@@ -4033,16 +4536,8 @@ fn space_char(kind: &str) -> String {
     if arg == "\\space{}" || arg == "\\space" {
         return " ".into();
     }
-    if arg.contains("hfill")
-        || arg.contains("dotfill")
-        || arg.contains("hrulefill")
-        || arg.contains("leftarrowfill")
-        || arg.contains("rightarrowfill")
-        || arg.contains("upbracefill")
-        || arg.contains("downbracefill")
-        || arg.contains("hspace")
-    {
-        return "\n".into();
+    if arg.contains("hspace") {
+        return "\u{00a0}".into();
     }
     "\u{00a0}".into()
 }

@@ -534,7 +534,7 @@ fn live_renderer_table_figure_footnote_formula() {
     let Some((html, _)) = render_file("table_figure_foot_math.lyx") else {
         return;
     };
-    assert!(html.contains("<table>"));
+    assert!(html.contains("<table"));
     assert!(html.contains("<td"));
     assert!(html.contains(">A</"));
     assert!(html.contains("disclose foot"));
@@ -1672,6 +1672,188 @@ fn live_renderer_help_embeddedobjects_longtable_steps_table_counter() {
     assert!(
         html.contains(r##"href="#tab_Referenced_multi_page_table">2.5</a>"##),
         "longtable label must resolve to the table number"
+    );
+}
+
+fn table_after<'a>(html: &'a str, needle: &str) -> &'a str {
+    let at = html
+        .find(needle)
+        .unwrap_or_else(|| panic!("missing {needle}"));
+    let rest = &html[at..];
+    let table = rest.find("<table").expect("table after needle");
+    let end = rest[table..].find("</table>").expect("table close");
+    &rest[table..table + end + 8]
+}
+
+fn table_containing<'a>(html: &'a str, needle: &str) -> &'a str {
+    let at = html
+        .find(needle)
+        .unwrap_or_else(|| panic!("missing {needle}"));
+    let start = html[..at]
+        .rfind("<table")
+        .expect("table open before needle");
+    let end = html[start..].find("</table>").expect("table close");
+    &html[start..start + end + 8]
+}
+
+fn td_with_text<'a>(table: &'a str, text: &str) -> &'a str {
+    let needle = format!(">{text}</");
+    let at = table
+        .find(&needle)
+        .unwrap_or_else(|| panic!("missing cell {text} in {table}"));
+    let start = table[..at].rfind("<td").expect("td open");
+    let end = table[start..].find("</td>").expect("td close");
+    &table[start..start + end]
+}
+
+/// LyX window chrome for tables: on/off lines, width, newline, hfill, colour, decimal, row space.
+#[test]
+fn live_renderer_help_embeddedobjects_table_chrome() {
+    let path = help_file("EmbeddedObjects.lyx");
+    let Some((html, _)) = render_path(&path) else {
+        return;
+    };
+
+    let intro = table_after(&html, "Here is an example table:");
+    assert!(
+        intro.contains("3px double"),
+        "§2.1 default table must show the header as a double line; table: {intro}"
+    );
+    assert!(
+        intro.contains("border-top: 1px solid"),
+        "§2.1 cells with a real top line must paint solid, not only the CSS dashed grid"
+    );
+    assert!(
+        !intro.contains("border-right: 3px double"),
+        "the table's right edge is one line; double only when two vertical lines meet inside the row. table: {intro}"
+    );
+
+    let align_at = html
+        .find("A line with tables with different alignments:")
+        .expect("§2.2 alignment line");
+    let align_chunk = &html[align_at..align_at + 4000];
+    let top_at = align_chunk
+        .find(r#"class="lyx-tabular lyx-tabular-top""#)
+        .expect("§2.2 first mini-table hangs from the text baseline");
+    let mid_at = align_chunk
+        .find(r#"class="lyx-tabular lyx-tabular-middle""#)
+        .expect("§2.2 second mini-table is centred on the text baseline");
+    let bot_at = align_chunk
+        .find(r#"class="lyx-tabular lyx-tabular-bottom""#)
+        .expect("§2.2 third mini-table sits on the text baseline");
+    assert!(
+        top_at < mid_at && mid_at < bot_at,
+        "§2.2 mini-tables must be top, then middle, then bottom"
+    );
+    assert!(
+        align_chunk[top_at..mid_at].contains(r#"class="lyx-tabular-strut""#),
+        "top alignment needs a strut so the wrapper baseline is the top of the table"
+    );
+    assert!(
+        !align_chunk.contains("width: 0pt") && !align_chunk.contains("width: 0cm"),
+        "a zero column width is 'no width', not a CSS length"
+    );
+
+    let multi = table_after(&html, "Table with multiple lines in cells");
+    assert!(
+        multi.contains(r#"class="newline linebreak""#),
+        "forced linebreak in a cell must keep the LyX mark; table: {multi}"
+    );
+    assert!(
+        multi.contains("width: 2.5cm"),
+        "p-width column must stay 2.5cm; table: {multi}"
+    );
+
+    let imperfect = table_after(
+        &html,
+        "Table where the spanned table columns are not exactly half",
+    );
+    let cell_c = td_with_text(imperfect, "c");
+    let cell_f = td_with_text(imperfect, "f");
+    assert!(
+        !cell_c.contains("3px double") && !cell_f.contains("3px double"),
+        "Table 2.13 c/f is one grid line (only that column has both edges); c: {cell_c} f: {cell_f}"
+    );
+
+    let hyph_at = html
+        .find("verylongtablecellword")
+        .expect("hyphenation example word");
+    let hyph_before = &html[hyph_at.saturating_sub(2500)..hyph_at];
+    assert!(
+        hyph_before.contains(r#"class="hfill""#),
+        "hfill between the hyphenation tables must paint a fill mark; nearby: {hyph_before}"
+    );
+
+    let formal = table_after(&html, "Example formal table");
+    assert!(
+        formal.contains("2px solid") || formal.contains("3px double"),
+        "formal/booktabs first rule must be heavier than a normal cell line; table: {formal}"
+    );
+    let cell_300 = td_with_text(formal, "300");
+    assert!(
+        !formal.contains("lyx-trim"),
+        "Chip 1 and Chip 2 share one mid-rule under the 300s; meeting trims must not punch a gap; table: {formal}"
+    );
+    assert!(
+        cell_300.contains("border-bottom: none"),
+        "300's bottom is the next row's mid-rule, not a second line; 300: {cell_300}"
+    );
+    assert!(
+        !cell_300.contains("2px solid") && !cell_300.contains("3px double"),
+        "the mid-rule below 300 is not the heavy booktabs rule; 300: {cell_300}"
+    );
+
+    let ugly = table_after(&html, "Special (ugly) formal table");
+    assert!(
+        !ugly.contains("lyx-trim"),
+        "Table 2.15 Chip 1 bottom and Chip 2 top share one mid-rule; meeting trims must not punch a gap; table: {ugly}"
+    );
+
+    let colored = table_after(&html, "Table colored using the");
+    assert!(
+        colored.contains("background-color: cyan"),
+        "row colour cyan; table: {colored}"
+    );
+    assert!(
+        colored.contains("background-color: #008000")
+            || colored.contains("background-color: darkgreen"),
+        "column colour svg:darkgreen; table: {colored}"
+    );
+
+    let striped = table_after(&html, "every second row is colored light gray");
+    assert!(
+        striped.contains("background-color: #c0c0c0")
+            || striped.contains("background-color: lightgray"),
+        "even rows light gray; table: {striped}"
+    );
+
+    let lime = table_after(&html, "Table with lime borders.");
+    assert!(
+        lime.contains("1px solid lime") || lime.contains("3px double lime"),
+        "border colour lime; table: {lime}"
+    );
+
+    let decimal = table_after(
+        &html,
+        "Table cells of a column aligned with the decimal separator.",
+    );
+    assert!(
+        decimal.contains(r#"class="decimal-int""#)
+            && decimal.contains(">12</span>")
+            && decimal.contains(r#"class="decimal-frac""#),
+        "decimal column must split on the point; table: {decimal}"
+    );
+
+    let space = table_containing(&html, "mm space top of row");
+    assert!(
+        space.contains("padding-top: 3mm"),
+        "row topspace 3mm; table: {space}"
+    );
+
+    let rotated = table_after(&html, "Table with rotated cells in the first row.");
+    assert!(
+        !rotated.contains("rotate(45") && !rotated.contains("rotate(90"),
+        "LyX does not rotate cells on screen; table: {rotated}"
     );
 }
 

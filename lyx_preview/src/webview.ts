@@ -309,13 +309,126 @@ figure > figcaption { display: block; text-align: center; margin: 0 0 0.6em; }
  * anonymous flex items and paint as two text columns (DL151). */
 figure > .float-body { display: block; margin: 0.4em 0; }
 /* LyX paints a normal table as Inline (InsetTabular::rowFlags). A centered
- * paragraph can then sit several tables side by side. Long tables are Display. */
-table { display: inline-table; vertical-align: middle; border-collapse: collapse; margin: 0.35em 0.4em; }
+ * paragraph can then sit several tables side by side. Long tables are Display.
+ * tabularvalignment (LyX: first/last table line on the surrounding baseline)
+ * lives on span.lyx-tabular — CSS top/middle/bottom on the <table> is a no-op
+ * when the tables are the same height (they all fill the line box). */
+span.lyx-tabular { display: inline-block; margin: 0.35em 0.4em; }
+span.lyx-tabular > table { display: table; margin: 0; line-height: normal; }
+span.lyx-tabular-strut {
+  display: inline-block;
+  width: 0;
+  height: 0;
+  overflow: hidden;
+  font-size: 0;
+  line-height: 0;
+}
+/* Top: first table line on the text baseline (table hangs below). The strut
+ * is the wrapper's only in-flow line, so the inline-block baseline is at the top. */
+span.lyx-tabular-top { vertical-align: baseline; line-height: 0; }
+/* Middle: table centre on the text baseline. */
+span.lyx-tabular-middle { vertical-align: middle; }
+/* Bottom: last table line on the text baseline (table sits above). A block
+ * table inside inline-block has no line boxes, so the baseline is the bottom. */
+span.lyx-tabular-bottom { vertical-align: baseline; }
+table { border-collapse: collapse; margin: 0.35em 0.4em; }
 table.longtable { display: table; margin: 0.75em auto; }
 table.longtable.longtable-left { margin-left: 0; margin-right: auto; }
 table.longtable.longtable-right { margin-left: auto; margin-right: 0; }
 figure table { margin-left: auto; margin-right: auto; }
-td, th { border: 1px solid var(--vscode-panel-border); padding: 0.25em 0.5em; }
+td, th { border: none; padding: 0.25em 0.5em; }
+td.lyx-trim-top, td.lyx-trim-bottom { position: relative; }
+/* Isolated trim: 10px gap (page colour). Meeting trims are joined in
+ * the HTML, not capped here (Tables 2.14 and 2.15). */
+td.lyx-trim-top.lyx-trim-l::before,
+td.lyx-trim-bottom.lyx-trim-l::before,
+td.lyx-trim-top.lyx-trim-r::after,
+td.lyx-trim-bottom.lyx-trim-r::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 1px;
+  background: var(--vscode-editor-background, #fff);
+  pointer-events: none;
+}
+td.lyx-trim-heavy.lyx-trim-l::before,
+td.lyx-trim-heavy.lyx-trim-r::after { height: 2px; }
+td.lyx-trim-top.lyx-trim-l::before { top: -1px; left: -1px; }
+td.lyx-trim-top.lyx-trim-r::after { top: -1px; right: -1px; }
+td.lyx-trim-bottom.lyx-trim-l::before { bottom: -1px; left: -1px; }
+td.lyx-trim-bottom.lyx-trim-r::after { bottom: -1px; right: -1px; }
+td.lyx-trim-heavy.lyx-trim-top.lyx-trim-l::before,
+td.lyx-trim-heavy.lyx-trim-top.lyx-trim-r::after { top: -2px; }
+td.lyx-trim-heavy.lyx-trim-bottom.lyx-trim-l::before,
+td.lyx-trim-heavy.lyx-trim-bottom.lyx-trim-r::after { bottom: -2px; }
+span.decimal-int { display: inline-block; text-align: right; }
+span.decimal-frac { display: inline-block; text-align: left; }
+/* LyX InsetNewline::draw: brown return-arrow (left head, shaft, up-stem).
+ * Linebreak adds a royal-blue straight arrow to the right (Color_pagebreak). */
+span.newline {
+  display: inline-block;
+  position: relative;
+  width: 0.9em;
+  height: 0.7em;
+  vertical-align: middle;
+  color: brown;
+  background:
+    linear-gradient(currentColor, currentColor) 0 50% / 100% 1.5px no-repeat,
+    linear-gradient(currentColor, currentColor) 100% 0 / 1.5px 50% no-repeat;
+}
+span.newline::before,
+span.newline.linebreak::after {
+  content: "";
+  position: absolute;
+  top: 50%;
+  width: 0.28em;
+  height: 0.28em;
+  margin-top: -0.16em;
+  box-sizing: border-box;
+}
+span.newline::before {
+  left: 1px;
+  border-left: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
+}
+span.newline.linebreak {
+  width: 1.85em;
+  color: royalblue;
+  background:
+    linear-gradient(currentColor, currentColor) 0 50% / 100% 1.5px no-repeat,
+    linear-gradient(currentColor, currentColor) 0.85em 0 / 1.5px 50% no-repeat;
+}
+span.newline.linebreak::after {
+  right: 1px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+}
+span.hfill {
+  display: inline-block;
+  flex: 1 1 2em;
+  min-width: 2em;
+  height: 0.7em;
+  margin: 0 0.2em;
+  align-self: center;
+  box-sizing: border-box;
+  vertical-align: middle;
+  border-left: 1px solid brown;
+  border-right: 1px solid brown;
+  background: linear-gradient(to right, brown, brown) center / 100% 1px no-repeat;
+}
+span.hfill.hfill-protected { border-color: #8b0000; background-image: linear-gradient(to right, #8b0000, #8b0000); }
+span.hfill.dotfill { border-color: royalblue; background: repeating-linear-gradient(to right, royalblue 0 2px, transparent 2px 6px) center / 100% 1px no-repeat; }
+span.hfill.hrulefill { border-color: royalblue; background-image: linear-gradient(to right, royalblue, royalblue); }
+span.hfill.leftarrowfill::before { content: "←"; color: royalblue; }
+span.hfill.rightarrowfill::after { content: "→"; color: royalblue; }
+div.standard:has(.hfill), td:has(.hfill) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+}
+div.standard:has(.hfill) { width: 100%; }
 /*
  * DL131 disclosure: click summary to expand/collapse (no hover).
  * Closed = tight colored chip around the label only; open = body below.
@@ -639,6 +752,7 @@ span.bibitemlabel, span.bibtexlabel,
 div.bibtexentry,
 span.heading-number,
 span.float-caption-prefix,
+span.newline, span.hfill,
 span.layout-label,
 span.eqno,
 span.abstract_label,

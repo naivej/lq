@@ -182,6 +182,31 @@ describe("renderWebviewHtml change views", () => {
     assert.doesNotMatch(html, /figure > \.float-body \{ display: flex/);
   });
 
+  it("table cells use a dashed off-grid; fills and newlines are chrome", () => {
+    const html = render("tracked");
+    assert.match(html, /td\.lyx-trim-top/);
+    assert.match(
+      html,
+      /lyx-trim-top\.lyx-trim-l::before[\s\S]*?background: var\(--vscode-editor-background/,
+    );
+    assert.match(html, /td, th \{ border: none/);
+    assert.match(html, /span\.newline \{/);
+    assert.match(html, /span\.newline\.linebreak \{/);
+    assert.match(html, /span\.hfill \{/);
+    assert.match(html, /div\.standard:has\(\.hfill\)/);
+    assert.doesNotMatch(html, /span\.newline::after \{ content: "↵/);
+    assert.doesNotMatch(html, /span\.newline\.linebreak::after \{ content: "↵↵/);
+  });
+
+  it("inline tables sit on the text baseline (top / middle / bottom)", () => {
+    const html = render("tracked");
+    assert.match(html, /span\.lyx-tabular \{ display: inline-block/);
+    assert.match(html, /span\.lyx-tabular-top \{ vertical-align: baseline/);
+    assert.match(html, /span\.lyx-tabular-middle \{ vertical-align: middle/);
+    assert.match(html, /span\.lyx-tabular-bottom \{ vertical-align: baseline/);
+    assert.match(html, /span\.lyx-tabular-strut \{/);
+  });
+
   it("appendix frame is a top-and-sides border with an unselectable label (DL152)", () => {
     const html = render("tracked");
     assert.match(html, /div\.appendix-frame \{/);

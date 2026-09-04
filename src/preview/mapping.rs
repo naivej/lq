@@ -541,7 +541,13 @@ pub(crate) fn is_omitted_inset_kind(kind: &str) -> bool {
 }
 
 pub(crate) fn css_lyx_color(name: &str) -> String {
-    match name.to_ascii_lowercase().as_str() {
+    let lower = name.trim().to_ascii_lowercase();
+    let key = lower
+        .strip_prefix("svg:")
+        .or_else(|| lower.strip_prefix("dvips:"))
+        .or_else(|| lower.strip_prefix("x11:"))
+        .unwrap_or(&lower);
+    match key {
         "red" => "red".into(),
         "green" => "green".into(),
         "blue" => "blue".into(),
@@ -564,6 +570,8 @@ pub(crate) fn css_lyx_color(name: &str) -> String {
         "darkred" => "#8b0000".into(),
         "darkgreen" => "#008000".into(),
         "darkblue" => "#00008b".into(),
+        "maroon" => "maroon".into(),
+        "midnightblue" => "midnightblue".into(),
         other => other.to_string(),
     }
 }
