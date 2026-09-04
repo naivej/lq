@@ -52,7 +52,7 @@ describe("lqResolve", () => {
       version: string;
       contributes: { configuration: { properties: Record<string, { default?: string }> } };
     };
-    assert.equal(pkg.version, "0.1.5");
+    assert.equal(pkg.version, "0.1.6");
     assert.equal(
       pkg.contributes.configuration.properties["lyx-preview.unmanagedLqPath"]?.default,
       "",

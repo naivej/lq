@@ -7,7 +7,6 @@ LyX Preview renders a read-only preview of saved `.lyx` files directly inside a 
 ## Features
 
 - **LyX-Familiar Appearance:** Renders layouts, sections, formatting, tables, images, and math with styling faithful to the LyX editor.
-- **Instant refresh:** Automatically updates whenever the `.lyx` file is saved or modified on disk (when the editor buffer is clean).
 - **LyX Outline View:** Dedicated panel in the Explorer sidebar to navigate the Table of Contents, figures, tables, equations, tracked changes, footnotes, and labels/references across both the raw `.lyx` buffer and the preview.
 - **Tracked-Change Views:** Toggle between **Tracked** (markup shown), **Original** (pre-change), and **Clean** (post-change/accepted) views from the title bar.
 - **Agent Context Sharing:**
