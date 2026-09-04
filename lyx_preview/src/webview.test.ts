@@ -154,6 +154,34 @@ describe("renderWebviewHtml change views", () => {
     assert.match(block, /text-indent:\s*0/);
   });
 
+  it("Foot / Note / Marginal open bodies shield host paragraph style (DL050)", () => {
+    const html = render("tracked");
+    assert.match(
+      html,
+      /details\.disclose\.foot\[open\]\s*>\s*\.foot_inner,[\s\S]*?details\.disclose\.marginal\[open\]\s*>\s*\.disclose-body\s*\{[^}]*text-align:\s*start/,
+    );
+    assert.match(
+      html,
+      /details\.disclose\.marginal\[open\]\s*>\s*\.disclose-body\s*\{[^}]*font-weight:\s*normal/,
+    );
+    assert.match(
+      html,
+      /details\.disclose\.foot\[open\]\s*>\s*\.foot_inner,[\s\S]*?font-family:\s*var\(--vscode-font-family\)/,
+    );
+    assert.match(
+      html,
+      /details\.disclose\.foot\[open\]\s*>\s*\.foot_inner,[\s\S]*?font-size:\s*0\.95rem/,
+    );
+    assert.match(
+      html,
+      /details\.disclose\.note-note\[open\]\s*>\s*\.disclose-body,[\s\S]*?font-size:\s*1rem/,
+    );
+    assert.doesNotMatch(
+      html,
+      /details\.disclose\.foot\[open\]\s*>\s*\.foot_inner[^}]*font-size:\s*0\.95em/,
+    );
+  });
+
   it("open float chips hug content; open wrap floats at stored width (DL043/DL045)", () => {
     const html = render("tracked");
     const wrapStart = html.indexOf("details.disclose.wrap[open] {");

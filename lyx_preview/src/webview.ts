@@ -596,7 +596,6 @@ details.disclose.foot_intitle[open] > .foot_intitle_inner {
   border: 1px solid #c44;
   border-radius: 3px;
   background: #fff5f5;
-  font-size: 0.95em;
   color: inherit;
 }
 details.disclose.foot[open] > .foot_inner > .plain_layout,
@@ -638,6 +637,35 @@ details.disclose.note-greyedout[open] > .disclose-body {
   background: #f4f4f4;
   color: #A0A0A0;
   padding: 0.25em 0.4em;
+}
+/*
+ * DL050: LyX InheritFont false for Foot / Note / Marginal — open body must not
+ * pick up host layout align/size (Author center+Large, Title, Standard align /
+ * paragraph_spacing, …). Chip still sits on the host line; only the open box
+ * is shielded. rem sizes are relative to the preview root, not the host em.
+ */
+details.disclose.foot[open] > .foot_inner,
+details.disclose.foot_intitle[open] > .foot_intitle_inner,
+details.disclose.note-note[open] > .disclose-body,
+details.disclose.note-comment[open] > .disclose-body,
+details.disclose.note-greyedout[open] > .disclose-body,
+details.disclose.marginal[open] > .disclose-body {
+  text-align: start;
+  font-weight: normal;
+  font-style: normal;
+  font-variant: normal;
+  line-height: 1.45;
+  font-family: var(--vscode-font-family);
+}
+details.disclose.foot[open] > .foot_inner,
+details.disclose.foot_intitle[open] > .foot_intitle_inner {
+  font-size: 0.95rem;
+}
+details.disclose.note-note[open] > .disclose-body,
+details.disclose.note-comment[open] > .disclose-body,
+details.disclose.note-greyedout[open] > .disclose-body,
+details.disclose.marginal[open] > .disclose-body {
+  font-size: 1rem;
 }
 details.disclose.note-greyedout[open] .plain_layout,
 details.disclose.note-greyedout[open] .note_greyedout {

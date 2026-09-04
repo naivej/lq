@@ -2,7 +2,7 @@
   "name": "lyx-preview",
   "displayName": "LyX Preview",
   "description": "Read-only preview of saved .lyx files.",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "publisher": "CoconutWater",
   "license": "MIT",
   "repository": {
