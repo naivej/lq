@@ -1706,7 +1706,10 @@ fn space_html(ast: &Document, block: NodeId, kind: &str) -> String {
     if arg.contains("hspace") {
         return custom_space_html(arg, find_property(ast, block, "length").as_deref());
     }
-    bracket_space_html(arg)
+    format!(
+        r#"<span class="space-mark {}" aria-hidden="true"></span>"#,
+        named_space_mark_classes(arg)
+    )
 }
 
 fn custom_space_html(arg: &str, length: Option<&str>) -> String {
@@ -1716,48 +1719,37 @@ fn custom_space_html(arg: &str, length: Option<&str>) -> String {
         "special"
     };
     let raw = length.unwrap_or("0pt").trim();
-    let negative = raw.starts_with('-');
     let abs = raw.trim_start_matches('-');
     let abs = if abs.is_empty() { "0pt" } else { abs };
-    if negative {
-        format!(
-            r#"<span class="space-mark custom {color} arrow" style="width: {}" aria-hidden="true"></span>"#,
-            escape_live_html(abs)
-        )
-    } else {
-        format!(
-            r#"<span class="space-mark custom {color} deep" style="width: {}" aria-hidden="true"></span>"#,
-            escape_live_html(abs)
-        )
-    }
+    let shape = if raw.starts_with('-') { "arrow" } else { "deep" };
+    format!(
+        r#"<span class="space-mark custom {color} {shape}" style="width: {}" aria-hidden="true"></span>"#,
+        escape_live_html(abs)
+    )
 }
 
-fn bracket_space_html(arg: &str) -> String {
-    let (kind, color, shape) = named_space_mark(arg);
-    format!(r#"<span class="space-mark {kind} {color} {shape}" aria-hidden="true"></span>"#)
-}
-
-fn named_space_mark(arg: &str) -> (&'static str, &'static str, &'static str) {
+/// Class tokens for LyX's non-fill InsetSpace U mark (kind, colour, depth).
+fn named_space_mark_classes(arg: &str) -> &'static str {
     if arg.contains("textvisiblespace") {
-        ("visible", "foreground", "baseline")
+        "visible foreground baseline"
     } else if arg.contains("negthinspace") || arg.contains("thinspace") {
-        ("thin", "latex", "deep")
+        "thin latex deep"
     } else if arg.contains("negmedspace") || arg.contains("medspace") {
-        ("med", "latex", "deep")
+        "med latex deep"
     } else if arg.contains("negthickspace") || arg.contains("thickspace") {
-        ("thick", "latex", "deep")
+        "thick latex deep"
     } else if arg.contains("qquad") {
-        ("qquad", "special", "deep")
+        "qquad special deep"
     } else if arg.contains("quad") {
-        ("quad", "special", "deep")
+        "quad special deep"
     } else if arg.contains("enskip") {
-        ("enskip", "special", "deep")
+        "enskip special deep"
     } else if arg.contains("enspace") {
-        ("enspace", "latex", "deep")
+        "enspace latex deep"
     } else if arg.contains("\\space") {
-        ("normal", "special", "baseline")
+        "normal special baseline"
     } else {
-        ("protected", "latex", "baseline")
+        "protected latex baseline"
     }
 }
 
