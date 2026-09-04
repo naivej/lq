@@ -560,9 +560,6 @@ fn inject_mapping_after_tag(inner: &str, attrs: &str) -> String {
 fn is_bare_figure(trimmed: &str) -> bool {
     (trimmed.starts_with("<figure") && trimmed.ends_with("</figure>"))
         || (trimmed.starts_with("<details")
-            && trimmed.contains(" float")
-            && trimmed.ends_with("</details>"))
-        || (trimmed.starts_with("<details")
             && trimmed.contains(" wrap")
             && trimmed.ends_with("</details>"))
 }

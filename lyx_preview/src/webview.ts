@@ -328,6 +328,8 @@ details.disclose {
   padding: 0;
   border: none;
   max-width: 100%;
+  /* Paragraph first-line indent must not leak into the label or open body. */
+  text-indent: 0;
 }
 details.disclose > summary {
   cursor: pointer;
@@ -376,15 +378,13 @@ details.disclose[open] > .disclose-body > .standard {
   max-width: 100%;
   box-sizing: border-box;
 }
-/* Wide media (figures/tables) need the full column when open — including
- * wraps nested inside a Standard <p>, not only section/article children. */
-details.disclose.float[open],
+/* Open wrap still takes the column (043). Open floats hug like other chips
+ * so a Standard paragraph's first-line indent can sit the box (DL045). */
 details.disclose.wrap[open] {
   display: block;
   width: 100%;
   max-width: 100%;
 }
-details.disclose.float[open] > .disclose-body,
 details.disclose.wrap[open] > .disclose-body {
   width: 100%;
   max-width: 100%;
@@ -573,7 +573,8 @@ code.ert-body {
   background: transparent;
   padding: 0;
 }
-/* Block-level floats/wraps (sole content of a layout, promoted out of Standard). */
+/* Sole wraps are promoted out of Standard. Floats stay in the paragraph
+ * so first-line indent can sit the box (DL045). */
 section > details.disclose.float,
 section > details.disclose.wrap,
 article > details.disclose.float,

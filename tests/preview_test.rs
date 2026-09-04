@@ -2423,6 +2423,27 @@ fn live_renderer_help_embeddedobjects_lyx_margin_notes_wrap_listings() {
         "EmbeddedObjects uses first-line indent, like the LyX window"
     );
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
+    let heading_2_5 = html
+        .find(r#"heading-number">2.5 </span>Table Floats"#)
+        .expect("section 2.5 Table Floats heading");
+    let intro_at = html[heading_2_5..]
+        .find("For general explanations about floats")
+        .map(|n| heading_2_5 + n)
+        .expect("2.5 intro before the first table float");
+    let intro_end = html[intro_at..]
+        .find("</div>")
+        .map(|n| intro_at + n)
+        .expect("2.5 intro paragraph close");
+    let table_float_at = html[intro_end..]
+        .find(r#"class="disclose float float-table""#)
+        .map(|n| intro_end + n)
+        .expect("first table float after 2.5 intro");
+    let between = &html[intro_end..table_float_at];
+    assert!(
+        between.contains(r#"class="standard""#),
+        "§2.5 table float must stay in its Standard paragraph so first-line indent can sit the box"
+    );
+
     let heading_6_1 = html
         .find(r#"heading-number">6.1 </span>Wrap Floats"#)
         .expect("section 6.1 Wrap Floats heading");

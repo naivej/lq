@@ -129,7 +129,8 @@ describe("renderWebviewHtml change views", () => {
     assert.match(openBlock, /max-width:\s*100%/);
     assert.equal(openBlock.includes("36em"), false);
     assert.equal(openBlock.includes("28em"), false);
-    const bodyEnd = html.indexOf("details.disclose.float[open]", bodyRule);
+    const bodyEnd = html.indexOf("details.disclose.wrap[open]", bodyRule);
+    assert.notEqual(bodyEnd, -1);
     const bodyBlock = html.slice(bodyRule, bodyEnd);
     assert.match(bodyBlock, /width:\s*max-content/);
     assert.match(bodyBlock, /max-width:\s*100%/);
@@ -143,6 +144,33 @@ describe("renderWebviewHtml change views", () => {
     // Kind-specific open rules must not reintroduce a fixed em cap.
     assert.doesNotMatch(html, /details\.disclose[^{]*\[open\][^{]*\{[^}]*min\(\d+em/);
     assert.doesNotMatch(html, /details\.disclose[^{]*\[open\][^{]*\{[^}]*max-width:\s*min\(\d+em/);
+  });
+
+  it("paragraph first-line indent does not leak into chip interiors (DL045)", () => {
+    const html = render("tracked");
+    const start = html.indexOf("details.disclose {");
+    assert.notEqual(start, -1);
+    const block = html.slice(start, html.indexOf("details.disclose > summary {", start));
+    assert.match(block, /text-indent:\s*0/);
+  });
+
+  it("open float chips hug content; open wrap still takes the column (DL045)", () => {
+    const html = render("tracked");
+    const wrapStart = html.indexOf("details.disclose.wrap[open] {");
+    assert.notEqual(wrapStart, -1);
+    const wrapBlock = html.slice(
+      wrapStart,
+      html.indexOf("details.disclose.wrap[open] > .disclose-body {", wrapStart),
+    );
+    assert.match(wrapBlock, /width:\s*100%/);
+    assert.doesNotMatch(
+      html,
+      /details\.disclose\.float\[open\],\s*details\.disclose\.wrap\[open\]/,
+    );
+    const floatWidth = html.match(
+      /details\.disclose\.float\[open\]\s*\{[^}]*width:\s*100%/,
+    );
+    assert.equal(floatWidth, null);
   });
 
   it("figure float-body is a block so a note with inline math is not two columns", () => {
