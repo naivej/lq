@@ -5,7 +5,7 @@ use crate::paths::{TextReadError, read_text_file};
 use flate2::read::GzDecoder;
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
 
 /// Resolve ImageMagick (`magick`). Exported for discovery tests (DL148).
@@ -211,16 +211,22 @@ fn magick_png_bytes(path: &Path, magick: Option<&Path>) -> Option<Vec<u8>> {
     Some(output.stdout)
 }
 
+#[cfg(test)]
+thread_local! {
+    static MAGICK_CALL_LOG: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
 fn record_magick_spawn() {
-    let Ok(log) = env::var("LQ_MAGICK_CALL_LOG") else {
-        return;
-    };
-    if log.is_empty() {
-        return;
-    }
-    if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(log) {
-        let _ = f.write_all(b"1\n");
-    }
+    #[cfg(test)]
+    MAGICK_CALL_LOG.with(|slot| {
+        let Some(path) = slot.borrow().clone() else {
+            return;
+        };
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(path) {
+            let _ = std::io::Write::write_all(&mut f, b"1\n");
+        }
+    });
 }
 
 fn base64_encode(bytes: &[u8]) -> String {
@@ -447,6 +453,7 @@ mod tests {
     use flate2::Compression;
     use flate2::write::GzEncoder;
     use std::collections::HashMap;
+    use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
 
     fn temp_dir(prefix: &str) -> PathBuf {
@@ -462,22 +469,32 @@ mod tests {
         p
     }
 
+    /// Per-thread spy so parallel tests do not share a process-wide env log.
+    fn with_magick_call_log<T>(log: &Path, f: impl FnOnce() -> T) -> T {
+        super::MAGICK_CALL_LOG.with(|slot| {
+            *slot.borrow_mut() = Some(log.to_path_buf());
+        });
+        struct Clear;
+        impl Drop for Clear {
+            fn drop(&mut self) {
+                super::MAGICK_CALL_LOG.with(|slot| *slot.borrow_mut() = None);
+            }
+        }
+        let _clear = Clear;
+        f()
+    }
+
     #[test]
     fn missing_source_does_not_spawn_magick() {
         let dir = temp_dir("miss");
         let log = dir.join("calls.txt");
-        unsafe {
-            env::set_var("LQ_MAGICK_CALL_LOG", &log);
-        }
         let fake_magick = dir.join("magick.exe");
         fs::write(&fake_magick, b"x").unwrap();
         let missing = dir.join("nope.pdf");
-        assert!(
-            ensure_raster_png(&missing, Some(&fake_magick), Some(&dir.join("raster"))).is_none()
-        );
-        unsafe {
-            env::remove_var("LQ_MAGICK_CALL_LOG");
-        }
+        let none = with_magick_call_log(&log, || {
+            ensure_raster_png(&missing, Some(&fake_magick), Some(&dir.join("raster")))
+        });
+        assert!(none.is_none());
         assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
         let _ = fs::remove_dir_all(&dir);
     }
@@ -492,15 +509,11 @@ mod tests {
         let dest = raster_dest(&src, Some(&raster)).unwrap();
         fs::write(&dest, b"png-bytes").unwrap();
         let log = dir.join("calls.txt");
-        unsafe {
-            env::set_var("LQ_MAGICK_CALL_LOG", &log);
-        }
         let fake_magick = dir.join("magick.exe");
         fs::write(&fake_magick, b"x").unwrap();
-        let got = ensure_raster_png(&src, Some(&fake_magick), Some(&raster)).unwrap();
-        unsafe {
-            env::remove_var("LQ_MAGICK_CALL_LOG");
-        }
+        let got = with_magick_call_log(&log, || {
+            ensure_raster_png(&src, Some(&fake_magick), Some(&raster)).unwrap()
+        });
         assert_eq!(got, dest);
         assert!(!log.exists() || fs::read_to_string(&log).unwrap().is_empty());
         let _ = fs::remove_dir_all(&dir);
