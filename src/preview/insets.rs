@@ -1721,7 +1721,11 @@ fn custom_space_html(arg: &str, length: Option<&str>) -> String {
     let raw = length.unwrap_or("0pt").trim();
     let abs = raw.trim_start_matches('-');
     let abs = if abs.is_empty() { "0pt" } else { abs };
-    let shape = if raw.starts_with('-') { "arrow" } else { "deep" };
+    let shape = if raw.starts_with('-') {
+        "arrow"
+    } else {
+        "deep"
+    };
     format!(
         r#"<span class="space-mark custom {color} {shape}" style="width: {}" aria-hidden="true"></span>"#,
         escape_live_html(abs)
