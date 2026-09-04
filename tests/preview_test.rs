@@ -2242,7 +2242,7 @@ fn live_renderer_help_math_lyx_phantom_chips_no_math_mode_unknown_dump() {
     }
     assert!(html.contains(r#"class="typewriter""#));
     assert!(html.contains(r#"class="sans""#));
-    assert!(html.contains('\u{2423}'));
+    assert!(html.contains(r#"class="space-mark visible foreground baseline""#));
     assert!(html.contains("<mo>↓</mo>"));
     assert!(html.contains("<mfrac>"));
     assert!(html.contains("<mtable>"));
@@ -2407,7 +2407,12 @@ fn live_renderer_help_additional_lyx_numbering_toc_and_specialchar() {
     assert!(html.contains(r#"<dl class="description">"#));
     assert!(html.contains(">Address</dt>"));
     assert!(html.contains("Current"));
-    assert!(html.contains("Current\u{00a0}Address</dt>"));
+    assert!(
+        html.contains(
+            r#">Current<span class="space-mark protected latex baseline" aria-hidden="true"></span>Address</dt>"#
+        ),
+        "Description label Current Address must paint the protected U"
+    );
     assert!(html.contains(r#"class="Frameless""#));
     assert!(html.contains(r#"<span class="noun">"#));
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
@@ -2437,7 +2442,14 @@ fn live_renderer_help_additional_lyx_numbering_toc_and_specialchar() {
     assert!(html.contains(r#"<span class="dropcap-rest">his</span>"#));
     assert!(html.contains("module adds a drop capitals paragraph style"));
     assert!(html.contains(r#"class="flex_rotatebox""#));
-    assert!(html.contains("rotate(30deg)"));
+    assert!(html.contains(r#">Rotatebox</summary>"#));
+    assert!(html.contains(r#">Scalebox</summary>"#));
+    assert!(html.contains(r#">Origin</summary>"#));
+    assert!(html.contains(r#">Angle</summary>"#));
+    assert!(
+        !html.contains("rotate(") && !html.contains("scale(") && !html.contains("scaleX(-1)"),
+        "GraphicBoxes must not fake print transforms"
+    );
     assert!(html.contains("Great Western Railway"));
     assert!(html.contains(r#"class="flex_multiple_columns""#));
     assert!(html.contains("column-count: 2"));
@@ -2500,7 +2512,7 @@ fn live_renderer_help_userguide_lyx_script_line_nomencl_flex_emph() {
     let phantom_at = html
         .find("What is correct English")
         .expect("UserGuide phantom example missing");
-    let phantom_chunk = &html[phantom_at..(phantom_at + 500).min(html.len())];
+    let phantom_chunk = &html[phantom_at..(phantom_at + 2000).min(html.len())];
     assert!(phantom_chunk.contains("has to be jumped"));
     assert!(phantom_chunk.contains("jumps"));
     assert!(phantom_chunk.contains(r#"class="disclose phantom""#));
@@ -2527,7 +2539,6 @@ fn live_renderer_help_userguide_lyx_script_line_nomencl_flex_emph() {
     assert!(html.contains("note-greyedout"));
     assert!(html.contains("<kbd"));
     assert!(html.contains("<br>"));
-    assert!(html.contains('\u{00a0}'));
     assert!(html.contains("“"));
     assert!(html.contains("”"));
     assert!(html.contains(r#"<pre class="verbatim">"#));
@@ -2650,6 +2661,96 @@ fn live_renderer_help_userguide_lyx_script_line_nomencl_flex_emph() {
         !html.contains("HeadingsShort Titles"),
         "short-title Argument must not concatenate onto the long heading in the TOC"
     );
+    assert!(
+        html.contains(r#"class="space-mark thin latex deep""#),
+        "thin space must paint LyX's deep latex U"
+    );
+    assert!(
+        html.contains(r#"class="space-mark protected latex baseline""#),
+        "protected ~ must paint LyX's baseline latex U"
+    );
+    assert!(
+        html.contains(r#"class="space-mark enskip special deep""#),
+        "enskip must paint LyX's deep special (blue) U"
+    );
+    let vis_needle = "spaces appear in the output as the character";
+    let vis_at = html
+        .find(vis_needle)
+        .unwrap_or_else(|| panic!("{vis_needle} missing"));
+    let vis = &html[vis_at..(vis_at + 280).min(html.len())];
+    assert!(
+        vis.contains(r#"class="space-mark visible foreground baseline""#),
+        "visible space must be a U mark; nearby: {vis}"
+    );
+    assert!(
+        !vis.contains('\u{2423}'),
+        "visible space must not use the open-box glyph; nearby: {vis}"
+    );
+    let more_spaces = html
+        .find("medium space between the arrows")
+        .expect("UserGuide More Spaces medium row missing");
+    let dt_at = html[..more_spaces]
+        .rfind("<dt")
+        .expect("Description term before medium row");
+    let row = &html[dt_at..more_spaces];
+    assert!(
+        row.contains(r#"class="space-mark protected latex baseline""#),
+        "Description label Medium space must paint the protected U; row: {row}"
+    );
+    assert!(
+        row.contains(r#"class="space-mark med latex deep""#),
+        "Description body must paint the medium U between the arrows; row: {row}"
+    );
+    assert!(
+        html.contains("Vertical Space (Big skip)"),
+        "VSpace bigskip must use LyX's on-screen name"
+    );
+    assert!(
+        html.contains("Vertical Space (Medium skip)"),
+        "VSpace medskip must use LyX's on-screen name"
+    );
+    assert!(
+        html.contains("Vertical Space (Default skip)"),
+        "VSpace defskip must use LyX's on-screen name"
+    );
+    assert!(
+        html.contains("Vertical Space (Small skip, protected)"),
+        "VSpace smallskip* must use LyX's on-screen name"
+    );
+    assert!(
+        html.contains("Vertical Space (0.3cm)"),
+        "custom VSpace must show the length"
+    );
+    assert!(
+        html.contains("Vertical Space (-10mm)"),
+        "negative custom VSpace must show the length"
+    );
+    assert!(
+        !html.contains(">VSpace bigskip<") && !html.contains("VSpace bigskip</span>"),
+        "must not show the raw inset kind as the vspace label"
+    );
+    let left_side = html
+        .find("This is on the left side")
+        .expect("UserGuide 3.5.2.4 left-side fill example");
+    let fill_demo = &html[left_side..(left_side + 900).min(html.len())];
+    assert!(
+        fill_demo.contains(r#"class="hfill""#),
+        "hfill between left and right text; nearby: {fill_demo}"
+    );
+    assert!(
+        fill_demo.contains("This is on the right"),
+        "right-hand text stays after the fill; nearby: {fill_demo}"
+    );
+    let right_at = fill_demo
+        .find("This is on the right")
+        .expect("right-hand text");
+    let after_right = &fill_demo[right_at..];
+    let next_div = after_right.find("</div>").expect("end of first quote line");
+    let second_left = after_right.find(">Left").or_else(|| after_right.find("Left"));
+    assert!(
+        second_left.is_some_and(|at| at > next_div),
+        "each Quote line is its own inner div so fills cannot collapse the three examples onto one row; nearby: {fill_demo}"
+    );
 }
 
 #[test]
@@ -2664,6 +2765,10 @@ fn live_renderer_help_embeddedobjects_lyx_margin_notes_wrap_listings() {
         "EmbeddedObjects uses first-line indent, like the LyX window"
     );
     assert_eq!(unknown_inset_messages(&response), Vec::<&str>::new());
+    assert!(
+        html.contains("Vertical Space (Big skip)"),
+        "EmbeddedObjects VSpace bigskip (e.g. §2.11.4) must use LyX's on-screen name"
+    );
     let heading_2_5 = html
         .find(r#"heading-number">2.5 </span>Table Floats"#)
         .expect("section 2.5 Table Floats heading");
@@ -2884,6 +2989,31 @@ fn live_renderer_help_embeddedobjects_lyx_margin_notes_wrap_listings() {
     assert!(html.contains(r#"class="flex_rotatebox""#));
     assert!(html.contains(r#"class="flex_scalebox""#));
     assert!(html.contains(r#"class="flex_resizebox""#));
+    assert!(html.contains(r#">Rotatebox</summary>"#));
+    assert!(html.contains(r#">Scalebox</summary>"#));
+    assert!(html.contains(r#">Resizebox</summary>"#));
+    assert!(html.contains(r#">Reflectbox</summary>"#));
+    assert!(html.contains(r#">Origin</summary>"#));
+    assert!(html.contains(r#">Angle</summary>"#));
+    assert!(html.contains(r#">H-Factor</summary>"#));
+    assert!(html.contains(r#">Width</summary>"#));
+    assert!(html.contains(r#">Height</summary>"#));
+    let rotate_at = html
+        .find(r#">Rotatebox</summary>"#)
+        .expect("Rotatebox chip missing");
+    let rotate_chunk = &html[rotate_at..(rotate_at + 1500).min(html.len())];
+    assert!(
+        rotate_chunk.contains(r#">Origin</summary>"#) && rotate_chunk.contains("origin=c"),
+        "Rotatebox Origin chip must wrap origin=c; nearby: {rotate_chunk}"
+    );
+    assert!(
+        !rotate_chunk.contains("Short Title"),
+        "GraphicBox Origin must not use the heading Short Title chip"
+    );
+    assert!(
+        !html.contains("rotate(") && !html.contains("scale(") && !html.contains("scaleX(-1)"),
+        "GraphicBoxes must not fake print transforms"
+    );
     assert!(html.contains(r#"class="bibitemlabel""#));
     assert!(html.contains(r#"class="citation""#));
     assert!(html.contains("<hr>"));
@@ -2995,6 +3125,24 @@ fn live_renderer_help_development_lyx_multirow_cells_emit_rowspan() {
         rest = &rest[i + 3..];
     }
     assert!(found, "the 'No' cell is the start of a 3-row span");
+    assert!(
+        html.contains(r#"class="space-mark custom special arrow""#),
+        "negative custom length must paint the double-headed arrow"
+    );
+    assert!(
+        html.contains(r#"style="width: 3cm""#),
+        "negative custom -3cm uses the absolute length as the mark width"
+    );
+    let labels = table_after(&html, "The following table may clarify label assignement");
+    let test_property = td_with_text(labels, "test property");
+    assert!(
+        !test_property.contains("border-left: 3px double"),
+        "the cell left of 'test property' is a multicolumn dummy; that shared edge is one line. cell: {test_property}"
+    );
+    assert!(
+        test_property.contains("border-left: 1px solid"),
+        "'test property' still has its left line. cell: {test_property}"
+    );
 }
 
 #[test]

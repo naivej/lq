@@ -198,10 +198,22 @@ describe("renderWebviewHtml change views", () => {
       /span\.hfill \{[\s\S]*?repeating-linear-gradient\(to right, brown/,
     );
     assert.match(html, /div\.standard:has\(\.hfill\)/);
+    assert.match(html, /blockquote > div:has\(\.hfill\)/);
+    assert.match(html, /li:has\(\.hfill\)/);
+    assert.match(html, /flex-wrap:\s*nowrap/);
+    assert.match(
+      html,
+      /div\.lyx-vspace \{[\s\S]*?justify-content:\s*center/,
+    );
     assert.match(
       html,
       /span\.hfill\.leftarrowfill,\s*span\.hfill\.rightarrowfill \{[\s\S]*?border-left:\s*none/,
     );
+    assert.match(html, /span\.space-mark \{/);
+    assert.match(html, /span\.space-mark\.thin \{/);
+    assert.match(html, /span\.space-mark\.latex \{[\s\S]*?#8b0000/);
+    assert.match(html, /span\.space-mark\.special \{[\s\S]*?royalblue/);
+    assert.match(html, /span\.space-mark\.arrow \{/);
     assert.doesNotMatch(html, /lyx-trim-heavy/);
     assert.doesNotMatch(html, /span\.newline::after \{ content: "↵/);
     assert.doesNotMatch(html, /span\.newline\.linebreak::after \{ content: "↵↵/);

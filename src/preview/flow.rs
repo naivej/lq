@@ -1005,10 +1005,6 @@ fn split_description_walk(
                 } else {
                     String::new()
                 };
-                if kind == "space" || kind.starts_with("space ") {
-                    label.push('\u{00a0}');
-                    continue;
-                }
                 if tag == "inset"
                     && (mapping::is_omitted_inset_kind(&kind)
                         || is_invisible_inset(&tag, args.as_deref()))

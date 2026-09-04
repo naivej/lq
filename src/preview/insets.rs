@@ -637,31 +637,27 @@ fn render_inset_body(
         );
     }
     if kind == "VSpace" || kind.starts_with("VSpace ") {
-        let amount = kind["VSpace".len()..].trim();
-        let amount = if amount.is_empty() { "vspace" } else { amount };
-        return format!(
-            r#"<div class="lyx-vspace" data-vspace="{a}" aria-label="VSpace {a}"><span class="lyx-break-label">VSpace {a}</span></div>"#,
-            a = escape_live_html(amount)
-        );
+        return vspace_html(kind);
     }
-    if kind == "Argument 1" {
+    if kind == "Argument 1" || kind == "Argument" || kind.starts_with("Argument ") {
         if ctx.in_nomencl {
             return render_nomencl_argument(block, kind, parent_state, ctx, owner_parent);
         }
-        let text = {
-            let ast = ctx.doc();
-            let n = mapping::nomencl_text(ast, block);
-            if n.is_empty() {
-                collect_visible_text(ast, block)
-            } else {
-                n
-            }
-        };
-        return wrap_plain_text_marker(ctx, "argument short-title", "Short Title", &text);
-    }
-    if kind == "Argument" || kind.starts_with("Argument ") {
-        if ctx.in_nomencl {
-            return render_nomencl_argument(block, kind, parent_state, ctx, owner_parent);
+        if let Some(label) = graphicbox_argument_label(ctx, owner_parent, kind) {
+            let inner = render_inset_layouts(block, parent_state, ctx);
+            return wrap_disclosure(ctx, "argument", label, &inner, None);
+        }
+        if kind == "Argument 1" {
+            let text = {
+                let ast = ctx.doc();
+                let n = mapping::nomencl_text(ast, block);
+                if n.is_empty() {
+                    collect_visible_text(ast, block)
+                } else {
+                    n
+                }
+            };
+            return wrap_plain_text_marker(ctx, "argument short-title", "Short Title", &text);
         }
         return String::new();
     }
@@ -736,7 +732,7 @@ fn render_inset_body(
         return escape_live_html(&quote_char(kind));
     }
     if kind.starts_with("space ") || kind == "space" {
-        return space_html(kind);
+        return space_html(ctx.doc(), block, kind);
     }
     if kind.starts_with("Index ") || kind == "Index" {
         let entry = collect_index_entry(block, ctx);
@@ -842,55 +838,18 @@ fn render_inset_body(
         );
         return wrap_disclosure(ctx, "flex-container multicol", "Columns", &box_html, None);
     }
-    if kind.starts_with("Flex Rotatebox") {
-        let angle = argument_text(ctx.doc(), block, "2");
-        let angle = if angle.is_empty() {
-            "0"
-        } else {
-            angle.as_str()
-        };
-        return format!(
-            r#"<span class="{}" style="display:inline-block;transform:rotate({}deg)">{}</span>"#,
+    if let Some(label) = graphicbox_label(kind) {
+        let inner = format!(
+            r#"<span class="{}">{}</span>"#,
             flex_native_class(kind),
-            escape_live_html(angle),
             render_flex_inline(block, ctx)
         );
-    }
-    if kind.starts_with("Flex Scalebox") {
-        let h = argument_text(ctx.doc(), block, "1");
-        let h = if h.is_empty() { "1".into() } else { h };
-        let v = argument_text(ctx.doc(), block, "2");
-        let v = if v.is_empty() { h.clone() } else { v };
-        return format!(
-            r#"<span class="{}" style="display:inline-block;transform:scale({}, {})">{}</span>"#,
-            flex_native_class(kind),
-            escape_live_html(&h),
-            escape_live_html(&v),
-            render_flex_inline(block, ctx)
-        );
-    }
-    if kind.starts_with("Flex Resizebox") {
-        let w = argument_text(ctx.doc(), block, "1");
-        let h = argument_text(ctx.doc(), block, "2");
-        let mut styles = vec!["display:inline-block".to_string()];
-        if !w.is_empty() {
-            styles.push(format!("width:{w}"));
-        }
-        if !h.is_empty() && h != "!" {
-            styles.push(format!("height:{h}"));
-        }
-        return format!(
-            r#"<span class="{}" style="{}">{}</span>"#,
-            flex_native_class(kind),
-            escape_live_html(&styles.join(";")),
-            render_flex_inline(block, ctx)
-        );
-    }
-    if kind.starts_with("Flex Reflectbox") {
-        return format!(
-            r#"<span class="{}" style="display:inline-block;transform:scaleX(-1)">{}</span>"#,
-            flex_native_class(kind),
-            render_flex_inline(block, ctx)
+        return wrap_disclosure(
+            ctx,
+            &format!("flex-container {}", label.to_ascii_lowercase()),
+            label,
+            &inner,
+            None,
         );
     }
     if kind.starts_with("Flex Minipage") {
@@ -1641,12 +1600,165 @@ fn newline_html(kind: &str) -> String {
     format!(r#"<span class="{cls}" aria-hidden="true"></span><br>"#)
 }
 
-fn space_html(kind: &str) -> String {
+fn graphicbox_label(kind: &str) -> Option<&'static str> {
+    if kind.starts_with("Flex Rotatebox") {
+        Some("Rotatebox")
+    } else if kind.starts_with("Flex Scalebox") {
+        Some("Scalebox")
+    } else if kind.starts_with("Flex Resizebox") {
+        Some("Resizebox")
+    } else if kind.starts_with("Flex Reflectbox") {
+        Some("Reflectbox")
+    } else {
+        None
+    }
+}
+
+fn graphicbox_argument_label(
+    ctx: &RenderCtx<'_>,
+    owner_parent: Option<NodeId>,
+    arg_kind: &str,
+) -> Option<&'static str> {
+    let owner = owner_parent?;
+    let parent = inset_kind(ctx.doc(), owner);
+    let slot = arg_kind.strip_prefix("Argument").unwrap_or(arg_kind).trim();
+    if parent.starts_with("Flex Rotatebox") {
+        match slot {
+            "1" => Some("Origin"),
+            "2" => Some("Angle"),
+            _ => None,
+        }
+    } else if parent.starts_with("Flex Scalebox") {
+        match slot {
+            "1" => Some("H-Factor"),
+            "2" => Some("V-Factor"),
+            _ => None,
+        }
+    } else if parent.starts_with("Flex Resizebox") {
+        match slot {
+            "1" => Some("Width"),
+            "2" => Some("Height"),
+            _ => None,
+        }
+    } else {
+        None
+    }
+}
+
+/// LyX `InsetVSpace::label`: `"Vertical Space (" + VSpace::asGUIName() + ")"`.
+fn vspace_gui_label(amount: &str) -> String {
+    let keep = amount.ends_with('*');
+    let core = amount.trim_end_matches('*').trim();
+    let name = match core {
+        "" | "vspace" => None,
+        "defskip" => Some("Default skip"),
+        "smallskip" => Some("Small skip"),
+        "medskip" => Some("Medium skip"),
+        "bigskip" => Some("Big skip"),
+        "halfline" => Some("Half line height"),
+        "fullline" => Some("Line height"),
+        "vfill" => Some("Vertical fill"),
+        other => Some(other),
+    };
+    match name {
+        None => "Vertical Space".into(),
+        Some(name) if keep => format!("Vertical Space ({name}, protected)"),
+        Some(name) => format!("Vertical Space ({name})"),
+    }
+}
+
+fn vspace_html(kind: &str) -> String {
+    let amount = kind["VSpace".len()..].trim();
+    let amount = if amount.is_empty() { "vspace" } else { amount };
+    let label = vspace_gui_label(amount);
+    let core = amount.trim_end_matches('*').trim();
+    let variant = if core == "vfill" {
+        "vfill"
+    } else if core.starts_with('-') {
+        "removed"
+    } else {
+        "added"
+    };
+    let height = match core {
+        "smallskip" => Some("1.4em"),
+        "defskip" | "medskip" | "halfline" => Some("1.7em"),
+        "bigskip" | "fullline" => Some("2.2em"),
+        "vfill" => Some("3.6em"),
+        "" | "vspace" => None,
+        other if !other.starts_with('-') => Some(other),
+        _ => None,
+    };
+    let height_attr = height
+        .map(|h| format!(r#" style="min-height: {}""#, escape_live_html(h)))
+        .unwrap_or_default();
+    format!(
+        r#"<div class="lyx-vspace {variant}" data-vspace="{a}" aria-label="{label}"{height_attr}><span class="lyx-vspace-mark" aria-hidden="true"></span><span class="lyx-vspace-label">{label}</span></div>"#,
+        a = escape_live_html(amount),
+        label = escape_live_html(&label),
+    )
+}
+
+fn space_html(ast: &Document, block: NodeId, kind: &str) -> String {
     let arg = kind.strip_prefix("space ").map(str::trim).unwrap_or("");
     if let Some(cls) = fill_class(arg) {
         return format!(r#"<span class="{cls}" aria-hidden="true"></span>"#);
     }
-    escape_live_html(&space_char(kind))
+    if arg.contains("hspace") {
+        return custom_space_html(arg, find_property(ast, block, "length").as_deref());
+    }
+    bracket_space_html(arg)
+}
+
+fn custom_space_html(arg: &str, length: Option<&str>) -> String {
+    let color = if arg.contains("hspace*") {
+        "latex"
+    } else {
+        "special"
+    };
+    let raw = length.unwrap_or("0pt").trim();
+    let negative = raw.starts_with('-');
+    let abs = raw.trim_start_matches('-');
+    let abs = if abs.is_empty() { "0pt" } else { abs };
+    if negative {
+        format!(
+            r#"<span class="space-mark custom {color} arrow" style="width: {}" aria-hidden="true"></span>"#,
+            escape_live_html(abs)
+        )
+    } else {
+        format!(
+            r#"<span class="space-mark custom {color} deep" style="width: {}" aria-hidden="true"></span>"#,
+            escape_live_html(abs)
+        )
+    }
+}
+
+fn bracket_space_html(arg: &str) -> String {
+    let (kind, color, shape) = named_space_mark(arg);
+    format!(r#"<span class="space-mark {kind} {color} {shape}" aria-hidden="true"></span>"#)
+}
+
+fn named_space_mark(arg: &str) -> (&'static str, &'static str, &'static str) {
+    if arg.contains("textvisiblespace") {
+        ("visible", "foreground", "baseline")
+    } else if arg.contains("negthinspace") || arg.contains("thinspace") {
+        ("thin", "latex", "deep")
+    } else if arg.contains("negmedspace") || arg.contains("medspace") {
+        ("med", "latex", "deep")
+    } else if arg.contains("negthickspace") || arg.contains("thickspace") {
+        ("thick", "latex", "deep")
+    } else if arg.contains("qquad") {
+        ("qquad", "special", "deep")
+    } else if arg.contains("quad") {
+        ("quad", "special", "deep")
+    } else if arg.contains("enskip") {
+        ("enskip", "special", "deep")
+    } else if arg.contains("enspace") {
+        ("enspace", "latex", "deep")
+    } else if arg.contains("\\space") {
+        ("normal", "special", "baseline")
+    } else {
+        ("protected", "latex", "baseline")
+    }
 }
 
 fn fill_class(arg: &str) -> Option<&'static str> {
@@ -2003,6 +2115,12 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         );
         let left_on = vline(attr_true(attr, "leftline"));
         let left_nb = left.is_some_and(|a| vline(attr_true(a, "rightline")));
+        // A multicolumn dummy stores the span's right line. That is this
+        // cell's left edge, not a second parallel line (LyX
+        // Tabular::interColumnSpace uses the visible cell's rightLine).
+        let left_double = left_on
+            && left_nb
+            && left.is_some_and(|a| a.get("multicolumn").map(String::as_str) != Some("2"));
         push_box_edge(
             &mut styles,
             &mut classes,
@@ -2013,7 +2131,7 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
             false,
             false,
             &color,
-            left_on && left_nb,
+            left_double,
         );
         let right_on = vline(attr_true(attr, "rightline"));
         let right_nb = right.is_some_and(|a| vline(attr_true(a, "leftline")));
@@ -4484,45 +4602,6 @@ fn render_flex_from_layout(
     ))
 }
 
-fn space_char(kind: &str) -> String {
-    let arg = kind.strip_prefix("space ").map(str::trim).unwrap_or("");
-    if arg.contains("textvisiblespace") {
-        return "\u{2423}".into();
-    }
-    if arg.contains("qquad") {
-        return "\u{2003}\u{2003}".into();
-    }
-    if arg.contains("quad") {
-        return "\u{2003}".into();
-    }
-    if arg.contains("enskip") {
-        return "\u{2002}".into();
-    }
-    if arg.contains("enspace") {
-        return "\u{2060}\u{2002}\u{2060}".into();
-    }
-    if arg.contains("thinspace") {
-        return "\u{202f}".into();
-    }
-    if arg.contains("medspace") {
-        return "\u{2005}".into();
-    }
-    if arg.contains("thickspace") {
-        return "\u{2004}".into();
-    }
-    if arg.contains("negthinspace")
-        || arg.contains("negmedspace")
-        || arg.contains("negthickspace")
-        || arg == "~"
-    {
-        return "\u{00a0}".into();
-    }
-    if arg == "\\space{}" || arg == "\\space" {
-        return " ".into();
-    }
-    "\u{00a0}".into()
-}
-
 fn quote_char(kind: &str) -> String {
     let code = kind.strip_prefix("Quotes ").map(str::trim).unwrap_or("");
     if code.len() != 3 {
@@ -4552,4 +4631,30 @@ fn quote_char(kind: &str) -> String {
     let secondary = chars[2] == 's';
     let closing = chars[1] == 'r';
     marks[(if secondary { 2 } else { 0 }) + (if closing { 1 } else { 0 })].into()
+}
+
+#[cfg(test)]
+mod vspace_label_tests {
+    use super::vspace_gui_label;
+
+    #[test]
+    fn lyx_gui_names_for_every_vspace_kind() {
+        let cases = [
+            ("defskip", "Vertical Space (Default skip)"),
+            ("smallskip", "Vertical Space (Small skip)"),
+            ("medskip", "Vertical Space (Medium skip)"),
+            ("bigskip", "Vertical Space (Big skip)"),
+            ("halfline", "Vertical Space (Half line height)"),
+            ("fullline", "Vertical Space (Line height)"),
+            ("vfill", "Vertical Space (Vertical fill)"),
+            ("0.3cm", "Vertical Space (0.3cm)"),
+            ("-10mm", "Vertical Space (-10mm)"),
+            ("smallskip*", "Vertical Space (Small skip, protected)"),
+            ("bigskip*", "Vertical Space (Big skip, protected)"),
+            ("1cm*", "Vertical Space (1cm, protected)"),
+        ];
+        for (amount, want) in cases {
+            assert_eq!(vspace_gui_label(amount), want, "{amount}");
+        }
+    }
 }

@@ -424,12 +424,52 @@ span.hfill.rightarrowfill {
 }
 span.hfill.leftarrowfill::before { content: "←"; color: royalblue; }
 span.hfill.rightarrowfill::after { content: "→"; color: royalblue; }
-div.standard:has(.hfill), td:has(.hfill) {
+div.standard:has(.hfill),
+blockquote > div:has(.hfill),
+blockquote > p:has(.hfill),
+li:has(.hfill),
+td:has(.hfill),
+dd:has(.hfill) {
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
+  width: 100%;
 }
-div.standard:has(.hfill) { width: 100%; }
+/* LyX InsetSpace::draw: non-fill spaces are a 4-point U; colour and depth follow metrics. */
+span.space-mark {
+  display: inline-block;
+  box-sizing: border-box;
+  border-style: solid;
+  border-width: 0 1px 1px 1px;
+  vertical-align: baseline;
+  margin: 0 0.05em;
+}
+span.space-mark.baseline { height: 0.35ex; }
+span.space-mark.deep { height: 0.7ex; vertical-align: -0.35ex; }
+span.space-mark.protected,
+span.space-mark.normal,
+span.space-mark.visible { width: 0.33em; }
+span.space-mark.thin { width: calc(1em / 6); }
+span.space-mark.med { width: 0.25em; }
+span.space-mark.thick { width: 0.5em; }
+span.space-mark.enspace,
+span.space-mark.enskip { width: 0.5em; }
+span.space-mark.quad { width: 1em; }
+span.space-mark.qquad { width: 2em; }
+span.space-mark.custom { min-width: 4px; }
+span.space-mark.latex { border-color: #8b0000; color: #8b0000; }
+span.space-mark.special { border-color: royalblue; color: royalblue; }
+span.space-mark.foreground { border-color: currentColor; color: currentColor; }
+/* Negative custom length: double-headed arrow (InsetSpace::draw CUSTOM path). */
+span.space-mark.arrow {
+  height: 0.7em;
+  min-width: 24px;
+  border: none;
+  vertical-align: middle;
+  background: linear-gradient(currentColor, currentColor) center / 100% 1px no-repeat;
+}
+span.space-mark.arrow::before { content: "←"; }
+span.space-mark.arrow::after { content: "→"; }
 /*
  * DL131 disclosure: click summary to expand/collapse (no hover).
  * Closed = tight colored chip around the label only; open = body below.
@@ -754,6 +794,8 @@ div.bibtexentry,
 span.heading-number,
 span.float-caption-prefix,
 span.newline, span.hfill,
+span.space-mark,
+div.lyx-vspace,
 span.layout-label,
 span.eqno,
 span.abstract_label,
@@ -968,17 +1010,52 @@ div.lyx-separator {
   height: 0;
 }
 div.lyx-vspace {
-  display: block;
-  margin: 0.55em 0;
-  min-height: 0.6em;
-  border-left: 3px solid #ccc;
-  padding-left: 0.45em;
-  color: #888;
-  font-size: 0.7em;
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 0.45em;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0.35em 0;
+  color: brown;
+  font-size: 0.8em;
   font-weight: 600;
+  line-height: 1.2;
 }
-div.lyx-vspace > .lyx-break-label {
-  opacity: 0.85;
+div.lyx-vspace > .lyx-vspace-mark {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  flex: 0 0 10px;
+  width: 10px;
+  align-self: stretch;
+  min-height: 1.5em;
+  box-sizing: border-box;
+  background: linear-gradient(brown, brown) 50% / 1.5px calc(100% - 8px) no-repeat;
+}
+div.lyx-vspace > .lyx-vspace-mark::before,
+div.lyx-vspace > .lyx-vspace-mark::after {
+  content: "";
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+}
+div.lyx-vspace.added > .lyx-vspace-mark::before { border-bottom: 5px solid brown; }
+div.lyx-vspace.added > .lyx-vspace-mark::after { border-top: 5px solid brown; }
+div.lyx-vspace.removed > .lyx-vspace-mark::before { border-top: 5px solid brown; }
+div.lyx-vspace.removed > .lyx-vspace-mark::after { border-bottom: 5px solid brown; }
+div.lyx-vspace.vfill > .lyx-vspace-mark::before,
+div.lyx-vspace.vfill > .lyx-vspace-mark::after {
+  width: 8px;
+  height: 1.5px;
+  border: none;
+  background: brown;
+}
+div.lyx-vspace > .lyx-vspace-label {
+  color: brown;
+  font-weight: 600;
 }
 /* DL133 tracked-change views over one change-aware render (default: Tracked). */
 ins.change-inserted {
