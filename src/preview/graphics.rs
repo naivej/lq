@@ -60,14 +60,21 @@ fn find_on_path(command: &str) -> Option<PathBuf> {
     None
 }
 
-/// ImageMagick argv for a first-page PNG raster (Deno `rasterizeToPngDataUri`).
-pub fn raster_magick_args(path: &Path) -> [String; 4] {
-    [
-        "-density".into(),
-        "120".into(),
-        format!("{}[0]", path.to_string_lossy()),
-        "png:-".into(),
-    ]
+/// ImageMagick argv for a first-page PNG raster.
+/// PDFs pass LyX's crop-box flag (`convertDefault.py`); other formats stay page 0 at 120 dpi.
+pub fn raster_magick_args(path: &Path) -> Vec<String> {
+    let mut args = vec!["-density".into(), "120".into()];
+    let is_pdf = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| e.eq_ignore_ascii_case("pdf"));
+    if is_pdf {
+        args.push("-define".into());
+        args.push("pdf:use-cropbox=true".into());
+    }
+    args.push(format!("{}[0]", path.to_string_lossy()));
+    args.push("png:-".into());
+    args
 }
 
 fn ghostscript_bin_dir(magick: &Path) -> Option<PathBuf> {
@@ -110,7 +117,7 @@ fn prepend_path_dir(dir: &Path) -> Option<std::ffi::OsString> {
     env::join_paths(paths).ok()
 }
 
-const RASTER_RECIPE: &str = "d120-p0";
+const RASTER_RECIPE: &str = "d120-p0c";
 const RASTER_DENSITY: f64 = 120.0;
 const GUI_DISPLAY_DPI: f64 = 72.0;
 
@@ -507,6 +514,20 @@ mod tests {
         assert_eq!(graphic_display_width_px(200, 50, false), 100);
     }
 
+    fn png_ihdr_size(path: &Path) -> Option<(u32, u32)> {
+        let bytes = fs::read(path).ok()?;
+        const SIG: &[u8] = &[137, 80, 78, 71, 13, 10, 26, 10];
+        if bytes.len() < 24 || !bytes.starts_with(SIG) {
+            return None;
+        }
+        if &bytes[12..16] != b"IHDR" {
+            return None;
+        }
+        let w = u32::from_be_bytes(bytes[16..20].try_into().ok()?);
+        let h = u32::from_be_bytes(bytes[20..24].try_into().ok()?);
+        Some((w, h))
+    }
+
     #[test]
     fn png_pixel_width_reads_ihdr() {
         let dir = temp_dir("ihdr");
@@ -519,6 +540,62 @@ mod tests {
         bytes.extend_from_slice(&[8, 2, 0, 0, 0]);
         fs::write(&png, &bytes).unwrap();
         assert_eq!(png_pixel_width(&png), Some(390));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn raster_dest_uses_crop_recipe_not_page_recipe() {
+        let dir = temp_dir("recipe");
+        let src = dir.join("fig.pdf");
+        fs::write(&src, b"%PDF-1.4 fake").unwrap();
+        let dest = raster_dest(&src, Some(&dir.join("raster"))).unwrap();
+        let name = dest.file_name().unwrap().to_string_lossy();
+        assert!(
+            name.ends_with("-d120-p0c.png"),
+            "crop recipe in cache name: {name}"
+        );
+        assert!(
+            !name.ends_with("-d120-p0.png"),
+            "old page recipe must not be reused: {name}"
+        );
+        let old = dest.with_file_name(name.replace("-d120-p0c.png", "-d120-p0.png"));
+        fs::create_dir_all(old.parent().unwrap()).unwrap();
+        fs::write(&old, b"old-page-png").unwrap();
+        let fake_magick = dir.join("magick.exe");
+        fs::write(&fake_magick, b"x").unwrap();
+        let got = ensure_raster_png(&src, Some(&fake_magick), Some(&dir.join("raster")));
+        assert_ne!(
+            got.as_deref(),
+            Some(old.as_path()),
+            "must not return the old page PNG"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn pdf_raster_uses_cropbox_not_full_page() {
+        let src = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/Synthetic/pdf_cropbox.pdf");
+        assert!(src.is_file(), "missing crop-box fixture {}", src.display());
+        let Some(magick) = find_magick(None) else {
+            eprintln!("skip: ImageMagick not found — cannot raster crop-box fixture");
+            return;
+        };
+        let dir = temp_dir("croppdf");
+        let raster = dir.join("raster");
+        let Some(png) = ensure_raster_png(&src, Some(&magick), Some(&raster)) else {
+            eprintln!("skip: Magick/Ghostscript failed to raster crop-box fixture");
+            let _ = fs::remove_dir_all(&dir);
+            return;
+        };
+        let Some((w, h)) = png_ihdr_size(&png) else {
+            panic!("raster is not a PNG: {}", png.display());
+        };
+        assert_eq!(
+            (w, h),
+            (120, 120),
+            "crop box is 72×72 pt at 120 dpi (page would be 120×240)"
+        );
         let _ = fs::remove_dir_all(&dir);
     }
 

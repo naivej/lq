@@ -219,17 +219,35 @@ fn live_cli_extra_arguments_are_rejected() {
 }
 
 #[test]
-fn raster_magick_args_match_deno() {
+fn raster_magick_args_eps_keep_density_and_first_page() {
     let path = PathBuf::from("/tmp/clip.eps");
     assert_eq!(
         raster_magick_args(&path),
-        [
+        vec![
             "-density".to_string(),
             "120".to_string(),
             "/tmp/clip.eps[0]".to_string(),
             "png:-".to_string(),
         ]
     );
+    assert!(!raster_magick_args(&path).iter().any(|a| a.contains("trim")));
+}
+
+#[test]
+fn raster_magick_args_pdf_use_lyx_cropbox() {
+    let path = PathBuf::from("/tmp/fig.PDF");
+    assert_eq!(
+        raster_magick_args(&path),
+        vec![
+            "-density".to_string(),
+            "120".to_string(),
+            "-define".to_string(),
+            "pdf:use-cropbox=true".to_string(),
+            "/tmp/fig.PDF[0]".to_string(),
+            "png:-".to_string(),
+        ]
+    );
+    assert!(!raster_magick_args(&path).iter().any(|a| a.contains("trim")));
 }
 
 #[test]
