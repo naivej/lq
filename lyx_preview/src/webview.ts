@@ -331,7 +331,7 @@ span.lyx-tabular-middle { vertical-align: middle; }
 /* Bottom: last table line on the text baseline (table sits above). A block
  * table inside inline-block has no line boxes, so the baseline is the bottom. */
 span.lyx-tabular-bottom { vertical-align: baseline; }
-table { border-collapse: collapse; margin: 0.35em 0.4em; }
+table { border-collapse: collapse; }
 table.longtable { display: table; margin: 0.75em auto; }
 table.longtable.longtable-left { margin-left: 0; margin-right: auto; }
 table.longtable.longtable-right { margin-left: auto; margin-right: 0; }
@@ -351,16 +351,10 @@ td.lyx-trim-bottom.lyx-trim-r::after {
   background: var(--vscode-editor-background, #fff);
   pointer-events: none;
 }
-td.lyx-trim-heavy.lyx-trim-l::before,
-td.lyx-trim-heavy.lyx-trim-r::after { height: 2px; }
 td.lyx-trim-top.lyx-trim-l::before { top: -1px; left: -1px; }
 td.lyx-trim-top.lyx-trim-r::after { top: -1px; right: -1px; }
 td.lyx-trim-bottom.lyx-trim-l::before { bottom: -1px; left: -1px; }
 td.lyx-trim-bottom.lyx-trim-r::after { bottom: -1px; right: -1px; }
-td.lyx-trim-heavy.lyx-trim-top.lyx-trim-l::before,
-td.lyx-trim-heavy.lyx-trim-top.lyx-trim-r::after { top: -2px; }
-td.lyx-trim-heavy.lyx-trim-bottom.lyx-trim-l::before,
-td.lyx-trim-heavy.lyx-trim-bottom.lyx-trim-r::after { bottom: -2px; }
 span.decimal-int { display: inline-block; text-align: right; }
 span.decimal-frac { display: inline-block; text-align: left; }
 /* LyX InsetNewline::draw: brown return-arrow (left head, shaft, up-stem).
@@ -416,11 +410,18 @@ span.hfill {
   vertical-align: middle;
   border-left: 1px solid brown;
   border-right: 1px solid brown;
-  background: linear-gradient(to right, brown, brown) center / 100% 1px no-repeat;
+  background: repeating-linear-gradient(to right, brown 0 2px, transparent 2px 6px) center / 100% 1px no-repeat;
 }
 span.hfill.hfill-protected { border-color: #8b0000; background-image: linear-gradient(to right, #8b0000, #8b0000); }
 span.hfill.dotfill { border-color: royalblue; background: repeating-linear-gradient(to right, royalblue 0 2px, transparent 2px 6px) center / 100% 1px no-repeat; }
 span.hfill.hrulefill { border-color: royalblue; background-image: linear-gradient(to right, royalblue, royalblue); }
+/* LyX InsetSpace::draw: arrow fills are a Color_special shaft + head, no end caps. */
+span.hfill.leftarrowfill,
+span.hfill.rightarrowfill {
+  border-left: none;
+  border-right: none;
+  background: linear-gradient(to right, royalblue, royalblue) center / 100% 1px no-repeat;
+}
 span.hfill.leftarrowfill::before { content: "←"; color: royalblue; }
 span.hfill.rightarrowfill::after { content: "→"; color: royalblue; }
 div.standard:has(.hfill), td:has(.hfill) {

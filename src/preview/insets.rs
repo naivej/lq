@@ -1610,9 +1610,7 @@ fn row_line_all(
     if end > cell_attrs.len() || start >= cell_attrs.len() {
         return false;
     }
-    cell_attrs[start..end]
-        .iter()
-        .all(|a| attr_true(a, key))
+    cell_attrs[start..end].iter().all(|a| attr_true(a, key))
 }
 
 fn lyx_paint_color(name: &str) -> Option<String> {
@@ -1664,13 +1662,7 @@ fn fill_class(arg: &str) -> Option<&'static str> {
     if arg.contains("rightarrowfill") {
         return Some("hfill rightarrowfill");
     }
-    if arg.contains("upbracefill") {
-        return Some("hfill upbracefill");
-    }
-    if arg.contains("downbracefill") {
-        return Some("hfill downbracefill");
-    }
-    if arg.contains("hfill") {
+    if arg.contains("hfill") || arg.contains("upbracefill") || arg.contains("downbracefill") {
         return Some("hfill");
     }
     if arg.contains("hspace*") && arg.contains("fill") {
@@ -1909,9 +1901,6 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         } else if decimal_col && !has_decimal {
             styles.push("text-align: center".into());
         }
-        if has_decimal {
-            classes.push("decimal".into());
-        }
         if let Some(v) = valign {
             styles.push(format!("vertical-align: {v}"));
         }
@@ -2116,9 +2105,8 @@ fn render_tabular(block: NodeId, parent_state: &TraversalState, ctx: &mut Render
         } else {
             ""
         };
-        html = format!(
-            r#"<span class="lyx-tabular lyx-tabular-{table_valign}">{strut}{html}</span>"#
-        );
+        html =
+            format!(r#"<span class="lyx-tabular lyx-tabular-{table_valign}">{strut}{html}</span>"#);
     }
     ctx.longtable_number = prev_lt;
     html
@@ -2174,9 +2162,7 @@ fn push_box_edge(
     double: bool,
 ) {
     if (trim_l || trim_r) && on && (side == "top" || side == "bottom") {
-        // Real border so the line shares the collapsed edge with neighbours.
-        // CSS punches a 10px gap at the trimmed end; a padding-box gradient
-        // sat inside the cell and looked like a second, thick rule.
+        // Real border so the line shares the collapsed edge; CSS covers 10px.
         let thick = if heavy { "2px" } else { "1px" };
         styles.push(format!("border-{side}: {thick} solid {color}"));
         classes.push(format!("lyx-trim-{side}"));
@@ -2185,9 +2171,6 @@ fn push_box_edge(
         }
         if trim_r {
             classes.push("lyx-trim-r".into());
-        }
-        if heavy {
-            classes.push("lyx-trim-heavy".into());
         }
         return;
     }
@@ -2260,7 +2243,8 @@ fn render_cell(
         let mut state = enter_traversal_state(parent_state);
         return render_children(&children, &mut state, ctx);
     }
-    let blockish = nested.len() > 1;
+    // Several layouts in one cell stack as in the LyX window, not as inline spans.
+    let stack = nested.len() > 1;
     nested
         .iter()
         .map(|item| {
@@ -2268,7 +2252,7 @@ fn render_cell(
                 let id = take_owner_id(ctx, None);
                 emit_token(ctx, &id, selector);
                 let inner = render_layout_inline(item.node, ctx, false, Some(parent_state));
-                let extra = if blockish {
+                let extra = if stack {
                     r#" style="display:block""#
                 } else {
                     ""
@@ -4535,9 +4519,6 @@ fn space_char(kind: &str) -> String {
     }
     if arg == "\\space{}" || arg == "\\space" {
         return " ".into();
-    }
-    if arg.contains("hspace") {
-        return "\u{00a0}".into();
     }
     "\u{00a0}".into()
 }

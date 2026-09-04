@@ -545,7 +545,6 @@ pub(crate) fn css_lyx_color(name: &str) -> String {
     let key = lower
         .strip_prefix("svg:")
         .or_else(|| lower.strip_prefix("dvips:"))
-        .or_else(|| lower.strip_prefix("x11:"))
         .unwrap_or(&lower);
     match key {
         "red" => "red".into(),
@@ -570,8 +569,6 @@ pub(crate) fn css_lyx_color(name: &str) -> String {
         "darkred" => "#8b0000".into(),
         "darkgreen" => "#008000".into(),
         "darkblue" => "#00008b".into(),
-        "maroon" => "maroon".into(),
-        "midnightblue" => "midnightblue".into(),
         other => other.to_string(),
     }
 }
