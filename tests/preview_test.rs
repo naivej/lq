@@ -2,14 +2,18 @@
 
 mod common;
 
-use common::{IsolatedHome, WorkDir, fixtures_root, parse_cli_json, path_arg, run_cli_with};
+use common::{
+    IsolatedHome, WorkDir, fixtures_root, host_layouts_dir, parse_cli_json, path_arg, run_cli_with,
+};
 use lq::{
-    ConcatOpts, LIVE_CAPABILITIES, LIVE_CONTRACT, LIVE_DEFERRED_FIELDS, LayoutSearchOptions,
-    LiveNavigate, LiveRenderOptions, LiveToken, NodeKind, build_live_response,
+    ConcatOpts, DIAG_PREVIEW_RECOVERED, DIAG_TEXTCLASS_FALLBACK, LIVE_CAPABILITIES, LIVE_CONTRACT,
+    LIVE_DEFERRED_FIELDS, LayoutSearchOptions, LiveNavigate, LiveRenderOptions, LiveToken,
+    NodeKind, PREVIEW_INCOMPLETE_WARNING, PREVIEW_NO_TEXTCLASS_WARNING, build_live_response,
     concatenate_text_nodes, detect_line_ending, escape_live_html, extract_all_text,
     find_layout_file, find_magick, format_sem, get_default_layouts_dir, hash_text,
-    normalize_reader_html, parse, query, raster_magick_args, render_live_html,
-    resolve_layout_search_paths, semantic_equal, validate_live_response,
+    normalize_reader_html, parse, parse_recovering, preview_missing_class_warning, query,
+    raster_magick_args, render_live_html, resolve_layout_search_paths, semantic_equal,
+    validate_live_response,
 };
 use serde_json::{Value, json};
 use std::fs;
@@ -42,6 +46,12 @@ fn render_file(name: &str) -> Option<(String, lq::LivePreviewResponse)> {
 
 fn empty_navigate() -> LiveNavigate {
     LiveNavigate::default()
+}
+
+fn mini_lyx(header: &str, body: &str) -> String {
+    format!(
+        "#LyX 2.5 created this file.\n\\lyxformat 643\n\\begin_document\n\\begin_header\n{header}\\end_header\n\\begin_body\n{body}\\end_body\n\\end_document\n"
+    )
 }
 
 fn valid_base() -> Value {
@@ -323,6 +333,55 @@ fn live_cli_parse_failure_does_not_emit_html() {
 }
 
 #[test]
+fn live_cli_incomplete_file_previews_with_warning_dump_still_fails() {
+    let home = IsolatedHome::new();
+    if let Some(dir) = host_layouts_dir() {
+        fs::write(
+            home.path().join(".lq/config.json"),
+            json!({ "layoutsDir": dir }).to_string(),
+        )
+        .unwrap();
+    }
+    let work = WorkDir::new();
+    let tmp = work.path().join("wip.lyx");
+    fs::write(
+        &tmp,
+        mini_lyx(
+            "\\textclass article\n",
+            "\\begin_layout Standard\nHello world\n",
+        ),
+    )
+    .unwrap();
+    let dump = run_cli_with(&["dump", path_arg(&tmp)], &home, work.path());
+    assert_eq!(dump.code, 1);
+    assert_eq!(parse_cli_json(&dump)["code"], "PARSE_ERROR");
+    parse(&fs::read_to_string(&tmp).unwrap(), false).expect_err("strict parse must fail");
+    parse_recovering(&fs::read_to_string(&tmp).unwrap()).expect("LyX would open this");
+    let out = run_cli_with(&["preview", path_arg(&tmp)], &home, work.path());
+    let parsed = parse_cli_json(&out);
+    if parsed.get("code").and_then(Value::as_str).is_some() {
+        eprintln!("skip: Live CLI render needs LyX layouts ({parsed})");
+        return;
+    }
+    let html = parsed["html"].as_str().unwrap_or("");
+    assert!(html.contains("Hello world"), "html: {html}");
+    let warnings = parsed["warnings"].as_array().expect("warnings");
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.as_str() == Some(PREVIEW_INCOMPLETE_WARNING)),
+        "warnings: {warnings:?}"
+    );
+    let diags = parsed["diagnostics"].as_array().expect("diagnostics");
+    assert!(
+        diags
+            .iter()
+            .any(|d| d["code"].as_str() == Some(DIAG_PREVIEW_RECOVERED)),
+        "diagnostics: {diags:?}"
+    );
+}
+
+#[test]
 fn live_cli_crlf_is_recorded_as_crlf() {
     let home = IsolatedHome::new();
     let work = WorkDir::new();
@@ -443,11 +502,11 @@ fn live_renderer_lists_and_quotes() {
 }
 
 #[test]
-fn live_renderer_missing_textclass_layout_is_a_hard_error() {
+fn live_renderer_missing_named_class_warns_and_renders() {
     let path = synthetic("headings_paragraphs.lyx");
     let text = fs::read_to_string(&path).expect("fixture");
     let ast = parse(&text, false).expect("parse");
-    let Err(err) = render_live_html(
+    let result = render_live_html(
         &ast,
         LiveRenderOptions {
             file_path: Some(path.clone()),
@@ -456,14 +515,58 @@ fn live_renderer_missing_textclass_layout_is_a_hard_error() {
             system_layouts_dir: None,
             raster_dir: None,
         },
-    ) else {
-        panic!("expected LAYOUT_NOT_FOUND");
-    };
-    assert_eq!(err.code, "LAYOUT_NOT_FOUND");
+    )
+    .expect("LyX still opens when the named class file is missing");
+    assert!(result.html.contains("lyx-live"), "html: {}", result.html);
+    let expected = preview_missing_class_warning("article");
     assert!(
-        err.message.contains("article"),
-        "message should mention article: {}",
-        err.message
+        result.warnings.iter().any(|w| w == &expected),
+        "warnings: {:?}",
+        result.warnings
+    );
+    assert!(
+        result
+            .diagnostics
+            .iter()
+            .any(|d| d.code == DIAG_TEXTCLASS_FALLBACK),
+        "diagnostics: {:?}",
+        result.diagnostics
+    );
+}
+
+#[test]
+fn live_renderer_missing_textclass_uses_article_and_warns() {
+    let Some(layouts) = require_layouts_dir() else {
+        return;
+    };
+    let text = mini_lyx(
+        "",
+        "\\begin_layout Standard\nHello classless\n\\end_layout\n",
+    );
+    let ast = parse(&text, false).expect("parse");
+    let result = render_live_html(
+        &ast,
+        LiveRenderOptions {
+            file_path: Some(synthetic("headings_paragraphs.lyx")),
+            layouts_dir: Some(layouts),
+            overlay_layouts_dir: None,
+            system_layouts_dir: None,
+            raster_dir: None,
+        },
+    )
+    .expect("render");
+    assert!(
+        result.html.contains("Hello classless"),
+        "html: {}",
+        result.html
+    );
+    assert!(
+        result
+            .warnings
+            .iter()
+            .any(|w| w == PREVIEW_NO_TEXTCLASS_WARNING),
+        "warnings: {:?}",
+        result.warnings
     );
 }
 

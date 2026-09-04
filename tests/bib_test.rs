@@ -21,3 +21,17 @@ fn parse_bibtex_authoryear_abernethy2003() {
     assert!(html.contains("pp. 1128–1129"), "{html}");
     assert!(html.contains("doi: 10.1021/ja0276321"), "{html}");
 }
+
+#[test]
+fn format_bibliography_entry_does_not_panic_on_multibyte_authors() {
+    let cit = lq::Citation {
+        key: "moreau".into(),
+        author: Some("François Moreau".into()),
+        year: Some("2020".into()),
+        title: Some("A paper".into()),
+        ..lq::Citation::default()
+    };
+    let html = format_bibliography_entry(&cit);
+    assert!(html.contains("Moreau, François"), "{html}");
+    assert!(html.contains("(2020)"), "{html}");
+}

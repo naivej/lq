@@ -13,17 +13,18 @@ mod schema;
 mod set;
 mod undo;
 
-use crate::cache::set_max_cache_entries;
+use crate::cache::{hash_text, set_max_cache_entries};
 use crate::help::{find_by_alias, find_by_reach, home_page};
 use crate::help_render::{RichMode, render_page};
 use crate::lyxserver::RefreshMode;
+use crate::parser::parse_recovering;
 use crate::paths::{StateScope, resolve_state_paths};
 use crate::query::{build_traversal_state_index, query};
 use crate::tracked_changes::{has_layout_ancestor, is_content_node};
 use common::{
-    BIB_SPEC, CliError, DUMP_SPEC, EMPTY_SPEC, INIT_SPEC, INSERT_SPEC, READ_SPEC, SET_SPEC,
-    assert_no_selector_mistakes, load_lyx_full, load_user_config, parse_typed, print_error,
-    push_warning, reject_unexpected_args, scan_help_flags,
+    BIB_SPEC, CliError, DUMP_SPEC, EMPTY_SPEC, INIT_SPEC, INSERT_SPEC, LoadedLyx, READ_SPEC,
+    SET_SPEC, assert_no_selector_mistakes, load_lyx_full, load_user_config, parse_typed,
+    print_error, push_warning, read_utf8_file, reject_unexpected_args, scan_help_flags,
 };
 use mutate::{
     MutationEnv, blast_radius_warning, handle_refresh_pre, is_core_node, node_label,
@@ -238,7 +239,32 @@ or create a local .lq directory and run the command from that project.",
         }
     }
 
-    let loaded = load_lyx_full(file_path, &state_paths)?;
+    let mut structure_recovered = false;
+    let loaded = if command == "preview" {
+        match load_lyx_full(file_path, &state_paths) {
+            Ok(loaded) => loaded,
+            Err(err) if err.code == "PARSE_ERROR" && !err.message.contains("UTF-8") => {
+                let text = read_utf8_file(file_path, &format!("Could not read file: {file_path}"))?;
+                let hash = hash_text(&text);
+                match parse_recovering(&text) {
+                    Ok(recovered) => {
+                        structure_recovered = recovered.structure_recovered();
+                        LoadedLyx {
+                            ast: recovered.document,
+                            text,
+                            hash,
+                        }
+                    }
+                    Err(parse_err) => {
+                        return Err(CliError::new("PARSE_ERROR", parse_err.message));
+                    }
+                }
+            }
+            Err(err) => return Err(err),
+        }
+    } else {
+        load_lyx_full(file_path, &state_paths)?
+    };
     let mut ast = loaded.ast;
 
     match command {
@@ -264,7 +290,14 @@ or create a local .lq directory and run the command from that project.",
             return Ok(());
         }
         "preview" => {
-            preview::run_preview(file_path, &ast, &loaded.text, &loaded.hash, &user_config)?;
+            preview::run_preview(
+                file_path,
+                &ast,
+                &loaded.text,
+                &loaded.hash,
+                &user_config,
+                structure_recovered,
+            )?;
             return Ok(());
         }
         _ => {}

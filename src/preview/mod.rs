@@ -45,6 +45,18 @@ pub const LIVE_CAPABILITIES: LiveCapabilities = LiveCapabilities {
 
 pub const LIVE_DEFERRED_FIELDS: &[&str] = &["editTargets", "reviewRegions", "mode"];
 
+/// Preview opened a file LyX would still open, after auto-closing unfinished structure.
+pub const PREVIEW_INCOMPLETE_WARNING: &str = "This file is incomplete. Preview shows what it can. Close every paragraph and end the document in LyX, or with lq, so the file saves cleanly.";
+/// No `\\textclass` line; preview uses article (LyX's default).
+pub const PREVIEW_NO_TEXTCLASS_WARNING: &str =
+    "This file has no document class. Preview is using article.";
+pub const DIAG_PREVIEW_RECOVERED: &str = "PREVIEW_RECOVERED";
+pub const DIAG_TEXTCLASS_FALLBACK: &str = "TEXTCLASS_FALLBACK";
+
+pub fn preview_missing_class_warning(name: &str) -> String {
+    format!("Document class '{name}' was not found. Preview is using article.")
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LiveTokenVia {
     pub file: String,
@@ -579,16 +591,18 @@ pub fn render_live_html(
         });
         (roots.search_paths, Some(roots.system))
     };
-    let layout_html = load_layout_html(ast, &search_paths)?;
+    let loaded_layouts = load_layout_html(ast, &search_paths)?;
     let system_ref = system_layouts_dir.as_deref();
     let system_bind = bind_dir_from_layouts(system_ref);
     let user_layouts = get_lyx_user_layouts_dir(system_ref);
     let user_bind = bind_dir_from_layouts(user_layouts.as_deref());
     let (shortcuts, bind_warnings) =
         load_shortcut_map_merged(system_bind.as_deref(), user_bind.as_deref());
+    let mut warnings = loaded_layouts.warnings;
+    warnings.extend(bind_warnings);
     let mut ctx = RenderCtx {
-        warnings: bind_warnings,
-        diagnostics: Vec::new(),
+        warnings,
+        diagnostics: loaded_layouts.diagnostics,
         footnote: 0,
         title_foot: 0,
         figure: 0,
@@ -625,7 +639,7 @@ pub fn render_live_html(
         btprint: String::new(),
         biboptions: String::new(),
         outline: Vec::new(),
-        layout_html: Some(layout_html),
+        layout_html: Some(loaded_layouts.map),
         shortcuts: Some(shortcuts),
         math_macros: index::extract_math_macros(ast),
         nomencl: Vec::new(),
@@ -909,47 +923,62 @@ pub(crate) fn find_body(ast: &Document) -> Vec<NodeId> {
     search.to_vec()
 }
 
+#[derive(Debug)]
+struct LoadedLayoutHtml {
+    map: HashMap<String, LayoutHtml>,
+    warnings: Vec<String>,
+    diagnostics: Vec<LiveDiagnostic>,
+}
+
 fn load_layout_html(
     ast: &Document,
     search_paths: &[PathBuf],
-) -> Result<HashMap<String, LayoutHtml>, PreviewError> {
+) -> Result<LoadedLayoutHtml, PreviewError> {
     let ctx = extract_document_layout_context(ast);
-    let Some(textclass) = ctx.textclass.as_deref() else {
-        return Err(PreviewError::new(
-            "NO_TEXTCLASS",
-            "Could not determine textclass from the document.",
-        ));
-    };
+    let requested = ctx
+        .textclass
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
     if search_paths.is_empty() {
+        let name = requested.unwrap_or("article");
         return Err(PreviewError::new(
             "LAYOUT_NOT_FOUND",
             format!(
-                "Layout file not found for textclass '{textclass}' (no layout search paths). \
+                "Layout file not found for textclass '{name}' (no layout search paths). \
 Install LyX or set --layouts-dir / config layoutsDir."
             ),
         ));
     }
-    if find_layout_file(&format!("{textclass}.layout"), search_paths).is_none() {
-        let listed = search_paths
-            .iter()
-            .map(|p| p.to_string_lossy().into_owned())
-            .collect::<Vec<_>>()
-            .join(", ");
-        return Err(PreviewError::new(
-            "LAYOUT_NOT_FOUND",
-            format!(
-                "Layout file not found for textclass '{textclass}' in: {listed}. \
-Install LyX layouts, add a LyX user-dir layout, or set layoutsDir."
-            ),
-        ));
-    }
+
+    let mut warnings = Vec::new();
+    let mut diagnostics = Vec::new();
+    let load_name = match requested {
+        None => {
+            warnings.push(PREVIEW_NO_TEXTCLASS_WARNING.to_string());
+            diagnostics.push(LiveDiagnostic {
+                code: DIAG_TEXTCLASS_FALLBACK.into(),
+                message: PREVIEW_NO_TEXTCLASS_WARNING.into(),
+            });
+            "article"
+        }
+        Some(tc) if find_layout_file(&format!("{tc}.layout"), search_paths).is_none() => {
+            let msg = preview_missing_class_warning(tc);
+            warnings.push(msg.clone());
+            diagnostics.push(LiveDiagnostic {
+                code: DIAG_TEXTCLASS_FALLBACK.into(),
+                message: msg,
+            });
+            "article"
+        }
+        Some(tc) => tc,
+    };
     let modules: Vec<&str> = ctx.modules.iter().map(String::as_str).collect();
-    Ok(get_layout_html_for_class(
-        textclass,
-        search_paths,
-        &modules,
-        Some(&ctx.local),
-    ))
+    Ok(LoadedLayoutHtml {
+        map: get_layout_html_for_class(load_name, search_paths, &modules, Some(&ctx.local)),
+        warnings,
+        diagnostics,
+    })
 }
 
 fn resolve_path(file_path: &Path) -> PathBuf {
@@ -1001,4 +1030,26 @@ fn check_cap(
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod layout_fallback_tests {
+    use super::*;
+    use crate::parser::parse;
+
+    #[test]
+    fn empty_search_paths_is_layout_not_found() {
+        let ast = parse(
+            "#LyX\n\\lyxformat 643\n\\begin_document\n\\begin_header\n\\textclass article\n\\end_header\n\\begin_body\n\\begin_layout Standard\nHi\n\\end_layout\n\\end_body\n\\end_document\n",
+            false,
+        )
+        .unwrap();
+        let err = load_layout_html(&ast, &[]).unwrap_err();
+        assert_eq!(err.code, "LAYOUT_NOT_FOUND");
+        assert!(
+            err.message.contains("no layout search paths"),
+            "{}",
+            err.message
+        );
+    }
 }

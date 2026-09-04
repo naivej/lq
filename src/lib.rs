@@ -40,19 +40,21 @@ pub use lyxserver::{
     RefreshMode, RefreshPreStep, SendResult, build_pipe_command, filter_responses, refresh_pre_step,
 };
 pub use math_alphanum::{MathAlphanumRow, MathAlphanumVariant, math_alphanum};
-pub use parser::{ParseError, parse};
+pub use parser::{ParseError, RecoveredParse, parse, parse_recovering};
 pub use paths::{
     EnvMap, StatePaths, StateScope, find_local_state_root, get_global_state_paths,
     get_user_home_dir, resolve_init_state_paths, resolve_state_paths,
 };
 pub use preview::{
-    LIVE_CAPABILITIES, LIVE_CONTRACT, LIVE_DEFERRED_FIELDS, LIVE_HASH_ALGORITHM, LIVE_HASH_INPUT,
-    LIVE_PROJECTION, LineEnding, LiveCapabilities, LiveChangeEntry, LiveChangeType,
-    LiveContractError, LiveDiagnostic, LiveNavEntry, LiveNavigate, LiveOutlineEntry,
-    LivePreviewResponse, LiveRenderOptions, LiveRenderResult, LiveSourceIdentity, LiveToken,
-    LiveTokenBundle, LiveTokenVia, PreviewError, SemNode, build_live_response, count_lines,
-    decode_entities, detect_line_ending, find_magick, format_sem, normalize_reader_html,
-    raster_magick_args, render_live_html, semantic_equal, validate_live_response,
+    DIAG_PREVIEW_RECOVERED, DIAG_TEXTCLASS_FALLBACK, LIVE_CAPABILITIES, LIVE_CONTRACT,
+    LIVE_DEFERRED_FIELDS, LIVE_HASH_ALGORITHM, LIVE_HASH_INPUT, LIVE_PROJECTION, LineEnding,
+    LiveCapabilities, LiveChangeEntry, LiveChangeType, LiveContractError, LiveDiagnostic,
+    LiveNavEntry, LiveNavigate, LiveOutlineEntry, LivePreviewResponse, LiveRenderOptions,
+    LiveRenderResult, LiveSourceIdentity, LiveToken, LiveTokenBundle, LiveTokenVia,
+    PREVIEW_INCOMPLETE_WARNING, PREVIEW_NO_TEXTCLASS_WARNING, PreviewError, SemNode,
+    build_live_response, count_lines, decode_entities, detect_line_ending, find_magick, format_sem,
+    normalize_reader_html, preview_missing_class_warning, raster_magick_args, render_live_html,
+    semantic_equal, validate_live_response,
 };
 pub use query::{
     Combinator, PseudoClass, PseudoName, QueryError, ScopePredicate, ScopeState, Selector,

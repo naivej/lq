@@ -280,3 +280,93 @@ describe("renderWebviewHtml change views", () => {
     assert.match(html, /body\[data-mode="clean"\] ins\.change-inserted details\.disclose > \*/);
   });
 });
+
+describe("renderWebviewHtml recovery warning (DL051)", () => {
+  function renderRecovery(opts: {
+    stale?: boolean;
+    error?: string;
+    pending?: boolean;
+    diagnostics?: { code: string; message: string }[];
+  }): string {
+    return renderWebviewHtml({
+      title: "LyX Preview: a.lyx",
+      stale: opts.stale ?? false,
+      pending: opts.pending ?? false,
+      error: opts.error,
+      mode: "tracked",
+      render: {
+        contract: "lyx-preview/live-1",
+        projection: "live",
+        html: "<article class=\"lyx-live\">Hello</article>",
+        source: {
+          path: "C:/tmp/a.lyx",
+          hashAlgorithm: "sha256",
+          hashInput: "raw-file-bytes",
+          diskHash: "a".repeat(64),
+          lineEnding: "lf",
+          lineCount: 2,
+          fresh: true,
+        },
+        capabilities: {
+          review: false,
+          mapping: true,
+          outline: true,
+          editing: false,
+          sourceReveal: false,
+        },
+        diagnostics: opts.diagnostics ?? [],
+        outline: [],
+        navigate: {
+          figures: [],
+          tables: [],
+          equations: [],
+          labels: [],
+          listings: [],
+          algorithms: [],
+        },
+        changes: [],
+        tokens: [],
+      },
+    });
+  }
+
+  it("shows a warning banner and the article when the file was recovered", () => {
+    const html = renderRecovery({
+      diagnostics: [{
+        code: "PREVIEW_RECOVERED",
+        message: "This file is incomplete. Preview shows what it can. Close every paragraph and end the document in LyX, or with lq, so the file saves cleanly.",
+      }],
+    });
+    assert.match(html, /class="banner warning"/);
+    assert.match(html, /This file is incomplete/);
+    assert.match(html, /<article class="lyx-live">Hello<\/article>/);
+    assert.match(html, /class="diagnostics"/);
+  });
+
+  it("keeps the stale banner when the editor is dirty (JC2)", () => {
+    const html = renderRecovery({
+      stale: true,
+      diagnostics: [{
+        code: "PREVIEW_RECOVERED",
+        message: "This file is incomplete. Preview shows what it can.",
+      }],
+    });
+    assert.match(html, /class="banner stale"/);
+    assert.match(html, /Unsaved edits — save to refresh the preview/);
+    assert.doesNotMatch(html, /class="banner warning"/);
+    assert.match(html, /This file is incomplete/);
+  });
+
+  it("keeps the error banner unchanged", () => {
+    const html = renderRecovery({
+      error: "Could not read file: a.lyx",
+      diagnostics: [{
+        code: "PREVIEW_RECOVERED",
+        message: "This file is incomplete. Preview shows what it can.",
+      }],
+    });
+    assert.match(html, /class="banner error"/);
+    assert.match(html, /Could not read file/);
+    assert.doesNotMatch(html, /class="banner warning"/);
+  });
+});

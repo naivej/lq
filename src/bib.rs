@@ -220,19 +220,17 @@ pub(crate) fn format_bib_authors(author: Option<&str>) -> String {
 }
 
 fn split_and(author: &str) -> Vec<String> {
+    // `to_ascii_lowercase` keeps byte length, so indices into `lower` are valid
+    // on `author`. Walk with `find` — a byte cursor panics on names like François.
     let lower = author.to_ascii_lowercase();
     let mut parts = Vec::new();
     let mut start = 0;
-    let bytes = author.as_bytes();
-    let mut i = 0;
-    while i + 5 <= bytes.len() {
-        if lower[i..].starts_with(" and ") {
-            parts.push(author[start..i].to_string());
-            i += 5;
-            start = i;
-        } else {
-            i += 1;
-        }
+    let mut from = 0;
+    while let Some(rel) = lower[from..].find(" and ") {
+        let i = from + rel;
+        parts.push(author[start..i].to_string());
+        from = i + 5;
+        start = from;
     }
     parts.push(author[start..].to_string());
     parts
@@ -367,4 +365,21 @@ fn first_year(y: &str) -> Option<String> {
                 .expect("invariant: ascii digit window is utf-8")
                 .to_string()
         })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn format_bib_authors_accepts_multibyte_names() {
+        assert_eq!(
+            format_bib_authors(Some("François Moreau")),
+            "Moreau, François"
+        );
+        assert_eq!(
+            format_bib_authors(Some("François Moreau and Smith, Jane")),
+            "Moreau, François and Smith, Jane"
+        );
+    }
 }

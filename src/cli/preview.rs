@@ -2,7 +2,9 @@
 
 use super::common::{CliError, UserConfig, print_json, push_warning};
 use crate::ast::Document;
-use crate::preview::build_live_response;
+use crate::preview::{
+    DIAG_PREVIEW_RECOVERED, LiveDiagnostic, PREVIEW_INCOMPLETE_WARNING, build_live_response,
+};
 use std::path::Path;
 
 pub fn run_preview(
@@ -11,6 +13,7 @@ pub fn run_preview(
     text: &str,
     text_hash: &str,
     config: &UserConfig,
+    structure_recovered: bool,
 ) -> Result<(), CliError> {
     let overlay = config.layouts_dir.as_deref().map(Path::new);
     match build_live_response(
@@ -21,7 +24,24 @@ pub fn run_preview(
         None,
         Some(text_hash),
     ) {
-        Ok(result) => {
+        Ok(mut result) => {
+            if structure_recovered {
+                push_warning(PREVIEW_INCOMPLETE_WARNING);
+                if !result
+                    .response
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.code == DIAG_PREVIEW_RECOVERED)
+                {
+                    result.response.diagnostics.insert(
+                        0,
+                        LiveDiagnostic {
+                            code: DIAG_PREVIEW_RECOVERED.into(),
+                            message: PREVIEW_INCOMPLETE_WARNING.into(),
+                        },
+                    );
+                }
+            }
             for warning in result.warnings {
                 push_warning(warning);
             }

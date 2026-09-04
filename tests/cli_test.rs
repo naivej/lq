@@ -235,6 +235,7 @@ fn cli_each_command_page_documents_its_high_risk_facts() {
                 "raw-file-bytes",
                 "does not mutate",
                 "LAYOUT_NOT_FOUND",
+                "Preview shows what it can",
             ],
         ),
         (

@@ -26,13 +26,18 @@ export function renderWebviewHtml(options: {
   scriptCsp?: string;
   scriptNonce?: string;
 }): string {
+  const recovery = (options.render?.diagnostics ?? []).find(
+    (d) => d.code === "PREVIEW_RECOVERED" || d.code === "TEXTCLASS_FALLBACK",
+  );
   const status = options.error
     ? `<div id="lyx-banner" class="banner error">${escapeHostText(options.error)}</div>`
     : options.pending
       ? `<div id="lyx-banner" class="banner pending">Rendering…</div>`
       : options.stale
         ? `<div id="lyx-banner" class="banner stale">Unsaved edits — save to refresh the preview.</div>`
-        : "";
+        : recovery
+          ? `<div id="lyx-banner" class="banner warning">${escapeHostText(recovery.message)}</div>`
+          : "";
   const diagnostics = (options.render?.diagnostics ?? [])
     .map((d) => `<li><code>${escapeHostText(d.code)}</code> ${escapeHostText(d.message)}</li>`)
     .join("");
@@ -277,6 +282,7 @@ body { font-family: var(--vscode-font-family); color: var(--vscode-foreground); 
 .banner { padding: 0.4rem 0.6rem; margin-bottom: 0.75rem; border-left: 3px solid var(--vscode-editorWarning-foreground); }
 .banner.error { border-left-color: var(--vscode-errorForeground); }
 .banner.pending { border-left-color: var(--vscode-editorInfo-foreground); }
+.banner.warning { border-left-color: var(--vscode-editorWarning-foreground); }
 article.lyx-live { max-width: 100%; margin: 0 auto; line-height: 1.45; }
 article.lyx-live section { margin: 0 0 1rem; }
 article.lyx-live h1, article.lyx-live h2, article.lyx-live h3, article.lyx-live h4 { margin: 0.8em 0 0.4em; }
