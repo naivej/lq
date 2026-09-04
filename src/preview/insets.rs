@@ -1,5 +1,6 @@
 //! Inset dispatch (Deno `renderInset`) and inline children.
 
+use super::cite::{self, CiteChip};
 use super::flow::{self, flatten_flow};
 use super::graphics;
 use super::mapping::{
@@ -3502,72 +3503,6 @@ fn render_graphics(block: NodeId, ctx: &mut RenderCtx<'_>, owner_parent: Option<
     )
 }
 
-fn last_name(part: &str) -> String {
-    if part.contains(',') {
-        return part.split(',').next().unwrap_or(part).trim().to_string();
-    }
-    part.split_whitespace().last().unwrap_or(part).to_string()
-}
-
-fn short_author(author: Option<&str>) -> String {
-    let Some(author) = author else {
-        return "Unknown".into();
-    };
-    let people: Vec<&str> = author.split(" and ").collect();
-    let last = last_name(people.first().copied().unwrap_or(author));
-    if people.len() > 1 {
-        format!("{last} et al.")
-    } else {
-        last
-    }
-}
-
-fn format_inline_cite(
-    command: &str,
-    keys: &[String],
-    bib: &HashMap<String, crate::bib::Citation>,
-) -> String {
-    enum Part {
-        Raw(String),
-        Named { who: String, year: String },
-    }
-    let parts: Vec<Part> = keys
-        .iter()
-        .map(|key| {
-            let Some(c) = bib.get(key) else {
-                return Part::Raw(key.clone());
-            };
-            Part::Named {
-                who: short_author(c.author.as_deref()),
-                year: c.year.clone().unwrap_or_default(),
-            }
-        })
-        .collect();
-    let parenthetical = command == "citep" || command == "parencite" || command == "cite";
-    if parenthetical {
-        format!(
-            "({})",
-            parts
-                .iter()
-                .map(|p| match p {
-                    Part::Raw(s) => s.clone(),
-                    Part::Named { who, year } => format!("{who} {year}").trim().to_string(),
-                })
-                .collect::<Vec<_>>()
-                .join("; ")
-        )
-    } else {
-        parts
-            .iter()
-            .map(|p| match p {
-                Part::Raw(s) => s.clone(),
-                Part::Named { who, year } => format!("{who} ({year})"),
-            })
-            .collect::<Vec<_>>()
-            .join("; ")
-    }
-}
-
 fn render_toc(ctx: &RenderCtx<'_>) -> String {
     if ctx.outline.is_empty() {
         return String::new();
@@ -3672,21 +3607,30 @@ fn render_command_inset(block: NodeId, kind: &str, ctx: &mut RenderCtx<'_>) -> S
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
             .collect();
-        let map = map_cmd(ctx);
-        return keys
-            .iter()
-            .enumerate()
-            .map(|(i, k)| {
-                let text = format_inline_cite(&command, std::slice::from_ref(k), &ctx.bib);
-                let attrs = if i == 0 { map.as_str() } else { "" };
-                format!(
-                    r##"<a class="citation"{attrs} href="#LyXCite-{}">{}</a>"##,
-                    escape_live_html(&xml_id(k)),
-                    escape_live_html(&text)
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("; ");
+        let before = find_property(ctx.doc(), block, "before").unwrap_or_default();
+        let after = find_property(ctx.doc(), block, "after").unwrap_or_default();
+        let pretextlist = find_property(ctx.doc(), block, "pretextlist").unwrap_or_default();
+        let posttextlist = find_property(ctx.doc(), block, "posttextlist").unwrap_or_default();
+        let text = cite::format_citation_chip(
+            &CiteChip {
+                command: command.clone(),
+                keys: keys.clone(),
+                before,
+                after,
+                pretextlist,
+                posttextlist,
+            },
+            &ctx.cite_settings,
+            ctx.cite_engine.as_ref(),
+            &ctx.bib,
+        );
+        let href_key = keys.first().map(String::as_str).unwrap_or("");
+        return format!(
+            r##"<a class="citation"{} href="#LyXCite-{}">{}</a>"##,
+            map_cmd(ctx),
+            escape_live_html(&xml_id(href_key)),
+            escape_live_html(&text)
+        );
     }
     if matches!(
         subtype,

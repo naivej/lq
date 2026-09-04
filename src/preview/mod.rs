@@ -3,6 +3,7 @@
 //! Private modules split Deno's one file along existing function clusters
 //! (016 JC1). One [`RenderCtx`], one inset `match` — not a renderer framework.
 
+mod cite;
 mod compare;
 mod flow;
 mod graphics;
@@ -673,8 +674,11 @@ pub fn render_live_html(
         subeq: None,
         branches: index::document_branches(ast),
         par_indent: mapping::document_par_indent(ast),
+        cite_settings: cite::document_cite_settings(ast),
+        cite_engine: None,
         ast,
     };
+    ctx.cite_engine = cite::load_cite_engine(system_ref, &ctx.cite_settings.engine);
     let body = find_body(ast);
     index::index_document(&body, &mut ctx);
     index::load_bibliography(&mut ctx);
@@ -873,6 +877,8 @@ pub(crate) struct RenderCtx<'a> {
     pub subeq: Option<SubeqState>,
     pub branches: HashMap<String, bool>,
     pub par_indent: bool,
+    pub cite_settings: cite::CiteSettings,
+    pub cite_engine: Option<cite::CiteEngine>,
     pub ast: &'a Document,
 }
 

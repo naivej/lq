@@ -170,6 +170,17 @@ struct Person {
     last: String,
 }
 
+pub(crate) fn author_surnames(author: Option<&str>) -> Vec<String> {
+    let Some(author) = author else {
+        return Vec::new();
+    };
+    split_and(author)
+        .into_iter()
+        .map(|p| parse_person(&p).last)
+        .filter(|s| !s.is_empty())
+        .collect()
+}
+
 fn parse_person(part: &str) -> Person {
     let t = part.trim();
     if let Some(comma) = t.find(',') {
@@ -333,7 +344,10 @@ pub fn parse_bibtex(content: &str) -> Vec<Citation> {
         let body = &rest[..end];
         rest = &rest[end + 2..];
 
-        let year = field(body, "year").and_then(|y| first_year(&y));
+        // LyX `BibTeXInfo::getYear`: `year`, then biblatex `date` (YYYY-MM-DD…).
+        let year = field(body, "year")
+            .and_then(|y| first_year(&y))
+            .or_else(|| field(body, "date").and_then(|d| first_year(&d)));
 
         let mut cit = Citation {
             key,
@@ -370,6 +384,15 @@ fn first_year(y: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn year_falls_back_to_biblatex_date() {
+        let cits = parse_bibtex(
+            "@article{coibion2020a,\n  author = {Coibion, Olivier and Gorodnichenko, Yuriy},\n  date = {2020},\n}\n",
+        );
+        assert_eq!(cits[0].key, "coibion2020a");
+        assert_eq!(cits[0].year.as_deref(), Some("2020"));
+    }
 
     #[test]
     fn format_bib_authors_accepts_multibyte_names() {
