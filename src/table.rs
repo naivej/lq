@@ -1050,6 +1050,75 @@ fn set_cell_layout(
     true
 }
 
+/// Fill a brand-new empty cell. Insert-only when tracking: typing into an empty
+/// cell is not a `set` replace (that would wrap the empty placeholder as deleted).
+fn fill_new_cell_layout(
+    doc: &mut Document,
+    layout: NodeId,
+    new_value: &str,
+    track: bool,
+    aid: i32,
+    ts: &str,
+) {
+    if new_value.is_empty() {
+        return;
+    }
+    let children = doc.node(layout).children.clone();
+    let insets: Vec<NodeId> = children
+        .iter()
+        .copied()
+        .filter(|&c| is_block(doc, c))
+        .collect();
+    if !track {
+        let mut kids = vec![alloc_text(doc, new_value)];
+        kids.extend(insets);
+        doc.set_children(layout, kids);
+        return;
+    }
+    let new_text = alloc_text(doc, new_value);
+    let mut kids = wrap_in_change_markers(doc, &[new_text], ChangeKind::Inserted, aid, ts);
+    kids.extend(insets);
+    doc.set_children(layout, kids);
+}
+
+fn fill_new_row_fields(
+    doc: &mut Document,
+    grid: &GridModel,
+    row_i: usize,
+    fields: &[String],
+    track: bool,
+    aid: i32,
+    ts: &str,
+) -> Result<(), TableError> {
+    let row = &grid.rows[row_i];
+    if fields.len() != row.cells.len() {
+        return Err(TableError::new(
+            "INVALID_FLAG",
+            format!(
+                "This line has {} fields, expected {}.",
+                fields.len(),
+                row.cells.len()
+            ),
+        )
+        .with_size(grid.rows.len(), row.cells.len()));
+    }
+    for (cell, field) in row.cells.iter().zip(fields.iter()) {
+        let part = col_span(&cell.open) == ColSpan::Part || row_span(&cell.open) == RowSpan::Part;
+        if part {
+            if !field.is_empty() {
+                return Err(TableError::new(
+                    "INVALID_FLAG",
+                    "A merge-part cell must be an empty field in --data.",
+                ));
+            }
+            continue;
+        }
+        let layout = cell_layout(doc, cell.inset);
+        fill_new_cell_layout(doc, layout, field, track, aid, ts);
+    }
+    Ok(())
+}
+
 fn apply_line_to_row(
     doc: &mut Document,
     grid: &GridModel,
@@ -1231,7 +1300,7 @@ pub fn add_row(
     if let Some(data) = data {
         let fields = parse_rect_line(data, ncols)?;
         let grid = parse_grid(doc, tabular)?;
-        apply_line_to_row(doc, &grid, insert_at, &fields, false, aid, ts)?;
+        fill_new_row_fields(doc, &grid, insert_at, &fields, track, aid, ts)?;
     }
     let grid = parse_grid(doc, tabular)?;
     Ok(LineOpResult {
@@ -1349,7 +1418,7 @@ pub fn add_column(
                 continue;
             }
             let layout = cell_layout(doc, cell.inset);
-            set_cell_layout(doc, layout, field, false, aid, ts);
+            fill_new_cell_layout(doc, layout, field, track, aid, ts);
         }
     }
     let grid = parse_grid(doc, tabular)?;

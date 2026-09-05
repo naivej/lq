@@ -223,6 +223,49 @@ fn wrap_tabular(inner: &str) -> String {
     )
 }
 
+fn ab_cd_table() -> String {
+    wrap_tabular(&format!(
+        "<lyxtabular version=\"3\" rows=\"2\" columns=\"2\">\n\
+         <features tabularvalignment=\"middle\">\n\
+         <column alignment=\"left\" valignment=\"top\">\n\
+         <column alignment=\"left\" valignment=\"top\">\n\
+         <row>\n\
+         {}\
+         {}\
+         </row>\n\
+         <row>\n\
+         {}\
+         {}\
+         </row>\n\
+         </lyxtabular>\n",
+        cell("A"),
+        cell("B"),
+        cell("C"),
+        cell("D"),
+    ))
+}
+
+fn plain_layout_bodies(text: &str) -> Vec<String> {
+    text.split("\\begin_layout Plain Layout\n")
+        .skip(1)
+        .filter_map(|chunk| chunk.split("\\end_layout").next().map(str::to_string))
+        .collect()
+}
+
+fn cell_is_insert_only(text: &str, prose: &str) -> bool {
+    plain_layout_bodies(text).iter().any(|body| {
+        body.contains("\\change_inserted")
+            && body.contains(prose)
+            && !body.contains("\\change_deleted")
+    })
+}
+
+fn has_unmarked_empty_cell(text: &str) -> bool {
+    plain_layout_bodies(text)
+        .iter()
+        .any(|body| body.trim().is_empty())
+}
+
 fn multirow_table() -> String {
     wrap_tabular(
         "<lyxtabular version=\"3\" rows=\"2\" columns=\"1\">\n\
@@ -781,6 +824,15 @@ fn add_row_and_delete_row() {
     assert_eq!(added["index"], json!(3));
     let cat = env.run(&["table", path_arg(&file), "1"]);
     assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D\nE,F"));
+    let text = read_file(&file);
+    assert!(
+        !text.contains("change=\"inserted"),
+        "untracked add-row must not mark the line: {text}"
+    );
+    assert!(
+        !text.contains("\\change_inserted"),
+        "untracked --data must not mark cells: {text}"
+    );
     env.run(&["table", path_arg(&file), "1", "delete-row", "--index", "2"]);
     let cat = env.run(&["table", path_arg(&file), "1"]);
     assert_eq!(cat["tables"][0]["data"], json!("A,B\nE,F"));
@@ -804,6 +856,99 @@ fn add_row_tracked_and_hard_delete_own() {
     env.run(&["table", path_arg(&file), "1", "delete-row", "--index", "3"]);
     let text = read_file(&file);
     assert!(!text.contains("change=\"deleted"), "{text}");
+}
+
+#[test]
+fn add_row_tracked_without_data_has_no_cell_insert() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row"]);
+    let text = read_file(&file);
+    assert!(text.contains("change=\"inserted"), "{text}");
+    assert!(
+        !text.contains("\\change_inserted"),
+        "blank add-row must not mark cell text: {text}"
+    );
+}
+
+#[test]
+fn add_row_data_tracked_marks_cells_insert_only() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,F"]);
+    let text = read_file(&file);
+    assert!(text.contains("change=\"inserted"), "{text}");
+    assert!(cell_is_insert_only(&text, "E"), "{text}");
+    assert!(cell_is_insert_only(&text, "F"), "{text}");
+    assert!(!text.contains("\\change_deleted"), "{text}");
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D\nE,F"));
+}
+
+#[test]
+fn add_row_data_empty_field_stays_unmarked() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,"]);
+    let text = read_file(&file);
+    assert!(text.contains("change=\"inserted"), "{text}");
+    assert!(cell_is_insert_only(&text, "E"), "{text}");
+    assert!(
+        has_unmarked_empty_cell(&text),
+        "empty --data field must stay unmarked: {text}"
+    );
+}
+
+#[test]
+fn add_column_data_tracked_marks_cells_insert_only() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-column", "--data", "x,y"]);
+    let text = read_file(&file);
+    assert!(text.contains("change=\"inserted"), "{text}");
+    assert!(cell_is_insert_only(&text, "x"), "{text}");
+    assert!(cell_is_insert_only(&text, "y"), "{text}");
+    assert!(!text.contains("\\change_deleted"), "{text}");
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B,x\nC,D,y"));
+}
+
+#[test]
+fn add_row_data_replay_undo_keeps_row_change() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,F"]);
+    let undone = env.run(&[
+        "undo",
+        path_arg(&file),
+        "inset[Tabular] layout[Plain Layout]",
+    ]);
+    assert_eq!(undone["method"], json!("replay"));
+    let text = read_file(&file);
+    assert!(
+        text.contains("change=\"inserted"),
+        "replay must leave the line mark: {text}"
+    );
+    assert!(
+        !cell_is_insert_only(&text, "E"),
+        "replay must drop --data marks: {text}"
+    );
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D\n,"));
+}
+
+#[test]
+fn add_row_data_snapshot_undo_restores() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,F"]);
+    let undone = env.run(&["undo", path_arg(&file)]);
+    assert_eq!(undone["method"], json!("snapshot"));
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D"));
+    let text = read_file(&file);
+    assert!(!text.contains("change=\"inserted"), "{text}");
+    assert!(!text.contains("\\change_inserted"), "{text}");
 }
 
 #[test]

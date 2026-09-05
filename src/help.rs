@@ -1121,12 +1121,16 @@ narrower selector or `--count` for large documents."#,
               fields of a merge must stay empty.
   lq table <file> [<n>|<selector>] add-row [--index N] [--data <text>]
   lq table <file> [<n>|<selector>] add-column [--index N] [--data <text>]
-              Insert a tractable Nth blank row or column, with optinal `--data`.
+              Insert a blank line (`--data` optional; for a new column, one
+              comma-separated line with one field per row). With tracking on,
+              the new row or column and `--data` are both tracked; empty
+              fields are not.
   lq table <file> [<n>|<selector>] delete-row --index N
   lq table <file> [<n>|<selector>] delete-column --index N
-              An already-deleted line warns and changes
+              Refuse the last line. An already-deleted line warns and changes
               nothing. Replay `undo` does not revert row/column change=;
-              snapshot restore does. Cell-text `set` is replayable.
+              snapshot restore does. Cell-text `set` and `--data` on add-row
+              / add-column are replayable.
 
 Omit n and selector when the file has exactly one table. A mutation still
 needs one table: several matches are a catalog slice, not a bulk edit."#,
