@@ -73,7 +73,7 @@ pub static HELP_PAGES: &[HelpPage] = &[
 
 1. Parse: reads a `.lyx` file into a Concrete Syntax Tree (CST).
 2. Query: queries the CST with a CSS-like selector engine to find specific nodes.
-3. Mutate: applies `set`, `delete`, `insert`, `undo`, or `table` operations to the matched nodes.
+3. Mutate: applies `set`, `delete`, `insert`, or `undo` to the matched nodes.
 4. Serialize: converts the modified CST back into a `.lyx` file with lossless fidelity."#,
             },
             HelpSection {
@@ -565,8 +565,12 @@ A tracked plain `set` keeps the inline properties around the replaced text insid
                 body: "A tracked whole-layout `delete` follows the same per-position model as text: adjacent same-author deletions merge into one region, already-deleted content keeps its original author (never reattributed), and inline properties are folded inside the deleted region so rejecting the change restores the original formatting. A paragraph deleted through its last position ends inside the region with no trailing closer — the byte-exact form LyX itself writes. A layout with no trackable content (only font properties or an empty change region) is rejected — there is nothing for a marker to wrap, and LyX discards a change region without text on read; disable tracking to remove such a layout.",
             },
             HelpSection {
+                heading: "Table tracking",
+                body: r#"Tables keep two marks. Row and column structure uses the `change=` attribute on `<row>` / `<column>`. Cell prose uses ordinary `\change_*` inside the cell. Replay undo of the table reverts `change=`; replay of a cell layout reverts `\change_*`."#,
+            },
+            HelpSection {
                 heading: "Non-trackable surfaces",
-                body: r#"Change markers (`\change_*`) are only valid inside a layout's text. Inset metadata cannot carry those markers — a table's column alignment line, for example, is tabular XML, not a layout. Row and column structure tracking is a different surface: the `change=` attribute on `<row>` / `<column>`. Cell prose tracking is ordinary `\change_*` inside the cell. Replay undo of the table (catalog `at`, or `inset[Tabular]`) reverts `change=`; replay of a cell layout reverts `\change_*`. Snapshot restore reverts both.
+                body: r#"Change markers (`\change_*`) are only valid inside a layout's text. Inset metadata cannot carry those markers — a table's column alignment line, for example, is tabular XML, not a layout.
 
 With tracking on, a mutation targeting preamble lines, `#` comments, header text, or inset metadata is rejected; disable tracking for those surfaces or target a layout's text instead.
 
@@ -597,6 +601,10 @@ Property nodes are not trackable as standalone targets: LyX tracks changes on ch
             FurtherReading {
                 page: "commands/undo",
                 hint: "replay and snapshot restore",
+            },
+            FurtherReading {
+                page: "commands/table",
+                hint: "row and column commands",
             },
             FurtherReading {
                 page: "concepts/insets",
@@ -1108,7 +1116,7 @@ narrower selector or `--count` for large documents."#,
         sections: &[
             HelpSection {
                 heading: "Purpose",
-                body: "lq table - List tables as a catalog, or edit one table's numbers and size without recreating it. Creating a first draft is `insert --table`.",
+                body: "lq table - List tables as a catalog, or edit one table's numbers and size without recreating it.",
             },
             HelpSection {
                 heading: "Usage",
@@ -1117,33 +1125,20 @@ narrower selector or `--count` for large documents."#,
   lq table <file> <selector>           Catalog rows for tables that selector finds.
   lq table <file> [<n>|<selector>] set --data <text>
               Replace cell prose while keeping insets. A write wipes that
-              cell's properties, same as `lq set`. Unchanged prose is
-              skipped (no tracking mark). Empty fields of a merge must
-              stay empty.
+              cell's properties. Empty fields of a merge must stay empty.
   lq table <file> [<n>|<selector>] add-row [--index N] [--data <text>]
   lq table <file> [<n>|<selector>] add-column [--index N] [--data <text>]
-              Insert a blank row or column (`--data` optional; for a new
-              column, comma-separated fields, one per existing row). With
-              tracking on, the new row or column and `--data` are both
-              tracked; empty fields are not.
   lq table <file> [<n>|<selector>] delete-row --index N
   lq table <file> [<n>|<selector>] delete-column --index N
-              Refuse the last remaining row or column. An already-deleted
-              row or column warns and changes nothing. Replay `undo` of
-              the table (catalog `at`) reverts row/column change=: an
-              inserted row or column is dropped; a deleted row or column
-              is restored. Replay of a cell layout peels `--data` /
-              cell `set` and leaves the row/column mark. Snapshot restore
-              reverts both.
+              Deletion refuses the last remaining row or column.
 
-Omit n and selector when the file has exactly one table. A mutation still
-needs one table: several matches are a catalog slice, not a bulk edit."#,
+Omit n and selector when the file has exactly one table."#,
             },
             HelpSection {
                 heading: "Arguments",
                 body: r#"  <file>      The path to the .lyx file.
   <n>         File-order index of every Tabular, including unnumbered and
-              change-deleted tables — not the caption number (Table N).
+              change-deleted tables.
   <selector>  A CSS-like selector. A cell, caption, float, or host paragraph
               finds the table(s) it belongs to. Listing keeps every match; a
               mutation needs exactly one table. Such a selector can be found
@@ -1153,8 +1148,7 @@ needs one table: several matches are a catalog slice, not a bulk edit."#,
               quote; `""` inside quotes is a literal quote. Not a file path,
               and not tab- or semicolon-separated.
   --index     On add-row / add-column, the new row or column becomes N
-              (omit = append; `--index 1` prepends). On delete-row /
-              delete-column, required: N is the row or column to remove."#,
+              (omit = append; `--index 1` prepends)."#,
             },
             HelpSection {
                 heading: "Catalog",
@@ -1162,10 +1156,7 @@ needs one table: several matches are a catalog slice, not a bulk edit."#,
 `n`, `kind` (float / inline / longtable), `at`, `caption`, `label`, `region`
 (current / inserted / deleted), and `data` (the physical rectangle of prose).
 Optional `merges` lists each merged range from its top-left cell;
-the other cells of the merge are empty fields in `data`. A pick (`n` or a unique selector)
-is a one-row slice of the same shape. `data` omits insets (a formula-only cell
-is an empty field). `set --data` expects that rectangle.
-
+the other cells of the merge are empty fields in `data`.
 `kind` is longtable when the Tabular has islongtable=true; else float when an
 ancestor is a table float; else inline. Caption and label come from the table
 float, or from a longtable's Caption Standard cell (not Caption Unnumbered)."#,
@@ -1360,29 +1351,24 @@ With tracking on, editing inset metadata is rejected."#,
                                          tracked-change blocks made by the current author
                                          as the direct children of the matched block nodes;
                                          with <substring>, only blocks whose text contains it.
-                                         A table (`inset[Tabular]` or catalog `at`) reverts
-                                         that author's row/column change= instead: inserted
-                                         rows or columns are dropped, deleted rows or
-                                         columns are restored.
-                                         A substring on a table must name one axis (row or
-                                         column) or nothing is reverted. The last remaining
-                                         row or column is skipped. Can be reverted by
-                                         snapshot restore."#,
+                                         This can be applied to tables. With substring,
+                                         it reverts the row or column uniquely identified
+                                         by the substring, or nothing if ambiguous.
+                                         The last remaining row or column is skipped.
+                                         Can be reverted by snapshot restore."#,
             },
             HelpSection {
                 heading: "Arguments",
                 body: r#"  <file>       The path to the .lyx file.
   <selector>   A CSS-like selector.
   <substring>  Text inside the change_deleted or change_inserted block to revert,
-               or catalog prose of a marked table row or column."#,
+               or prose of a tracked table row or column."#,
             },
             HelpSection {
                 heading: "Replay targets block nodes",
                 body: r#"Replay undo targets block nodes: a selector that matches only text or property
 nodes, or a block whose changes sit inside a nested inset, produces a
-warning and reverts nothing. `inset[Tabular]` (and the catalog `at` selector)
-is a block: it reverts change= on rows and columns. A cell layout inside
-the table still reverts only cell text markers."#,
+warning and reverts nothing."#,
             },
         ],
         further_reading: &[
