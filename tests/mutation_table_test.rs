@@ -223,6 +223,30 @@ fn wrap_tabular(inner: &str) -> String {
     )
 }
 
+fn figure_hosted_table() -> String {
+    format!(
+        "\\begin_layout Standard\n\
+         \\begin_inset Float figure\n\
+         placement document\n\
+         alignment document\n\
+         wide false\n\
+         sideways false\n\
+         status open\n\
+         \n\
+         \\begin_layout Plain Layout\n\
+         \\begin_inset Tabular\n\
+         {}\
+         \\end_inset\n\
+         \n\
+         \\end_layout\n\
+         \n\
+         \\end_inset\n\
+         \n\
+         \\end_layout\n",
+        one_cell_tabular("in-figure")
+    )
+}
+
 fn ab_cd_table() -> String {
     wrap_tabular(&format!(
         "<lyxtabular version=\"3\" rows=\"2\" columns=\"2\">\n\
@@ -824,6 +848,15 @@ fn longtable_reports_caption_not_unnumbered() {
 }
 
 #[test]
+fn catalog_figure_hosted_tabular_is_inline() {
+    let env = MutationSession::new();
+    let file = env.write_lyx("t.lyx", &figure_hosted_table(), HEADER);
+    let cat = env.run(&["table", path_arg(&file)]);
+    assert_eq!(cat["tables"][0]["kind"], json!("inline"));
+    assert_eq!(cat["tables"][0]["data"], json!("in-figure"));
+}
+
+#[test]
 fn add_row_and_delete_row() {
     let env = MutationSession::new();
     let file = env.write_lyx("t.lyx", PARA, HEADER);
@@ -852,6 +885,58 @@ fn add_row_and_delete_row() {
     env.run(&["table", path_arg(&file), "1", "delete-row", "--index", "2"]);
     let cat = env.run(&["table", path_arg(&file), "1"]);
     assert_eq!(cat["tables"][0]["data"], json!("A,B\nE,F"));
+}
+
+#[test]
+fn add_row_index_1_prepends() {
+    let env = MutationSession::new();
+    let file = env.write_lyx("t.lyx", PARA, HEADER);
+    env.run(&[
+        "insert",
+        path_arg(&file),
+        "layout[Standard]:last",
+        "after",
+        "--table",
+        "A,B\nC,D",
+    ]);
+    env.run(&[
+        "table",
+        path_arg(&file),
+        "1",
+        "add-row",
+        "--index",
+        "1",
+        "--data",
+        "E,F",
+    ]);
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("E,F\nA,B\nC,D"));
+}
+
+#[test]
+fn add_column_index_1_prepends() {
+    let env = MutationSession::new();
+    let file = env.write_lyx("t.lyx", PARA, HEADER);
+    env.run(&[
+        "insert",
+        path_arg(&file),
+        "layout[Standard]:last",
+        "after",
+        "--table",
+        "A,B\nC,D",
+    ]);
+    env.run(&[
+        "table",
+        path_arg(&file),
+        "1",
+        "add-column",
+        "--index",
+        "1",
+        "--data",
+        "x,y",
+    ]);
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("x,A,B\ny,C,D"));
 }
 
 #[test]
@@ -909,6 +994,20 @@ fn add_row_data_empty_field_stays_unmarked() {
     let text = read_file(&file);
     assert!(text.contains("change=\"inserted"), "{text}");
     assert!(cell_is_insert_only(&text, "E"), "{text}");
+    assert!(
+        has_unmarked_empty_cell(&text),
+        "empty --data field must stay unmarked: {text}"
+    );
+}
+
+#[test]
+fn add_column_data_empty_field_stays_unmarked() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-column", "--data", "x,"]);
+    let text = read_file(&file);
+    assert!(text.contains("change=\"inserted"), "{text}");
+    assert!(cell_is_insert_only(&text, "x"), "{text}");
     assert!(
         has_unmarked_empty_cell(&text),
         "empty --data field must stay unmarked: {text}"

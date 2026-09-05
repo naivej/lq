@@ -449,7 +449,7 @@ pub fn extract_all_text(doc: &Document, node: NodeId, max_len: usize, in_marker:
 }
 
 /// True when a text node is a Tabular `<row>` / `<column>` line with `change=`.
-pub fn is_tabular_line_change_text(text: &str) -> bool {
+pub(crate) fn is_tabular_line_change_text(text: &str) -> bool {
     text.lines().any(|line| {
         let t = line.trim_start();
         (t.starts_with("<row") || t.starts_with("<column")) && t.contains("change=\"")

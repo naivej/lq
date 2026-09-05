@@ -11,7 +11,7 @@ use crate::tracked_changes::{
 use serde::Serialize;
 use std::collections::HashMap;
 
-pub const OPS: &[&str] = &[
+pub(crate) const OPS: &[&str] = &[
     "set",
     "add-row",
     "add-column",
@@ -20,7 +20,7 @@ pub const OPS: &[&str] = &[
 ];
 
 #[derive(Debug)]
-pub struct TableError {
+pub(crate) struct TableError {
     pub code: &'static str,
     pub message: String,
     pub rows: Option<usize>,
@@ -28,7 +28,7 @@ pub struct TableError {
 }
 
 impl TableError {
-    pub fn new(code: &'static str, message: impl Into<String>) -> Self {
+    pub(crate) fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self {
             code,
             message: message.into(),
@@ -37,7 +37,7 @@ impl TableError {
         }
     }
 
-    pub fn with_size(mut self, rows: usize, columns: usize) -> Self {
+    pub(crate) fn with_size(mut self, rows: usize, columns: usize) -> Self {
         self.rows = Some(rows);
         self.columns = Some(columns);
         self
@@ -45,7 +45,7 @@ impl TableError {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct Merge {
+pub(crate) struct Merge {
     pub r: usize,
     pub c: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -55,7 +55,7 @@ pub struct Merge {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct CatalogRow {
+pub(crate) struct CatalogRow {
     pub n: usize,
     pub kind: String,
     pub at: String,
@@ -101,11 +101,11 @@ enum RowSpan {
     Part,
 }
 
-pub fn is_op(token: &str) -> bool {
+pub(crate) fn is_op(token: &str) -> bool {
     OPS.contains(&token)
 }
 
-pub fn parse_index_token(token: &str) -> Option<usize> {
+pub(crate) fn parse_index_token(token: &str) -> Option<usize> {
     if token.is_empty() || !token.bytes().all(|b| b.is_ascii_digit()) {
         return None;
     }
@@ -113,7 +113,7 @@ pub fn parse_index_token(token: &str) -> Option<usize> {
 }
 
 /// Parse `--table` / `--data` text. Empty string is `MISSING_CONTENT`.
-pub fn parse_rect(input: &str) -> Result<Vec<Vec<String>>, TableError> {
+pub(crate) fn parse_rect(input: &str) -> Result<Vec<Vec<String>>, TableError> {
     if input.is_empty() {
         return Err(TableError::new(
             "MISSING_CONTENT",
@@ -153,7 +153,7 @@ pub fn parse_rect(input: &str) -> Result<Vec<Vec<String>>, TableError> {
     Ok(rows)
 }
 
-pub fn serialize_rect(rows: &[Vec<String>]) -> String {
+pub(crate) fn serialize_rect(rows: &[Vec<String>]) -> String {
     rows.iter()
         .map(|row| {
             row.iter()
@@ -208,11 +208,11 @@ fn parse_csv_line(line: &str) -> Result<Vec<String>, TableError> {
     Ok(fields)
 }
 
-pub fn list_tabulars(doc: &Document) -> Vec<NodeId> {
+pub(crate) fn list_tabulars(doc: &Document) -> Vec<NodeId> {
     query(doc, "inset[Tabular]").unwrap_or_default()
 }
 
-pub fn catalog_of(
+pub(crate) fn catalog_of(
     doc: &Document,
     tabulars: &[NodeId],
     traversal: &HashMap<NodeId, TraversalState>,
@@ -246,7 +246,7 @@ pub fn catalog_of(
     Ok((rows, warnings))
 }
 
-pub fn pick_by_n(doc: &Document, n: usize) -> Result<NodeId, TableError> {
+pub(crate) fn pick_by_n(doc: &Document, n: usize) -> Result<NodeId, TableError> {
     let ids = list_tabulars(doc);
     if n == 0 || n > ids.len() {
         return Err(TableError::new(
@@ -257,7 +257,7 @@ pub fn pick_by_n(doc: &Document, n: usize) -> Result<NodeId, TableError> {
     Ok(ids[n - 1])
 }
 
-pub fn resolve_to_tables(doc: &Document, nodes: &[NodeId]) -> Vec<NodeId> {
+pub(crate) fn resolve_to_tables(doc: &Document, nodes: &[NodeId]) -> Vec<NodeId> {
     let parents = parent_map(doc);
     let mut out = Vec::new();
     let mut seen = std::collections::HashSet::new();
@@ -576,7 +576,7 @@ fn parent_map(doc: &Document) -> HashMap<NodeId, NodeId> {
     map
 }
 
-pub fn is_tabular(doc: &Document, id: NodeId) -> bool {
+pub(crate) fn is_tabular(doc: &Document, id: NodeId) -> bool {
     matches!(
         inset_args(doc, id),
         Some(a) if a == "Tabular" || a.starts_with("Tabular ")
@@ -1197,12 +1197,12 @@ fn apply_line_to_row(
     Ok(())
 }
 
-pub struct SetResult {
+pub(crate) struct SetResult {
     pub rows: usize,
     pub columns: usize,
 }
 
-pub fn set_table_data(
+pub(crate) fn set_table_data(
     doc: &mut Document,
     tabular: NodeId,
     data: &str,
@@ -1262,7 +1262,7 @@ fn parse_change_attr(open: &str) -> Option<(String, i32)> {
     Some((kind, aid))
 }
 
-pub struct LineOpResult {
+pub(crate) struct LineOpResult {
     pub rows: usize,
     pub columns: usize,
     pub index: usize,
@@ -1270,7 +1270,7 @@ pub struct LineOpResult {
     pub pending: bool,
 }
 
-pub fn add_row(
+pub(crate) fn add_row(
     doc: &mut Document,
     tabular: NodeId,
     index: Option<usize>,
@@ -1369,7 +1369,7 @@ fn parse_rect_line(data: &str, expect: usize) -> Result<Vec<String>, TableError>
     Ok(rect[0].clone())
 }
 
-pub fn add_column(
+pub(crate) fn add_column(
     doc: &mut Document,
     tabular: NodeId,
     index: Option<usize>,
@@ -1471,7 +1471,7 @@ pub fn add_column(
     })
 }
 
-pub fn delete_row(
+pub(crate) fn delete_row(
     doc: &mut Document,
     tabular: NodeId,
     index: usize,
@@ -1539,7 +1539,7 @@ pub fn delete_row(
     })
 }
 
-pub fn delete_column(
+pub(crate) fn delete_column(
     doc: &mut Document,
     tabular: NodeId,
     index: usize,
@@ -1611,7 +1611,7 @@ pub fn delete_column(
 
 /// Outcome of replaying `change=` on a Tabular (reject for this author).
 #[derive(Debug, Default)]
-pub struct LineReplayOutcome {
+pub(crate) struct LineReplayOutcome {
     pub labels: Vec<String>,
     pub mixed_axis: bool,
     pub last_line_skipped: bool,
@@ -1635,7 +1635,7 @@ struct LineTarget {
 
 /// Revert this author's row/column `change=` on `tabular`. Never errors: a last-line
 /// drop is skipped (LyX no-op). Substring on both axes reverts nothing (JC1-A).
-pub fn replay_table_lines(
+pub(crate) fn replay_table_lines(
     doc: &mut Document,
     tabular: NodeId,
     author_id: i32,
@@ -1687,7 +1687,7 @@ pub fn replay_table_lines(
     out
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)] // parsed mark + axis/index + substring + two output buckets
 fn collect_line_target(
     parsed: Option<(String, i32)>,
     prose: String,
@@ -1798,7 +1798,7 @@ fn unmark_line(doc: &mut Document, tabular: NodeId, axis: LineAxis, index: usize
 }
 
 /// New Standard layout whose content is a table float with an empty caption (JC1-A).
-pub fn build_create_layout(doc: &mut Document, rect: &[Vec<String>]) -> NodeId {
+pub(crate) fn build_create_layout(doc: &mut Document, rect: &[Vec<String>]) -> NodeId {
     let layout = alloc_block(doc, "layout", Some("Standard"));
     let float = alloc_block(doc, "inset", Some("Float table"));
     let mut float_kids = vec![
@@ -1866,7 +1866,7 @@ fn build_tabular_inset(doc: &mut Document, rect: &[Vec<String>]) -> NodeId {
     tabular
 }
 
-pub fn is_document_layout_target(doc: &Document, node: NodeId) -> bool {
+pub(crate) fn is_document_layout_target(doc: &Document, node: NodeId) -> bool {
     if !is_layout(doc, node) {
         return false;
     }

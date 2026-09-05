@@ -1116,22 +1116,24 @@ narrower selector or `--count` for large documents."#,
   lq table <file> <n>                  The catalog row whose index is n.
   lq table <file> <selector>           Catalog rows for tables that selector finds.
   lq table <file> [<n>|<selector>] set --data <text>
-              Replace prose and properties in every cell while keeping insets.
-              Unchanged prose is skipped (no tracking mark). Empty
-              fields of a merge must stay empty.
+              Replace cell prose while keeping insets. A write wipes that
+              cell's properties, same as `lq set`. Unchanged prose is
+              skipped (no tracking mark). Empty fields of a merge must
+              stay empty.
   lq table <file> [<n>|<selector>] add-row [--index N] [--data <text>]
   lq table <file> [<n>|<selector>] add-column [--index N] [--data <text>]
-              Insert a blank line (`--data` optional; for a new column, one
-              comma-separated line with one field per row). With tracking on,
-              the new row or column and `--data` are both tracked; empty
-              fields are not.
+              Insert a blank row or column (`--data` optional; for a new
+              column, comma-separated fields, one per existing row). With
+              tracking on, the new row or column and `--data` are both
+              tracked; empty fields are not.
   lq table <file> [<n>|<selector>] delete-row --index N
   lq table <file> [<n>|<selector>] delete-column --index N
-              Refuse the last line. An already-deleted line warns and changes
-              nothing. Replay `undo` of the table (catalog `at`) reverts
-              row/column change=: an inserted line is dropped; a deleted
-              line is restored. Replay of a cell layout peels `--data` /
-              cell `set` and leaves the line mark. Snapshot restore
+              Refuse the last remaining row or column. An already-deleted
+              row or column warns and changes nothing. Replay `undo` of
+              the table (catalog `at`) reverts row/column change=: an
+              inserted row or column is dropped; a deleted row or column
+              is restored. Replay of a cell layout peels `--data` /
+              cell `set` and leaves the row/column mark. Snapshot restore
               reverts both.
 
 Omit n and selector when the file has exactly one table. A mutation still
@@ -1150,8 +1152,9 @@ needs one table: several matches are a catalog slice, not a bulk edit."#,
               row per line. Quotes wrap a field that contains a comma or a
               quote; `""` inside quotes is a literal quote. Not a file path,
               and not tab- or semicolon-separated.
-  --index     On add-row / add-column, the new line becomes N (omit = append;
-              `--index 1` prepends)."#,
+  --index     On add-row / add-column, the new row or column becomes N
+              (omit = append; `--index 1` prepends). On delete-row /
+              delete-column, required: N is the row or column to remove."#,
             },
             HelpSection {
                 heading: "Catalog",
@@ -1359,7 +1362,8 @@ With tracking on, editing inset metadata is rejected."#,
                                          with <substring>, only blocks whose text contains it.
                                          A table (`inset[Tabular]` or catalog `at`) reverts
                                          that author's row/column change= instead: inserted
-                                         lines are dropped, deleted lines are restored.
+                                         rows or columns are dropped, deleted rows or
+                                         columns are restored.
                                          A substring on a table must name one axis (row or
                                          column) or nothing is reverted. The last remaining
                                          row or column is skipped. Can be reverted by
