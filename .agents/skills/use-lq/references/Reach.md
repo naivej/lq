@@ -13,7 +13,7 @@ How far a mutation reaches. Ask four separate questions before an operation — 
 - `set --find` crosses ordinary text-node boundaries but not inset boundaries, and does not edit nested inset prose. When `--find` reports a phrase that spans an inset, use a full `set` on the containing block (insets preserved as current content) or break it into per-node operations.
 - `insert split-after` reaches nested prose where supported, never inset metadata.
 - `delete` removes a selected structural subtree; tracked deletion has atomic-inset restrictions.
-- `lq undo <file>` restores the last snapshot by saved paths; selector replay scans only direct children of matched blocks.
+- `lq undo <file>` restores the last snapshot by saved paths; selector replay scans only direct children of matched blocks. A Tabular match reverts row/column `change=`; a cell layout match reverts `\change_*`.
 - `table` mutations (`set`, `add-row`, `add-column`, `delete-row`, `delete-column`) need exactly one table. Several matches only list; they do not edit every table. See `lq help mutations` and `lq help table`.
 
 ## Selection scale

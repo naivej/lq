@@ -7,6 +7,7 @@ use super::mutate::{
 use crate::ast::{Document, NodeId, NodeKind};
 use crate::cache::{hash_file, hash_text, node_to_json, set_cached_ast};
 use crate::serializer::serialize;
+use crate::table::{is_tabular, replay_table_lines};
 use crate::tracked_changes::{
     get_header, has_direct_tracked_changes, has_tracked_changes, is_change_opener,
     parse_change_marker, resolve_author_id, scan_region_end,
@@ -49,12 +50,27 @@ pub fn run_undo(
     let mut any_contains_other = false;
     let mut undone_labels: Vec<String> = Vec::new();
     let mut nodes_with_reverts = 0usize;
+    let mut mixed_axis = false;
+    let mut last_line_skipped = false;
+    let mut skipped_last_row = false;
+    let mut skipped_last_column = false;
 
     for &node in nodes {
         if !matches!(doc.node(node).kind, NodeKind::Block { .. }) {
             continue;
         }
         let mut node_undone = 0usize;
+        if is_tabular(doc, node) {
+            let line = replay_table_lines(doc, node, undo_author_id, substring.as_deref());
+            mixed_axis |= line.mixed_axis;
+            last_line_skipped |= line.last_line_skipped;
+            skipped_last_row |= line.skipped_last_row;
+            skipped_last_column |= line.skipped_last_column;
+            any_contains_other |= line.other_author_substring;
+            node_undone += line.labels.len();
+            undone_count += line.labels.len();
+            undone_labels.extend(line.labels);
+        }
         let mut new_children: Vec<NodeId> = Vec::new();
         let children = doc.node(node).children.clone();
         let mut i = 0;
@@ -152,8 +168,25 @@ pub fn run_undo(
         .iter()
         .map(|l| json!({ "label": l }))
         .collect();
+    if mixed_axis {
+        let sub = substring.as_deref().unwrap_or("");
+        push_warning(format!(
+            "Substring '{sub}' appears on both a marked row and a marked column. Replay of a table needs a substring that sits on only one of those, or omit the substring to revert every line of this author."
+        ));
+    }
+    if last_line_skipped {
+        let what = match (skipped_last_row, skipped_last_column) {
+            (true, true) => "row and column",
+            (true, false) => "row",
+            _ => "column",
+        };
+        push_warning(format!(
+            "The last remaining {what} of a table was left as it is (LyX keeps at least one). Its mark stays."
+        ));
+    }
     if let Some(ref sub) = substring
         && undone_count == 0
+        && !mixed_axis
     {
         if any_contains_other {
             push_warning(format!(
@@ -167,7 +200,7 @@ pub fn run_undo(
             ));
         }
     }
-    if substring.is_none() && undone_count == 0 {
+    if substring.is_none() && undone_count == 0 && !last_line_skipped {
         let has_block = nodes
             .iter()
             .any(|&n| matches!(doc.node(n).kind, NodeKind::Block { .. }));
@@ -319,7 +352,9 @@ fn snapshot_undo(doc: &mut Document, env: &MutationEnv<'_>) -> Result<(), CliErr
             "{snapshot_failure} Possibly because a previous 'undo' already consumed the snapshot \
 (snapshot restore is 1-level) or because the file was changed externally. \
 To replay tracked changes, provide a selector: \
-'lq undo <file> <selector> [<substring>]'. Replay does not restore a paired set edit as one unit."
+'lq undo <file> <selector> [<substring>]'. \
+For a table row or column mark, use the catalog at selector (or inset[Tabular]). \
+Replay does not restore a paired set edit as one unit."
         ),
     ))
 }

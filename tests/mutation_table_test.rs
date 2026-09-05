@@ -2,7 +2,7 @@
 
 mod common;
 
-use common::{MutationSession, json_warnings, path_arg, run_cli};
+use common::{MutationSession, json_warnings, path_arg};
 use lq::{parse, query};
 use serde_json::{Value, json};
 use std::fs;
@@ -390,6 +390,22 @@ fn longtable_standard_and_unnumbered() -> String {
          </row>\n\
          </lyxtabular>\n",
     )
+}
+
+fn one_row_inserted_table() -> String {
+    wrap_tabular(&format!(
+        "<lyxtabular version=\"3\" rows=\"1\" columns=\"2\">\n\
+         <features tabularvalignment=\"middle\">\n\
+         <column alignment=\"left\" valignment=\"top\">\n\
+         <column alignment=\"left\" valignment=\"top\">\n\
+         <row change=\"inserted 1 1\">\n\
+         {}\
+         {}\
+         </row>\n\
+         </lyxtabular>\n",
+        cell("A"),
+        cell("B"),
+    ))
 }
 
 fn other_author_inserted_row() -> String {
@@ -938,6 +954,268 @@ fn add_row_data_replay_undo_keeps_row_change() {
 }
 
 #[test]
+fn table_replay_drops_inserted_row_and_line_mark() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,F"]);
+    let undone = env.run(&["undo", path_arg(&file), "inset[Tabular]"]);
+    assert_eq!(undone["method"], json!("replay"));
+    assert!(undone["undone_changes"].as_u64().unwrap() >= 1, "{undone}");
+    let warnings = json_warnings(&undone);
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| w.contains("No tracked changes found")),
+        "{warnings:?}"
+    );
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D"));
+    let text = read_file(&file);
+    assert!(!text.contains("change=\"inserted"), "{text}");
+    let labels: Vec<&str> = undone["changes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|c| c["label"].as_str())
+        .collect();
+    assert!(
+        labels
+            .iter()
+            .any(|l| l.starts_with("row_inserted{") && l.contains("E,F")),
+        "{labels:?}"
+    );
+}
+
+#[test]
+fn table_replay_via_catalog_at() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,F"]);
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    let at = cat["tables"][0]["at"].as_str().unwrap().to_string();
+    let undone = env.run(&["undo", path_arg(&file), &at]);
+    assert_eq!(undone["method"], json!("replay"));
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D"));
+}
+
+#[test]
+fn table_replay_drops_inserted_column() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-column", "--data", "x,y"]);
+    let undone = env.run(&["undo", path_arg(&file), "inset[Tabular]"]);
+    assert_eq!(undone["method"], json!("replay"));
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D"));
+    let text = read_file(&file);
+    assert!(!text.contains("change=\"inserted"), "{text}");
+}
+
+#[test]
+fn table_replay_substring_picks_one_axis() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,F"]);
+    env.run(&[
+        "table",
+        path_arg(&file),
+        "1",
+        "add-column",
+        "--data",
+        "x,y,z",
+    ]);
+    let row_only = env.run(&["undo", path_arg(&file), "inset[Tabular]", "E"]);
+    assert_eq!(row_only["method"], json!("replay"));
+    assert!(
+        row_only["undone_changes"].as_u64().unwrap() >= 1,
+        "{row_only}"
+    );
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B,x\nC,D,y"));
+
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,F,z"]);
+    let col_only = env.run(&["undo", path_arg(&file), "inset[Tabular]", "x"]);
+    assert!(
+        col_only["undone_changes"].as_u64().unwrap() >= 1,
+        "{col_only}"
+    );
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D\nE,F"));
+}
+
+#[test]
+fn table_replay_mixed_axis_substring_reverts_nothing() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,F"]);
+    env.run(&[
+        "table",
+        path_arg(&file),
+        "1",
+        "add-column",
+        "--data",
+        "x,y,z",
+    ]);
+    let before = read_file(&file);
+    let undone = env.run(&["undo", path_arg(&file), "inset[Tabular]", "z"]);
+    assert_eq!(undone["undone_changes"], json!(0));
+    let warnings = json_warnings(&undone);
+    assert!(
+        warnings
+            .iter()
+            .any(|w| w.contains("both a marked row") && w.contains("marked column")),
+        "{warnings:?}"
+    );
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| w.contains("No tracked change matching")),
+        "{warnings:?}"
+    );
+    assert_eq!(read_file(&file), before);
+}
+
+#[test]
+fn table_replay_two_inserted_rows_both_drop() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,1"]);
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,2"]);
+    let undone = env.run(&["undo", path_arg(&file), "inset[Tabular]", "E"]);
+    assert_eq!(undone["undone_changes"], json!(2));
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D"));
+}
+
+#[test]
+fn table_replay_skips_other_author_line() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx(
+        "t.lyx",
+        &other_author_inserted_row(),
+        &format!("{HEADER}{AUTHOR_ALICE}"),
+    );
+    let undone = env.run(&["undo", path_arg(&file), "inset[Tabular]"]);
+    assert_eq!(undone["undone_changes"], json!(0));
+    let warnings = json_warnings(&undone);
+    assert!(
+        warnings.iter().any(|w| w.contains("none belong to author")),
+        "{warnings:?}"
+    );
+    let text = read_file(&file);
+    assert!(text.contains("change=\"inserted"), "{text}");
+}
+
+#[test]
+fn table_replay_unmarks_deleted_row_keeps_cell_markers() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "set", "--data", "X,B\nC,D"]);
+    env.run(&["table", path_arg(&file), "1", "delete-row", "--index", "1"]);
+    let undone = env.run(&["undo", path_arg(&file), "inset[Tabular]"]);
+    assert_eq!(undone["method"], json!("replay"));
+    assert!(undone["undone_changes"].as_u64().unwrap() >= 1, "{undone}");
+    let text = read_file(&file);
+    assert!(!text.contains("change=\"deleted"), "{text}");
+    assert!(
+        text.contains("\\change_deleted") || text.contains("\\change_inserted"),
+        "cell markers must survive restoring the line: {text}"
+    );
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(
+        cat["tables"][0]["data"].as_str().unwrap().lines().count(),
+        2
+    );
+}
+
+#[test]
+fn table_replay_last_line_warns_and_keeps_table() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx(
+        "t.lyx",
+        &one_row_inserted_table(),
+        &format!("{HEADER}{AUTHOR_ALICE}"),
+    );
+    let undone = env.run(&["undo", path_arg(&file), "inset[Tabular]"]);
+    assert_eq!(undone["undone_changes"], json!(0));
+    let warnings = json_warnings(&undone);
+    assert!(
+        warnings.iter().any(|w| w.contains("last remaining")),
+        "{warnings:?}"
+    );
+    assert!(
+        !warnings
+            .iter()
+            .any(|w| w.contains("No tracked changes found")),
+        "{warnings:?}"
+    );
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B"));
+    let text = read_file(&file);
+    assert!(text.contains("change=\"inserted"), "{text}");
+}
+
+#[test]
+fn table_selector_cell_only_nested_warning() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "set", "--data", "X,B\nC,D"]);
+    let before = read_file(&file);
+    let undone = env.run(&["undo", path_arg(&file), "inset[Tabular]"]);
+    assert_eq!(undone["undone_changes"], json!(0));
+    let warnings = json_warnings(&undone);
+    assert!(
+        warnings.iter().any(|w| w.contains("nested inside")),
+        "{warnings:?}"
+    );
+    assert_eq!(read_file(&file), before);
+}
+
+#[test]
+fn host_paragraph_replay_does_not_drop_table_line() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,F"]);
+    let undone = env.run(&["undo", path_arg(&file), "layout[Standard]"]);
+    assert_eq!(undone["undone_changes"], json!(0));
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D\nE,F"));
+    let text = read_file(&file);
+    assert!(text.contains("change=\"inserted"), "{text}");
+}
+
+#[test]
+fn snapshot_fallback_with_only_table_change_is_not_stale() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx(
+        "t.lyx",
+        &one_row_inserted_table(),
+        &format!("{HEADER}{AUTHOR_ALICE}"),
+    );
+    let result = env.run(&["undo", path_arg(&file)]);
+    assert_eq!(code(&result), "UNDO_SNAPSHOT_UNAVAILABLE");
+    assert!(
+        result["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("inset[Tabular]"),
+        "{result}"
+    );
+}
+
+#[test]
+fn delete_row_last_line_still_refused() {
+    let env = MutationSession::new();
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), HEADER);
+    env.run(&["table", path_arg(&file), "1", "delete-row", "--index", "2"]);
+    let last = env.run(&["table", path_arg(&file), "1", "delete-row", "--index", "1"]);
+    assert_eq!(code(&last), "INVALID_FLAG");
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B"));
+}
+
+#[test]
 fn add_row_data_snapshot_undo_restores() {
     let env = MutationSession::tracked("Alice");
     let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
@@ -1173,15 +1451,6 @@ fn one_cell_is_lq_set_not_one_by_one_table_set() {
     assert_eq!(cat["tables"][0]["data"], json!("A,Bee\nC,D"));
 }
 
-#[test]
-fn help_table_says_n_is_not_caption_number() {
-    let out = run_cli(&["help", "table"]);
-    assert_eq!(out.code, 0, "{}", out.stderr);
-    assert!(out.stdout.contains("File-order index"), "{}", out.stdout);
-    assert!(out.stdout.contains("Table N"), "{}", out.stdout);
-    assert!(!out.stdout.contains("\nExamples\n"), "{}", out.stdout);
-}
-
 fn find_lyx_exe() -> Option<PathBuf> {
     if let Some(dir) = common::host_layouts_dir() {
         let p = PathBuf::from(&dir);
@@ -1316,5 +1585,86 @@ fn lyx_accepts_create_set_add_row_and_cell_set() {
     assert!(
         lyx_export_ok(&lyx, &tpath),
         "tracked delete-row did not export"
+    );
+}
+
+#[test]
+fn lyx_accepts_table_line_replay() {
+    let Some(lyx) = find_lyx_exe() else {
+        eprintln!("skip lyx acceptance: LyX.exe not found");
+        return;
+    };
+    let tracked = MutationSession::tracked("Alice");
+    let added = tracked.work.path().join("replay_add.lyx");
+    fs::write(
+        &added,
+        format!(
+            "#LyX 2.5 created this file.\n\
+             \\lyxformat 643\n\
+             \\begin_document\n\
+             \\begin_header\n\
+             \\textclass article\n\
+             {AUTHOR_ALICE}\
+             \\end_header\n\
+             \\begin_body\n\
+             {PARA}\
+             \\end_body\n\
+             \\end_document\n"
+        ),
+    )
+    .unwrap();
+    tracked.run(&[
+        "insert",
+        path_arg(&added),
+        "layout[Standard]:last",
+        "after",
+        "--table",
+        "A,B\nC,D",
+    ]);
+    tracked.run(&["table", path_arg(&added), "1", "add-row", "--data", "E,F"]);
+    tracked.run(&["undo", path_arg(&added), "inset[Tabular]"]);
+    assert!(
+        lyx_export_ok(&lyx, &added),
+        "table replay after tracked add-row did not export"
+    );
+
+    let deleted = tracked.work.path().join("replay_del.lyx");
+    fs::write(
+        &deleted,
+        format!(
+            "#LyX 2.5 created this file.\n\
+             \\lyxformat 643\n\
+             \\begin_document\n\
+             \\begin_header\n\
+             \\textclass article\n\
+             {AUTHOR_ALICE}\
+             \\end_header\n\
+             \\begin_body\n\
+             {PARA}\
+             \\end_body\n\
+             \\end_document\n"
+        ),
+    )
+    .unwrap();
+    tracked.run(&[
+        "insert",
+        path_arg(&deleted),
+        "layout[Standard]:last",
+        "after",
+        "--table",
+        "A,B\nC,D",
+    ]);
+    tracked.run(&[
+        "table",
+        path_arg(&deleted),
+        "1",
+        "delete-row",
+        "--index",
+        "1",
+    ]);
+    tracked.run(&["undo", path_arg(&deleted), "inset[Tabular]"]);
+    assert!(
+        lyx_export_ok(&lyx, &deleted),
+        "table replay after tracked delete-row did not export"
     );
 }

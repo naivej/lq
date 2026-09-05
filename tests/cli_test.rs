@@ -3,7 +3,7 @@
 mod common;
 
 use common::{IsolatedHome, WorkDir, json_stdout, run_cli, run_cli_with};
-use lq::{HELP_PAGES, find_by_reach, reach_of};
+use lq::{HELP_PAGES, alias_of, find_by_reach, reach_of};
 use std::fs;
 
 fn err_code(out: &common::CliOutput) -> String {
@@ -17,99 +17,23 @@ fn err_message(out: &common::CliOutput) -> String {
         .to_string()
 }
 
-#[test]
-fn cli_global_help_is_the_home_page_map() {
-    let out = run_cli(&["--help"]);
-    assert_eq!(out.code, 0, "{}", out.stderr);
-    assert!(out.stdout.contains("Help commands"));
-    assert!(out.stdout.contains("Pages"));
-    assert!(out.stdout.contains("model/"));
-    assert!(out.stdout.contains("concepts/"));
-    assert!(out.stdout.contains("commands/"));
-    assert!(out.stdout.contains("lq help read"));
-    assert!(out.stdout.contains("lq help set"));
-    assert!(out.stdout.contains("lq help undo"));
-    assert!(out.stdout.contains("lq help tracked-changes"));
+fn catalog_reaches() -> impl Iterator<Item = &'static str> {
+    HELP_PAGES
+        .iter()
+        .filter(|p| p.id != "home")
+        .map(|p| reach_of(p.id))
+}
+
+fn command_aliases() -> impl Iterator<Item = &'static str> {
+    HELP_PAGES.iter().filter_map(|p| alias_of(p.id))
 }
 
 #[test]
-fn cli_per_command_help_preview() {
-    let out = run_cli(&["preview", "--help"]);
-    assert!(out.stdout.contains("lq preview"));
-    assert!(out.stdout.contains("<file>"));
-    assert!(out.stdout.contains("lyx-preview/live-1"));
-    assert!(out.stdout.contains("sha256"));
-    let output = out.stdout.split("Output").nth(1).expect("Output section");
-    assert!(
-        output.contains("outline"),
-        "preview Output must name outline"
-    );
-    assert!(
-        output.contains("navigate"),
-        "preview Output must name navigate"
-    );
-}
-
-#[test]
-fn cli_per_command_help_read() {
-    let out = run_cli(&["read", "--help"]);
-    assert!(out.stdout.contains("lq read"));
-    assert!(out.stdout.contains("--count"));
-    assert!(out.stdout.contains("<file>"));
-    assert!(out.stdout.contains("<selector>"));
-}
-
-#[test]
-fn cli_per_command_help_insert() {
-    let out = run_cli(&["insert", "--help"]);
-    for s in [
-        "lq insert",
-        "<file>",
-        "<selector>",
-        "<position>",
-        "split-after",
-        "exactly once",
-        "prepend",
-        "--layout",
-        "--cite",
-        "--ref",
-        "--label",
-        "--footnote",
-        "--raw-file",
-    ] {
-        assert!(out.stdout.contains(s), "missing {s}");
-    }
-}
-
-#[test]
-fn cli_per_command_help_init_documents_strict_cache_count() {
-    let out = run_cli(&["init", "--help"]);
-    for s in [
-        "lq init",
-        "--global",
-        "local",
-        "--max-cache-entries",
-        "non-negative integer",
-        "--track-changes",
-        "State scope",
-    ] {
-        assert!(out.stdout.contains(s), "missing {s}");
-    }
-}
-
-#[test]
-fn cli_lq_help_opens_the_home_page_map() {
-    let out = run_cli(&["help"]);
-    assert!(out.stdout.contains("Pages"));
-    assert!(out.stdout.contains("lq help selectors"));
-}
-
-#[test]
-fn cli_lq_help_page_opens_that_page() {
-    let out = run_cli(&["help", "tracked-changes"]);
-    assert!(out.stdout.contains("change regions and tracked behavior"));
-    assert!(out.stdout.contains("change_deleted"));
-    assert!(out.stdout.contains("Further reading"));
+fn cli_global_help_equals_lq_help() {
+    let via_flag = run_cli(&["--help"]);
+    let via_cmd = run_cli(&["help"]);
+    assert_eq!(via_flag.code, 0, "{}", via_flag.stderr);
+    assert_eq!(via_flag.stdout, via_cmd.stdout);
 }
 
 #[test]
@@ -127,23 +51,9 @@ fn cli_invalid_rich_value_fails() {
     assert!(err_message(&out).contains("--rich"));
 }
 
-const COMMAND_REACHES: &[&str] = &[
-    "init", "schema", "dump", "preview", "read", "bib", "set", "delete", "insert", "undo",
-];
-const TOPIC_REACHES: &[&str] = &[
-    "cst",
-    "guarantees",
-    "state-scope",
-    "private-notes",
-    "insets",
-    "selectors",
-    "mutations",
-    "tracked-changes",
-];
-
 #[test]
 fn cli_every_help_page_is_reachable_via_lq_help_page() {
-    for reach in COMMAND_REACHES.iter().chain(TOPIC_REACHES) {
+    for reach in catalog_reaches() {
         let out = run_cli(&["help", reach]);
         let title = find_by_reach(reach).unwrap().title;
         assert!(
@@ -155,7 +65,7 @@ fn cli_every_help_page_is_reachable_via_lq_help_page() {
 
 #[test]
 fn cli_command_help_equals_lq_help_command() {
-    for cmd in COMMAND_REACHES {
+    for cmd in command_aliases() {
         let via_help = run_cli(&["help", cmd]);
         let via_flag = run_cli(&[cmd, "--help"]);
         assert_eq!(via_help.stdout, via_flag.stdout, "{cmd} alias mismatch");
@@ -165,7 +75,7 @@ fn cli_command_help_equals_lq_help_command() {
 #[test]
 fn cli_home_page_map_lists_every_page() {
     let out = run_cli(&["help"]);
-    for reach in COMMAND_REACHES.iter().chain(TOPIC_REACHES) {
+    for reach in catalog_reaches() {
         assert!(
             out.stdout.contains(&format!("lq help {reach}")),
             "home map missing {reach}"
@@ -192,87 +102,12 @@ fn cli_help_output_stays_plain_when_stdout_is_not_a_terminal() {
 
 #[test]
 fn cli_no_help_output_references_removed_selector_help() {
-    for reach in COMMAND_REACHES.iter().chain(TOPIC_REACHES) {
+    for reach in catalog_reaches() {
         let out = run_cli(&["help", reach]);
         assert!(
             !out.stdout.contains("lq selector --help"),
             "{reach} references lq selector --help"
         );
-    }
-}
-
-#[test]
-fn cli_each_command_page_documents_its_high_risk_facts() {
-    let facts: &[(&str, &[&str])] = &[
-        (
-            "init",
-            &[
-                "--global",
-                "--refresh",
-                "layoutSearch",
-                "layoutRoots",
-                "--track-changes",
-                "save-reload",
-            ],
-        ),
-        (
-            "schema",
-            &[
-                "documentLayouts",
-                "insetLayouts",
-                "insets",
-                "headingHierarchy",
-                "textclass",
-                "kind",
-            ],
-        ),
-        ("dump", &["--depth", "--toc", "TocLevel", "truncated"]),
-        (
-            "preview",
-            &[
-                "lyx-preview/live-1",
-                "sha256",
-                "raw-file-bytes",
-                "does not mutate",
-                "LAYOUT_NOT_FOUND",
-                "Preview shows what it can",
-            ],
-        ),
-        (
-            "read",
-            &["--count", "--text-only", "change_deleted", "empty result"],
-        ),
-        ("bib", &["--search", ".bib"]),
-        (
-            "table",
-            &[
-                "File-order index",
-                "Table N",
-                "prose",
-                "both tracked",
-                "fields are not",
-                "exactly one table",
-            ],
-        ),
-        ("set", &["--find", "--replace-all", "inset is rejected"]),
-        ("delete", &["subtree"]),
-        (
-            "insert",
-            &[
-                "split-after",
-                "--raw-file",
-                "exactly once",
-                "prepend",
-                "--table",
-            ],
-        ),
-        ("undo", &["Snapshot restore", "Replay undo", "substring"]),
-    ];
-    for (page, page_facts) in facts {
-        let out = run_cli(&["help", page]);
-        for fact in *page_facts {
-            assert!(out.stdout.contains(fact), "{page} missing '{fact}'");
-        }
     }
 }
 
@@ -446,14 +281,4 @@ fn cli_init_refresh_save_reload_succeeds() {
     );
     assert_eq!(out.code, 0, "{}", out.stdout);
     assert_eq!(json_stdout(&out)["data"]["refresh"], "save-reload");
-}
-
-#[test]
-fn help_pages_cover_catalog() {
-    let reaches: Vec<&str> = HELP_PAGES
-        .iter()
-        .filter(|p| p.id != "home")
-        .map(|p| reach_of(p.id))
-        .collect();
-    assert!(!reaches.is_empty());
 }

@@ -24,11 +24,8 @@ fn run_cli_does_not_create_lq_marker_in_repo() {
 
     let out = common::run_cli(&[]);
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
-    assert!(
-        out.stdout.contains("Help commands"),
-        "bare lq prints the home help page, got: {}",
-        out.stdout
-    );
+    let home = common::run_cli(&["help"]);
+    assert_eq!(out.stdout, home.stdout, "bare lq prints the home help page");
 
     assert_eq!(
         crate_marker.exists(),

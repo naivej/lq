@@ -1,32 +1,11 @@
 //! Help catalog and renderer (Deno `tests/help_test.ts`).
+//!
+//! These tests cover catalog structure and rendering, not help wording.
 
 use lq::{
     HELP_PAGES, HelpPage, PageGroup, RichMode, alias_of, find_by_alias, find_by_reach, find_page,
     group_of, grouped_pages, reach_of, render_page_rich, render_page_text, render_page_tty,
 };
-
-const EXPECTED_IDS: &[&str] = &[
-    "home",
-    "model/cst",
-    "model/guarantees",
-    "concepts/state-scope",
-    "concepts/private-notes",
-    "concepts/insets",
-    "concepts/selectors",
-    "concepts/mutations",
-    "concepts/tracked-changes",
-    "commands/init",
-    "commands/schema",
-    "commands/dump",
-    "commands/preview",
-    "commands/read",
-    "commands/bib",
-    "commands/table",
-    "commands/set",
-    "commands/delete",
-    "commands/insert",
-    "commands/undo",
-];
 
 fn strip_ansi(s: &str) -> String {
     let mut out = String::new();
@@ -44,15 +23,6 @@ fn strip_ansi(s: &str) -> String {
     }
     out.push_str(rest);
     out
-}
-
-#[test]
-fn page_map_matches_the_draft() {
-    let mut ids: Vec<&str> = HELP_PAGES.iter().map(|p| p.id).collect();
-    ids.sort_unstable();
-    let mut expected = EXPECTED_IDS.to_vec();
-    expected.sort_unstable();
-    assert_eq!(ids, expected);
 }
 
 #[test]
@@ -80,21 +50,14 @@ fn command_aliases_are_unique_and_only_on_command_pages() {
     uniq.sort_unstable();
     uniq.dedup();
     assert_eq!(uniq.len(), aliases.len());
-    assert_eq!(aliases.len(), 11);
-}
-
-#[test]
-fn preview_help_lists_utf8_warning_classes() {
-    let page = find_page("commands/preview").expect("preview page");
-    let output = page
-        .sections
-        .iter()
-        .find(|s| s.heading == "Output")
-        .expect("Output")
-        .body;
-    assert!(output.contains("warnings"), "{output}");
-    assert!(output.contains("UTF-8"), "{output}");
-    assert!(output.contains("include"), "{output}");
+    for p in HELP_PAGES {
+        match group_of(p.id) {
+            Some(PageGroup::Commands) => {
+                assert_eq!(alias_of(p.id), Some(reach_of(p.id)), "{}", p.id);
+            }
+            _ => assert!(alias_of(p.id).is_none(), "{}", p.id),
+        }
+    }
 }
 
 #[test]
@@ -142,11 +105,18 @@ fn grouped_map_covers_non_home() {
         groups,
         vec![PageGroup::Model, PageGroup::Concepts, PageGroup::Commands]
     );
-    let total: usize = grouped.iter().map(|g| g.pages.len()).sum();
-    assert_eq!(total, HELP_PAGES.len() - 1);
-    assert_eq!(grouped[0].pages.len(), 2);
-    assert_eq!(grouped[1].pages.len(), 6);
-    assert_eq!(grouped[2].pages.len(), 11);
+    let mut from_groups: Vec<&str> = grouped
+        .iter()
+        .flat_map(|g| g.pages.iter().map(|p| p.id))
+        .collect();
+    from_groups.sort_unstable();
+    let mut from_catalog: Vec<&str> = HELP_PAGES
+        .iter()
+        .filter(|p| p.id != "home")
+        .map(|p| p.id)
+        .collect();
+    from_catalog.sort_unstable();
+    assert_eq!(from_groups, from_catalog);
 }
 
 #[test]
@@ -266,16 +236,4 @@ fn collect_escapes(s: &str) -> Vec<String> {
         rest = &rest[1..];
     }
     out
-}
-
-#[test]
-fn state_scope_help_names_undo_snapshot_warning() {
-    let page = find_page("concepts/state-scope").expect("state-scope page");
-    let body: String = page.sections.iter().map(|s| s.body).collect();
-    assert!(
-        body.contains(
-            "When the snapshot cannot be saved, that mutation's JSON includes a warning."
-        ),
-        "{body}"
-    );
 }

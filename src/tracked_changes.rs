@@ -448,10 +448,19 @@ pub fn extract_all_text(doc: &Document, node: NodeId, max_len: usize, in_marker:
     }
 }
 
+/// True when a text node is a Tabular `<row>` / `<column>` line with `change=`.
+pub fn is_tabular_line_change_text(text: &str) -> bool {
+    text.lines().any(|line| {
+        let t = line.trim_start();
+        (t.starts_with("<row") || t.starts_with("<column")) && t.contains("change=\"")
+    })
+}
+
 pub fn has_tracked_changes(doc: &Document, children: &[NodeId]) -> bool {
     for &c in children {
         match &doc.node(c).kind {
             NodeKind::Property { key, .. } if is_change_opener(key) => return true,
+            NodeKind::Text { text } if is_tabular_line_change_text(text) => return true,
             NodeKind::Block { .. } if has_tracked_changes(doc, &doc.node(c).children) => {
                 return true;
             }
@@ -462,11 +471,10 @@ pub fn has_tracked_changes(doc: &Document, children: &[NodeId]) -> bool {
 }
 
 pub fn has_direct_tracked_changes(doc: &Document, children: &[NodeId]) -> bool {
-    children.iter().any(|&c| {
-        matches!(
-            &doc.node(c).kind,
-            NodeKind::Property { key, .. } if is_change_opener(key)
-        )
+    children.iter().any(|&c| match &doc.node(c).kind {
+        NodeKind::Property { key, .. } if is_change_opener(key) => true,
+        NodeKind::Text { text } if is_tabular_line_change_text(text) => true,
+        _ => false,
     })
 }
 

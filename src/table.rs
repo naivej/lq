@@ -576,7 +576,7 @@ fn parent_map(doc: &Document) -> HashMap<NodeId, NodeId> {
     map
 }
 
-fn is_tabular(doc: &Document, id: NodeId) -> bool {
+pub fn is_tabular(doc: &Document, id: NodeId) -> bool {
     matches!(
         inset_args(doc, id),
         Some(a) if a == "Tabular" || a.starts_with("Tabular ")
@@ -951,6 +951,46 @@ fn cell_has_nested_inset(doc: &Document, text_inset: NodeId) -> bool {
         false
     }
     walk(doc, text_inset, text_inset)
+}
+
+fn cell_field(doc: &Document, cell: &CellModel) -> String {
+    if col_span(&cell.open) == ColSpan::Part || row_span(&cell.open) == RowSpan::Part {
+        String::new()
+    } else {
+        cell_prose(doc, cell_layout(doc, cell.inset))
+    }
+}
+
+fn row_catalog_prose(doc: &Document, row: &RowModel) -> String {
+    row.cells
+        .iter()
+        .map(|c| cell_field(doc, c))
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn column_catalog_prose(doc: &Document, grid: &GridModel, col: usize) -> String {
+    grid.rows
+        .iter()
+        .map(|row| {
+            row.cells
+                .get(col)
+                .map(|c| cell_field(doc, c))
+                .unwrap_or_default()
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn brief_line_prose(s: &str) -> String {
+    if s.len() <= 60 {
+        return s.to_string();
+    }
+    let mut end = 60;
+    while end > 0 && !s.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &s[..end])
 }
 
 fn cell_prose(doc: &Document, layout: NodeId) -> String {
@@ -1567,6 +1607,194 @@ pub fn delete_column(
         already_deleted: false,
         pending,
     })
+}
+
+/// Outcome of replaying `change=` on a Tabular (reject for this author).
+#[derive(Debug, Default)]
+pub struct LineReplayOutcome {
+    pub labels: Vec<String>,
+    pub mixed_axis: bool,
+    pub last_line_skipped: bool,
+    pub skipped_last_row: bool,
+    pub skipped_last_column: bool,
+    pub other_author_substring: bool,
+}
+
+#[derive(Clone, Copy)]
+enum LineAxis {
+    Row,
+    Column,
+}
+
+struct LineTarget {
+    axis: LineAxis,
+    index: usize,
+    kind: String,
+    prose: String,
+}
+
+/// Revert this author's row/column `change=` on `tabular`. Never errors: a last-line
+/// drop is skipped (LyX no-op). Substring on both axes reverts nothing (JC1-A).
+pub fn replay_table_lines(
+    doc: &mut Document,
+    tabular: NodeId,
+    author_id: i32,
+    substring: Option<&str>,
+) -> LineReplayOutcome {
+    let mut out = LineReplayOutcome::default();
+    let grid = match parse_grid(doc, tabular) {
+        Ok(g) => g,
+        Err(_) => return out,
+    };
+
+    let mut own_rows = Vec::new();
+    let mut own_cols = Vec::new();
+    for (i, row) in grid.rows.iter().enumerate() {
+        collect_line_target(
+            parse_change_attr(&row.open),
+            row_catalog_prose(doc, row),
+            LineAxis::Row,
+            i,
+            author_id,
+            substring,
+            &mut own_rows,
+            &mut out.other_author_substring,
+        );
+    }
+    for (i, col) in grid.columns.iter().enumerate() {
+        collect_line_target(
+            parse_change_attr(col),
+            column_catalog_prose(doc, &grid, i),
+            LineAxis::Column,
+            i,
+            author_id,
+            substring,
+            &mut own_cols,
+            &mut out.other_author_substring,
+        );
+    }
+
+    if substring.is_some() && !own_rows.is_empty() && !own_cols.is_empty() {
+        out.mixed_axis = true;
+        return out;
+    }
+
+    own_rows.sort_by_key(|t| std::cmp::Reverse(t.index));
+    own_cols.sort_by_key(|t| std::cmp::Reverse(t.index));
+    apply_line_targets(doc, tabular, author_id, own_rows, &mut out);
+    apply_line_targets(doc, tabular, author_id, own_cols, &mut out);
+    out.last_line_skipped = out.skipped_last_row || out.skipped_last_column;
+    out
+}
+
+#[allow(clippy::too_many_arguments)]
+fn collect_line_target(
+    parsed: Option<(String, i32)>,
+    prose: String,
+    axis: LineAxis,
+    index: usize,
+    author_id: i32,
+    substring: Option<&str>,
+    own: &mut Vec<LineTarget>,
+    other_author_substring: &mut bool,
+) {
+    let Some((kind, aid)) = parsed else {
+        return;
+    };
+    if kind != "inserted" && kind != "deleted" {
+        return;
+    }
+    let matches_sub = substring.is_none_or(|s| prose.contains(s));
+    if substring.is_some() && matches_sub && aid != author_id {
+        *other_author_substring = true;
+    }
+    if aid == author_id && matches_sub {
+        own.push(LineTarget {
+            axis,
+            index,
+            kind,
+            prose,
+        });
+    }
+}
+
+fn apply_line_targets(
+    doc: &mut Document,
+    tabular: NodeId,
+    author_id: i32,
+    targets: Vec<LineTarget>,
+    out: &mut LineReplayOutcome,
+) {
+    for t in targets {
+        let axis_name = match t.axis {
+            LineAxis::Row => "row",
+            LineAxis::Column => "column",
+        };
+        if t.kind == "deleted" {
+            if unmark_line(doc, tabular, t.axis, t.index) {
+                out.labels.push(format!(
+                    "{axis_name}_deleted{{{}}}",
+                    brief_line_prose(&t.prose)
+                ));
+            }
+            continue;
+        }
+        if t.kind != "inserted" {
+            continue;
+        }
+        let last = match t.axis {
+            LineAxis::Row => parse_grid(doc, tabular).map(|g| g.rows.len() <= 1),
+            LineAxis::Column => parse_grid(doc, tabular)
+                .map(|g| g.rows.first().map(|r| r.cells.len() <= 1).unwrap_or(true)),
+        };
+        if last.unwrap_or(true) {
+            mark_last_line_skip(out, t.axis);
+            continue;
+        }
+        let dropped = match t.axis {
+            LineAxis::Row => delete_row(doc, tabular, t.index + 1, false, author_id, ""),
+            LineAxis::Column => delete_column(doc, tabular, t.index + 1, false, author_id, ""),
+        };
+        match dropped {
+            Ok(_) => {
+                out.labels.push(format!(
+                    "{axis_name}_inserted{{{}}}",
+                    brief_line_prose(&t.prose)
+                ));
+            }
+            Err(e) if e.message.contains("last") => mark_last_line_skip(out, t.axis),
+            Err(_) => {}
+        }
+    }
+}
+
+fn mark_last_line_skip(out: &mut LineReplayOutcome, axis: LineAxis) {
+    match axis {
+        LineAxis::Row => out.skipped_last_row = true,
+        LineAxis::Column => out.skipped_last_column = true,
+    }
+}
+
+fn unmark_line(doc: &mut Document, tabular: NodeId, axis: LineAxis, index: usize) -> bool {
+    let Ok(mut grid) = parse_grid(doc, tabular) else {
+        return false;
+    };
+    match axis {
+        LineAxis::Row => {
+            if index >= grid.rows.len() {
+                return false;
+            }
+            grid.rows[index].open = set_xml_attr(&grid.rows[index].open, "change", None);
+        }
+        LineAxis::Column => {
+            if index >= grid.columns.len() {
+                return false;
+            }
+            grid.columns[index] = set_xml_attr(&grid.columns[index], "change", None);
+        }
+    }
+    write_grid(doc, tabular, &grid);
+    true
 }
 
 /// New Standard layout whose content is a table float with an empty caption (JC1-A).

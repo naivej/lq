@@ -71,7 +71,7 @@ Ground-up drafting uses `--table` / `lq table`, not `--raw-file`. Look (lines, a
 
 **W4 — One cell.** `lq read … inset[Text] --count` then `lq set file.lyx "<at> inset[Text]:nth-match(7) layout[Plain Layout]" "…"`. Count physical cells, including empty fields of a merge. Do not send a 1×1 `--data` through `lq table set` for a single cell.
 
-**W5 — Extra or fewer rows/columns** after look exists: `add-row` / `add-column` (optional `--data`); `delete-row` / `delete-column` (`--index` required).
+**W5 — Extra or fewer rows/columns** after look exists: `add-row` / `add-column` (optional `--data`); `delete-row` / `delete-column` (`--index` required). Replay the table (`at` / `inset[Tabular]`) to revert a tracked line; replay a cell layout to peel `--data` / cell `set` only.
 
 **W6 — Recreate** only when no look is worth keeping (`delete` + `insert --table`).
 

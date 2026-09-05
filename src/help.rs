@@ -566,7 +566,7 @@ A tracked plain `set` keeps the inline properties around the replaced text insid
             },
             HelpSection {
                 heading: "Non-trackable surfaces",
-                body: r#"Change markers (`\change_*`) are only valid inside a layout's text. Inset metadata cannot carry those markers — a table's column alignment line, for example, is tabular XML, not a layout. Row and column structure tracking is a different surface: the `change=` attribute on `<row>` / `<column>`. Cell prose tracking is ordinary `\change_*` inside the cell.
+                body: r#"Change markers (`\change_*`) are only valid inside a layout's text. Inset metadata cannot carry those markers — a table's column alignment line, for example, is tabular XML, not a layout. Row and column structure tracking is a different surface: the `change=` attribute on `<row>` / `<column>`. Cell prose tracking is ordinary `\change_*` inside the cell. Replay undo of the table (catalog `at`, or `inset[Tabular]`) reverts `change=`; replay of a cell layout reverts `\change_*`. Snapshot restore reverts both.
 
 With tracking on, a mutation targeting preamble lines, `#` comments, header text, or inset metadata is rejected; disable tracking for those surfaces or target a layout's text instead.
 
@@ -1128,9 +1128,11 @@ narrower selector or `--count` for large documents."#,
   lq table <file> [<n>|<selector>] delete-row --index N
   lq table <file> [<n>|<selector>] delete-column --index N
               Refuse the last line. An already-deleted line warns and changes
-              nothing. Replay `undo` does not revert row/column change=;
-              snapshot restore does. Cell-text `set` and `--data` on add-row
-              / add-column are replayable.
+              nothing. Replay `undo` of the table (catalog `at`) reverts
+              row/column change=: an inserted line is dropped; a deleted
+              line is restored. Replay of a cell layout peels `--data` /
+              cell `set` and leaves the line mark. Snapshot restore
+              reverts both.
 
 Omit n and selector when the file has exactly one table. A mutation still
 needs one table: several matches are a catalog slice, not a bulk edit."#,
@@ -1177,7 +1179,7 @@ float, or from a longtable's Caption Standard cell (not Caption Unnumbered)."#,
             },
             FurtherReading {
                 page: "concepts/tracked-changes",
-                hint: "row change= vs cell text",
+                hint: "table replay vs cell replay",
             },
             FurtherReading {
                 page: "concepts/selectors",
@@ -1355,19 +1357,28 @@ With tracking on, editing inset metadata is rejected."#,
                                          tracked-change blocks made by the current author
                                          as the direct children of the matched block nodes;
                                          with <substring>, only blocks whose text contains it.
-                                         Can be reverted by snapshot restore."#,
+                                         A table (`inset[Tabular]` or catalog `at`) reverts
+                                         that author's row/column change= instead: inserted
+                                         lines are dropped, deleted lines are restored.
+                                         A substring on a table must name one axis (row or
+                                         column) or nothing is reverted. The last remaining
+                                         row or column is skipped. Can be reverted by
+                                         snapshot restore."#,
             },
             HelpSection {
                 heading: "Arguments",
                 body: r#"  <file>       The path to the .lyx file.
   <selector>   A CSS-like selector.
-  <substring>  Text inside the change_deleted or change_inserted block to revert."#,
+  <substring>  Text inside the change_deleted or change_inserted block to revert,
+               or catalog prose of a marked table row or column."#,
             },
             HelpSection {
                 heading: "Replay targets block nodes",
                 body: r#"Replay undo targets block nodes: a selector that matches only text or property
 nodes, or a block whose changes sit inside a nested inset, produces a
-warning and reverts nothing."#,
+warning and reverts nothing. `inset[Tabular]` (and the catalog `at` selector)
+is a block: it reverts change= on rows and columns. A cell layout inside
+the table still reverts only cell text markers."#,
             },
         ],
         further_reading: &[

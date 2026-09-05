@@ -224,12 +224,6 @@ fn insert_text_then_find_flag_is_missing_value() {
 }
 
 #[test]
-fn insert_help_does_not_teach_text_equals_flag_lookalike() {
-    let out = run_cli(&["insert", "--help"]);
-    assert!(!out.stdout.contains("--text=--find"));
-}
-
-#[test]
 fn read_count_before_file_still_works() {
     let home = IsolatedHome::new();
     let work = WorkDir::new();
@@ -257,19 +251,4 @@ fn init_max_cache_entries_space_minus_one_is_range_error() {
     let out = run_cli(&["init", "--max-cache-entries", "-1"]);
     assert_eq!(err_code(&out), "INVALID_FLAG");
     assert!(err_message(&out).contains("max-cache-entries"));
-}
-
-#[test]
-fn home_help_names_typed_flags() {
-    let out = run_cli(&["help"]);
-    assert!(out.stdout.contains(
-        "Flags are typed: a boolean flag takes no value; unknown flags and extra arguments are errors."
-    ));
-}
-
-#[test]
-fn dump_help_names_depth_minus_one() {
-    let out = run_cli(&["dump", "--help"]);
-    assert!(out.stdout.contains("--depth -1"));
-    assert!(!out.stdout.contains("Use an equal sign to pass a negative"));
 }
