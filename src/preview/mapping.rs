@@ -191,9 +191,11 @@ fn active_query_index<'a>(ctx: &'a RenderCtx<'_>) -> &'a QueryIndex {
 }
 
 pub(crate) fn inset_owner_selector(ctx: &RenderCtx<'_>, block: NodeId) -> String {
-    let ast = ctx.doc();
+    inset_host_selector(ctx.doc(), block, active_query_index(ctx))
+}
+
+pub(crate) fn inset_host_selector(ast: &Document, block: NodeId, index: &QueryIndex) -> String {
     let kind = inset_selector_kind(ast, block);
-    let index = active_query_index(ctx);
     if kind == "Formula" {
         let n = index
             .by_id
@@ -210,27 +212,34 @@ pub(crate) fn inset_owner_selector(ctx: &RenderCtx<'_>, block: NodeId) -> String
 }
 
 pub(crate) fn layout_owner_selector(ctx: &RenderCtx<'_>, node: NodeId, name: &str) -> String {
-    let ast = ctx.doc();
-    let rec = active_query_index(ctx).by_id.get(&node);
+    layout_host_selector(
+        ctx.doc(),
+        node,
+        name,
+        ctx.current_inset_node,
+        active_query_index(ctx),
+    )
+}
+
+/// Live lyx-selection for a layout. `prefix_inset` is the innermost path-prefix
+/// inset that owns the layout (Note, Foot, …), or none for a body paragraph.
+pub(crate) fn layout_host_selector(
+    ast: &Document,
+    node: NodeId,
+    name: &str,
+    prefix_inset: Option<NodeId>,
+    index: &QueryIndex,
+) -> String {
+    let rec = index.by_id.get(&node);
     let global_n = rec.map(|r| r.global_n).unwrap_or(1);
-    let inset = ctx.current_inset_node;
-    let kind = inset.map(|id| inset_kind(ast, id)).unwrap_or_default();
-    if let Some(inset) = inset
-        && is_path_prefix_inset(&kind)
-    {
-        let prefix = inset_owner_selector(ctx, inset);
-        let same = descendant_layouts_named(ast, inset, name);
-        let inner_n = same
-            .iter()
-            .position(|&id| id == node)
-            .map(|i| i + 1)
-            .unwrap_or(0);
-        let layout_part = if same.len() > 1 && inner_n > 0 {
-            format!("layout[{name}]:nth-match({inner_n})")
-        } else {
-            format!("layout[{name}]")
-        };
-        return format!("{prefix} {layout_part}");
+    if let Some(inset) = prefix_inset {
+        let kind = inset_kind(ast, inset);
+        if is_path_prefix_inset(&kind) {
+            let prefix = inset_host_selector(ast, inset, index);
+            let same = descendant_layouts_named(ast, inset, name);
+            let layout_part = scoped_nth_match("layout", name, node, &same);
+            return format!("{prefix} {layout_part}");
+        }
     }
     format!("layout[{name}]:nth-match({global_n})")
 }

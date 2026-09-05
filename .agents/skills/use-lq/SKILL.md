@@ -39,7 +39,7 @@ Run the same sequence for every task:
 
 4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not.
 5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.
-6. **Mutate minimally.** Every match is edited — `insert` duplicates its payload per match, broad `set`/`delete` can rewrite the document. Prefer a unique anchor and the smallest scale that expresses the workflow.
+6. **Mutate minimally.** Every match is edited — `insert` duplicates its payload per match, broad `set`/`delete` can rewrite the document. `table` mutations (`set`, `add-row`, `add-column`, `delete-row`, `delete-column`) need exactly one table; several matches only list. Prefer a unique anchor and the smallest scale that expresses the workflow.
 7. **Verify immediately.** Read the same selector back (`--text-only` or `--count`), inspect the JSON `warnings` (preview may warn on include/listing/layout/bind/bib UTF-8 without failing), review `git diff`; export with LyX for high-risk changes. Done when the read-back matches the intent and the diff shows only it.
 
 Work inside Git when possible: stage before mutating, review the staged diff. There is no `--dry-run`; counts, schema, Git, and snapshots are the safety workflow. Rollback by intent:
@@ -85,7 +85,7 @@ Pick the workflow up front — it chooses the author name, the selection scale, 
 
 ## Ground-up writing and autonomous drafting
 
-Structural work. Set the per-task author name so the whole draft is one review unit, check `lq schema`, and confirm layouts resolve. Build the skeleton first — headings and blocks with `insert --layout` — then fill in with `--text`, `split-after`, and `--raw-file` for citations, references, and math. Verify each section with `read --text-only`; run a LyX export at milestones as the structural acceptance check. The payload recipes behind `--ref`, `--cite`, and `--raw-file` live in `references/Domain_recipes.md`; opaque formula, ERT, and preamble payloads are covered in `references/Inset_data.md`.
+Structural work. Set the per-task author name so the whole draft is one review unit, check `lq schema`, and confirm layouts resolve. Build the skeleton first — headings and blocks with `insert --layout` — then fill in with `--text`, `split-after`, `--table` / `lq table` for tables, and `--raw-file` for citations, references, and math. Verify each section with `read --text-only`; run a LyX export at milestones as the structural acceptance check. The payload recipes behind `--ref`, `--cite`, and `--raw-file` live in `references/Domain_recipes.md`; opaque formula, ERT, and preamble payloads are covered in `references/Inset_data.md`.
 
 ## Proofreading and surgical typo fixes
 
@@ -122,7 +122,7 @@ Deep reference lives in the `references/` folder, read on demand when its branch
 | --- | --- | --- |
 | [`Reach.md`](references/Reach.md) | The four reach questions, per-command reach, the selection-scale table, private notes | a mutation's reach is uncertain, or a mutation does not change what the selector matched |
 | [`Tracked_changes.md`](references/Tracked_changes.md) | Tracked-change operational rules: regions, editing rejected text, tracking surfaces, undo modes | tracking is on, or the document is under review |
-| [`Domain_recipes.md`](references/Domain_recipes.md) | Cross-references, citations, lists, multi-pass insertion | the task involves those content types or a complex payload |
+| [`Domain_recipes.md`](references/Domain_recipes.md) | Cross-references, citations, lists, tables, multi-pass insertion | the task involves those content types or a complex payload |
 | [`Inset_data.md`](references/Inset_data.md) | Editing formula, ERT, and preamble payloads | the edit target is an opaque inset payload or preamble |
 | [`LyX_inset.md`](references/LyX_inset.md) · [`LyX_preamble.md`](references/LyX_preamble.md) | LyX file-format ground truth: inset and preamble serialization | hand-writing structure, or the CST shape of an unfamiliar structure is uncertain |
 | [`LyX_Headless.md`](references/LyX_Headless.md) | Driving the LyX binary: create, import, export, acceptance check, verification | generating ground truth, or verifying a mutated document against LyX |

@@ -18,6 +18,7 @@ mod query;
 mod registry;
 mod schema;
 mod serializer;
+mod table;
 mod text_utils;
 mod tracked_changes;
 mod undo;

@@ -14,6 +14,7 @@ How far a mutation reaches. Ask four separate questions before an operation — 
 - `insert split-after` reaches nested prose where supported, never inset metadata.
 - `delete` removes a selected structural subtree; tracked deletion has atomic-inset restrictions.
 - `lq undo <file>` restores the last snapshot by saved paths; selector replay scans only direct children of matched blocks.
+- `table` mutations (`set`, `add-row`, `add-column`, `delete-row`, `delete-column`) need exactly one table. Several matches only list; they do not edit every table. See `lq help mutations` and `lq help table`.
 
 ## Selection scale
 

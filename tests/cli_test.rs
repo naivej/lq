@@ -243,11 +243,28 @@ fn cli_each_command_page_documents_its_high_risk_facts() {
             &["--count", "--text-only", "change_deleted", "empty result"],
         ),
         ("bib", &["--search", ".bib"]),
+        (
+            "table",
+            &[
+                "File-order index",
+                "Table N",
+                "prose",
+                "the new row or column is tracked",
+                "--data is not",
+                "exactly one table",
+            ],
+        ),
         ("set", &["--find", "--replace-all", "inset is rejected"]),
         ("delete", &["subtree"]),
         (
             "insert",
-            &["split-after", "--raw-file", "exactly once", "prepend"],
+            &[
+                "split-after",
+                "--raw-file",
+                "exactly once",
+                "prepend",
+                "--table",
+            ],
         ),
         ("undo", &["Snapshot restore", "Replay undo", "substring"]),
     ];

@@ -11,6 +11,7 @@ mod preview;
 mod read;
 mod schema;
 mod set;
+mod table;
 mod undo;
 
 use crate::cache::{hash_text, set_max_cache_entries};
@@ -23,8 +24,9 @@ use crate::query::{build_traversal_state_index, query};
 use crate::tracked_changes::{has_layout_ancestor, is_content_node};
 use common::{
     BIB_SPEC, CliError, DUMP_SPEC, EMPTY_SPEC, INIT_SPEC, INSERT_SPEC, LoadedLyx, READ_SPEC,
-    SET_SPEC, assert_no_selector_mistakes, load_lyx_full, load_user_config, parse_typed,
-    print_error, push_warning, read_utf8_file, reject_unexpected_args, scan_help_flags,
+    SET_SPEC, TABLE_SPEC, assert_no_selector_mistakes, load_lyx_full, load_user_config,
+    parse_typed, print_error, push_warning, read_utf8_file, reject_unexpected_args,
+    scan_help_flags,
 };
 use mutate::{
     MutationEnv, blast_radius_warning, handle_refresh_pre, is_core_node, node_label,
@@ -33,10 +35,10 @@ use mutate::{
 use std::path::PathBuf;
 
 const KNOWN_COMMANDS: &[&str] = &[
-    "init", "dump", "bib", "schema", "read", "preview", "set", "delete", "insert", "undo",
+    "init", "dump", "bib", "schema", "read", "preview", "table", "set", "delete", "insert", "undo",
 ];
 const MUTATION_COMMANDS: &[&str] = &["set", "delete", "insert", "undo"];
-const READ_COMMANDS: &[&str] = &["dump", "bib", "schema", "read"];
+const READ_COMMANDS: &[&str] = &["dump", "bib", "schema", "read", "table"];
 
 fn parse_rich_flag(value: Option<&str>) -> Result<RichMode, CliError> {
     match value {
@@ -64,6 +66,7 @@ fn spec_for(command: &str) -> &'static [common::FlagDef] {
         "read" => READ_SPEC,
         "set" => SET_SPEC,
         "insert" => INSERT_SPEC,
+        "table" => TABLE_SPEC,
         "schema" | "preview" | "delete" | "undo" => EMPTY_SPEC,
         _ => EMPTY_SPEC,
     }
@@ -167,7 +170,7 @@ fn run_cli_inner(args: &[String]) -> Result<(), CliError> {
             };
             reject_unexpected_args(&parsed.positional, skip, command)?;
         }
-        "set" | "undo" | "init" => {}
+        "set" | "undo" | "init" | "table" => {}
         _ => {}
     }
 
@@ -207,7 +210,8 @@ or create a local .lq directory and run the command from that project.",
         .map_or(50, |value| usize::try_from(value).unwrap_or(usize::MAX));
     set_max_cache_entries(max_cache_entries);
 
-    let is_mutation = MUTATION_COMMANDS.contains(&command);
+    let is_mutation = MUTATION_COMMANDS.contains(&command)
+        || (command == "table" && table_has_op(&parsed.positional));
     let mut refresh_mode = RefreshMode::None;
     let mut track_changes = true;
     let mut author_name = "lq user".to_string();
@@ -300,6 +304,23 @@ or create a local .lq directory and run the command from that project.",
             )?;
             return Ok(());
         }
+        "table" => {
+            let traversal = build_traversal_state_index(&ast, ast.root());
+            let table_rest = parsed.positional.get(1..).unwrap_or(&[]);
+            let env = MutationEnv {
+                file_path,
+                selector: None,
+                rest: table_rest,
+                flags: &parsed,
+                state: &state_paths,
+                track_changes,
+                author_name: &author_name,
+                refresh: refresh_mode,
+                traversal: &traversal,
+            };
+            table::run_table(&mut ast, &env)?;
+            return Ok(());
+        }
         _ => {}
     }
 
@@ -358,6 +379,14 @@ or create a local .lq directory and run the command from that project.",
         _ => unreachable!("invariant: mutation command checked above"),
     }
     Ok(())
+}
+
+fn table_has_op(positionals: &[String]) -> bool {
+    positionals
+        .get(1..)
+        .unwrap_or(&[])
+        .iter()
+        .any(|t| crate::table::is_op(t))
 }
 
 fn tracking_target_guards(

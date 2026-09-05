@@ -21,6 +21,7 @@ const EXPECTED_IDS: &[&str] = &[
     "commands/preview",
     "commands/read",
     "commands/bib",
+    "commands/table",
     "commands/set",
     "commands/delete",
     "commands/insert",
@@ -79,7 +80,7 @@ fn command_aliases_are_unique_and_only_on_command_pages() {
     uniq.sort_unstable();
     uniq.dedup();
     assert_eq!(uniq.len(), aliases.len());
-    assert_eq!(aliases.len(), 10);
+    assert_eq!(aliases.len(), 11);
 }
 
 #[test]
@@ -145,7 +146,7 @@ fn grouped_map_covers_non_home() {
     assert_eq!(total, HELP_PAGES.len() - 1);
     assert_eq!(grouped[0].pages.len(), 2);
     assert_eq!(grouped[1].pages.len(), 6);
-    assert_eq!(grouped[2].pages.len(), 10);
+    assert_eq!(grouped[2].pages.len(), 11);
 }
 
 #[test]

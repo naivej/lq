@@ -5,7 +5,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const KNOWN_COMMANDS: &[&str] = &[
-    "init", "dump", "bib", "schema", "read", "preview", "set", "delete", "insert", "undo", "help",
+    "init", "dump", "bib", "schema", "read", "preview", "table", "set", "delete", "insert", "undo",
+    "help",
 ];
 
 #[test]

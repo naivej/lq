@@ -9,7 +9,7 @@ mod flow;
 mod graphics;
 mod index;
 mod insets;
-mod mapping;
+pub(crate) mod mapping;
 
 use crate::ast::{Document, NodeId, NodeKind};
 use crate::bib::Citation;

@@ -188,6 +188,21 @@ pub const INSERT_SPEC: &[FlagDef] = &[
         name: "footnote",
         kind: FlagKind::Value,
     },
+    FlagDef {
+        name: "table",
+        kind: FlagKind::Value,
+    },
+];
+
+pub const TABLE_SPEC: &[FlagDef] = &[
+    FlagDef {
+        name: "data",
+        kind: FlagKind::Value,
+    },
+    FlagDef {
+        name: "index",
+        kind: FlagKind::Value,
+    },
 ];
 
 pub const EMPTY_SPEC: &[FlagDef] = &[];

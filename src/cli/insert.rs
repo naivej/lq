@@ -111,10 +111,13 @@ pub fn run_insert(
     if flags.str("footnote").is_some() {
         flag_count += 1;
     }
+    if flags.str("table").is_some() {
+        flag_count += 1;
+    }
     if flag_count > 1 {
         return Err(CliError::new(
             "FLAG_CONFLICT",
-            "You cannot mix --raw-file, --layout, --cite, --ref, --label, or --footnote. Please provide exactly one generation strategy.",
+            "You cannot mix --raw-file, --layout, --cite, --ref, --label, --footnote, or --table. Please provide exactly one generation strategy.",
         ));
     }
 
@@ -122,6 +125,12 @@ pub fn run_insert(
         return Err(CliError::new(
             "INVALID_FLAG",
             "Position cannot be 'split-after' with --layout. Use before, after, prepend, or append.",
+        ));
+    }
+    if flags.str("table").is_some() && !matches!(position, "before" | "after") {
+        return Err(CliError::new(
+            "INVALID_POSITION",
+            "Position must be 'before' or 'after' with --table.",
         ));
     }
 
@@ -214,6 +223,10 @@ pub fn run_insert(
         templates.push(build_label(doc, label));
     } else if let Some(fn_text) = flags.str("footnote") {
         templates.push(build_footnote(doc, fn_text));
+    } else if let Some(table_text) = flags.str("table") {
+        let rect =
+            crate::table::parse_rect(table_text).map_err(|e| CliError::new(e.code, e.message))?;
+        templates.push(crate::table::build_create_layout(doc, &rect));
     } else if let Some(text) = flags.str("text") {
         if position == "split-after" {
             templates.push(alloc_text(doc, text));
@@ -227,8 +240,18 @@ pub fn run_insert(
     if templates.is_empty() {
         return Err(CliError::new(
             "MISSING_CONTENT",
-            "You must provide --layout, --raw-file, --cite, --ref, --label, or --footnote to insert.",
+            "You must provide --layout, --raw-file, --cite, --ref, --label, --footnote, or --table to insert.",
         ));
+    }
+    if flags.str("table").is_some() {
+        for &target in nodes {
+            if !crate::table::is_document_layout_target(doc, target) {
+                return Err(CliError::new(
+                    "INVALID_CONTEXT",
+                    "A table must be inserted as a sibling of a body paragraph (before or after a document layout). It cannot go inside a note, cell, or caption.",
+                ));
+            }
+        }
     }
 
     let mut schema = None;
