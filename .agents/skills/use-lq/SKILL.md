@@ -1,6 +1,6 @@
 ---
 name: use-lq
-description: Use lq to parse, query, and mutate LyX documents (`.lyx` files). Use when a selection of a .lyx preview is explicitly given (as #lyxSelection or @live-selection.json). Use headless LyX to create, import, or export the documents, and open the LyX GUI to establish a LyXServer connection.
+description: `.lyx` files with lq. Preview selection (`#lyxSelection`, `@live-selection.json`). Headless LyX create, import, or export. LyX GUI for LyXServer.
 allowed-tools: Bash(lq *)
 ---
 
@@ -18,28 +18,12 @@ Three ideas carry the whole skill:
 
 Run the same sequence for every task:
 
-1. **Set the task's author name first.** `lq init --author-name "<task>"` before the first mutation, and switch when the task changes. Replay undo is author-scoped, so each task's edits stay separately revertible. Name the task, not the human.
-2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, optional `layoutsDir` overlay, `refresh` — plus `layoutSearch` (order) and `layoutRoots` (paths) when writing config. Change configuration only with authorization. See the state-scope note below.
-3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → `read --count` on the narrowed selector → text-only. `dump` has no `--count`. Done when you can see the exact node(s) you will touch.
-
-   **Live pointer.** The user may read `.lyx` from a preview and select text in that preview. When a preview selection is explicitly given (`#lyxSelection` or `@live-selection.json` next to the previewed `.lyx`), read it to understand the context.
-
-   | Field | How to read it |
-   |---|---|
-   | `file` | The target `.lyx`, or its child when the highlight is inside an Include. |
-   | `diskHash` | SHA-256 of `file`'s saved bytes. Snapshot identity. |
-   | `stale` | `true` → inspect only until `file` is saved. A child pointer does not stale with the master. |
-   | `mode` | `original` (before changes) / `tracked` (with tracked changes) / `clean` (after accepting all changes) shown in preview. |
-   | `selector` | Owner for `lq read <file> "<selector>"`. Nested when the highlight is inside an inset. |
-   | `selectedText` | Non-empty ⇒ treat as `--text-only` spelling. Empty ⇒ object selection (chips, caret, cite/href/ref). |
-   | `changeId` | `change-N` if the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this Live render |
-   | `multi` | Drag crossed owners. `selector` is the **anchor** (start owner); `selectedText` is clipped to that owner only. |
-   | `via` | Present when `file` is an included child shown in another document's preview. Use for Context only. |
-   | `capturedAt` | Last capture. The record survives leaving the preview and may be leftover while the preview is still open. Do not read the record just because it exists. |
-
-4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not.
+1. **Set the task's author name first.** `lq init --author-name "<task>"` before the first mutation, and switch when the task changes. Replay undo is author-scoped, so each task's edits stay separately revertible. Name the task, not the human. Done when `lq init` shows this task as `authorName`.
+2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, optional `layoutsDir` overlay, `refresh` — plus `layoutSearch` (order) and `layoutRoots` (paths) when writing config. Change configuration only with authorization. See the state-scope note below. Done when you can state `trackChanges`, `authorName`, and `refresh` for the selected scope.
+3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → `read --count` on the narrowed selector → text-only. `dump` has no `--count`. When a preview selection is given (`#lyxSelection` or `@live-selection.json`), read [`Live_pointer.md`](references/Live_pointer.md) and use that record as the zoom. Done when you can see the exact node(s) you will touch.
+4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not. Done when the layout or inset you will insert is in that schema, or you skipped because the class is already known.
 5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.
-6. **Mutate minimally.** Every match is edited — `insert` duplicates its payload per match, broad `set`/`delete` can rewrite the document. `table` mutations (`set`, `add-row`, `add-column`, `delete-row`, `delete-column`) need exactly one table; several matches only list. Prefer a unique anchor and the smallest scale that expresses the workflow.
+6. **Mutate minimally.** Every match is edited — `insert` duplicates its payload per match, broad `set`/`delete` can rewrite the document. Prefer a unique anchor and the smallest scale that expresses the workflow. Table edits: [`Domain_recipes.md`](references/Domain_recipes.md). Done when `--count` is the intended set and the command is the smallest that does the job.
 7. **Verify immediately.** Read the same selector back (`--text-only` or `--count`), inspect the JSON `warnings` (preview may warn on include/listing/layout/bind/bib UTF-8 without failing), review `git diff`; export with LyX for high-risk changes. Done when the read-back matches the intent and the diff shows only it.
 
 Work inside Git when possible: stage before mutating, review the staged diff. There is no `--dry-run`; counts, schema, Git, and snapshots are the safety workflow. Rollback by intent:
@@ -69,6 +53,7 @@ Work inside Git when possible: stage before mutating, review the staged diff. Th
 | Find label names | `lq read file.lyx "inset[CommandInset label]"` |
 | Deep-debug a node | `lq dump file.lyx "<selector>"` |
 | Find a citation key | `lq bib file.lyx --search "keyword"` |
+| List tables | `lq table file.lyx` |
 | Restore the last mutation | `lq undo file.lyx` |
 | Replay all direct tracked changes by the current author | `lq undo file.lyx "<block selector>"` |
 | Replay one matching tracked change | `lq undo file.lyx "<block selector>" "bad text"` |
@@ -85,7 +70,7 @@ Pick the workflow up front — it chooses the author name, the selection scale, 
 
 ## Ground-up writing and autonomous drafting
 
-Structural work. Set the per-task author name so the whole draft is one review unit, check `lq schema`, and confirm layouts resolve. Build the skeleton first — headings and blocks with `insert --layout` — then fill in with `--text`, `split-after`, `--table` / `lq table` for tables, and `--raw-file` for citations, references, and math. Verify each section with `read --text-only`; run a LyX export at milestones as the structural acceptance check. The payload recipes behind `--ref`, `--cite`, and `--raw-file` live in `references/Domain_recipes.md`; opaque formula, ERT, and preamble payloads are covered in `references/Inset_data.md`.
+Structural work. Set the per-task author name so the whole draft is one review unit, check `lq schema`, and confirm layouts resolve. Build the skeleton first — headings and blocks with `insert --layout` — then fill in with `--text`, `split-after`, `--table` / `lq table` for tables, and `--raw-file` for citations, references, and math. Verify each section with `read --text-only`; run a LyX export at milestones as the structural acceptance check. The payload recipes behind `--ref`, `--cite`, `--table` / `lq table`, and `--raw-file` live in `references/Domain_recipes.md`; opaque formula, ERT, and preamble payloads are covered in `references/Inset_data.md`.
 
 ## Proofreading and surgical typo fixes
 
@@ -120,6 +105,7 @@ Deep reference lives in the `references/` folder, read on demand when its branch
 
 | File | Covers | Reach when |
 | --- | --- | --- |
+| [`Live_pointer.md`](references/Live_pointer.md) | Preview selection record | a preview selection is given (`#lyxSelection` or `@live-selection.json`) |
 | [`Reach.md`](references/Reach.md) | The four reach questions, per-command reach, the selection-scale table, private notes | a mutation's reach is uncertain, or a mutation does not change what the selector matched |
 | [`Tracked_changes.md`](references/Tracked_changes.md) | Tracked-change operational rules: regions, editing rejected text, tracking surfaces, undo modes | tracking is on, or the document is under review |
 | [`Domain_recipes.md`](references/Domain_recipes.md) | Cross-references, citations, lists, tables, multi-pass insertion | the task involves those content types or a complex payload |

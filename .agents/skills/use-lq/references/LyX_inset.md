@@ -413,7 +413,7 @@ status open
 \end_inset
 ```
 
-Tabulars carry their own verbose metadata block (column alignments, widths, borders, multicolumns, rotated cells, …) with tab-indented `key value` lines. It is large and mechanical — treat it as opaque: when editing a table by hand, preserve the block byte-for-byte and change only cell text.
+Tabulars carry their own verbose metadata block (column alignments, widths, borders, multicolumns, rotated cells, …) with tab-indented `key value` lines. It is large and mechanical — treat it as opaque when hand-writing. Grid numbers and size: `references/Domain_recipes.md` (`lq table` / `insert --table`).
 
 ### Formula
 

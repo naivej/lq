@@ -1352,8 +1352,9 @@ With tracking on, editing inset metadata is rejected."#,
                                          as the direct children of the matched block nodes;
                                          with <substring>, only blocks whose text contains it.
                                          This can be applied to tables. With substring,
-                                         it reverts the row or column uniquely identified
-                                         by the substring, or nothing if ambiguous.
+                                         it reverts every marked row or every marked
+                                         column whose prose contains it — or nothing
+                                         if that text sits on both a row and a column.
                                          The last remaining row or column is skipped.
                                          Can be reverted by snapshot restore."#,
             },
