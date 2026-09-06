@@ -6,8 +6,7 @@ mod common;
 
 use common::{find_lyx_binary, fixtures_root};
 use lq::{
-    LiveRenderOptions, format_sem, normalize_reader_html, parse,
-    render_live_html, semantic_equal,
+    LiveRenderOptions, format_sem, normalize_reader_html, parse, render_live_html, semantic_equal,
 };
 use std::fs;
 use std::path::Path;
