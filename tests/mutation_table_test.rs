@@ -674,6 +674,9 @@ fn catalog_wraps_one_table_and_lists_two() {
     assert!(cat["tables"][0].get("cells").is_none());
     assert!(cat["tables"][0].get("rows").is_none());
     assert_eq!(cat["tables"][0]["kind"], json!("float"));
+    assert!(cat["tables"][0].get("row_changes").is_none());
+    assert!(cat["tables"][0].get("column_changes").is_none());
+    assert!(cat["tables"][0].get("cell_changes").is_none());
     let one = env.run(&["table", path_arg(&file), "2"]);
     assert_eq!(one["tables"].as_array().unwrap().len(), 1);
     assert_eq!(one["tables"][0]["n"], json!(2));
@@ -984,6 +987,126 @@ fn add_row_data_tracked_marks_cells_insert_only() {
     assert!(!text.contains("\\change_deleted"), "{text}");
     let cat = env.run(&["table", path_arg(&file), "1"]);
     assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D\nE,F"));
+}
+
+#[test]
+fn catalog_tracked_delete_row_lists_row_changes_only() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "delete-row", "--index", "2"]);
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D"));
+    assert_eq!(
+        cat["tables"][0]["row_changes"],
+        json!([{"index": 2, "region": "deleted"}])
+    );
+    assert!(cat["tables"][0].get("cell_changes").is_none());
+    assert!(cat["tables"][0].get("column_changes").is_none());
+}
+
+#[test]
+fn catalog_tracked_add_row_blank_lists_row_changes_only() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row"]);
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(
+        cat["tables"][0]["row_changes"],
+        json!([{"index": 3, "region": "inserted"}])
+    );
+    assert!(cat["tables"][0].get("cell_changes").is_none());
+}
+
+#[test]
+fn catalog_tracked_add_row_data_lists_row_and_cell_inserts() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-row", "--data", "E,F"]);
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,B\nC,D\nE,F"));
+    assert_eq!(
+        cat["tables"][0]["row_changes"],
+        json!([{"index": 3, "region": "inserted"}])
+    );
+    assert_eq!(
+        cat["tables"][0]["cell_changes"],
+        json!([
+            {"r": 3, "c": 1, "inserted": "E"},
+            {"r": 3, "c": 2, "inserted": "F"}
+        ])
+    );
+}
+
+#[test]
+fn catalog_tracked_cell_set_lists_deleted_and_inserted() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "set", "--data", "A,Bee\nC,D"]);
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(cat["tables"][0]["data"], json!("A,Bee\nC,D"));
+    assert!(cat["tables"][0].get("row_changes").is_none());
+    assert_eq!(
+        cat["tables"][0]["cell_changes"],
+        json!([{"r": 1, "c": 2, "deleted": "B", "inserted": "Bee"}])
+    );
+}
+
+#[test]
+fn catalog_tracked_add_column_lists_column_changes() {
+    let env = MutationSession::tracked("Alice");
+    let file = env.write_lyx("t.lyx", &ab_cd_table(), &format!("{HEADER}{AUTHOR_ALICE}"));
+    env.run(&["table", path_arg(&file), "1", "add-column", "--data", "x,y"]);
+    let cat = env.run(&["table", path_arg(&file), "1"]);
+    assert_eq!(
+        cat["tables"][0]["column_changes"],
+        json!([{"index": 3, "region": "inserted"}])
+    );
+    assert_eq!(
+        cat["tables"][0]["cell_changes"],
+        json!([
+            {"r": 1, "c": 3, "inserted": "x"},
+            {"r": 2, "c": 3, "inserted": "y"}
+        ])
+    );
+}
+
+#[test]
+fn catalog_nested_inset_warning_named_for_one_table() {
+    let env = MutationSession::new();
+    let file = env.write_lyx("t.lyx", &formula_table(), HEADER);
+    let cat = env.run(&["table", path_arg(&file)]);
+    let warnings = json_warnings(&cat);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].starts_with("Table 1 has nested insets"),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn catalog_nested_inset_warnings_collapse_when_several() {
+    let env = MutationSession::new();
+    let file = env.write_lyx(
+        "t.lyx",
+        &format!("{}{}", formula_table(), formula_table()),
+        HEADER,
+    );
+    let cat = env.run(&["table", path_arg(&file)]);
+    assert_eq!(cat["tables"].as_array().unwrap().len(), 2);
+    let warnings = json_warnings(&cat);
+    assert_eq!(warnings.len(), 1, "{warnings:?}");
+    assert!(
+        warnings[0].starts_with("2 tables have nested insets"),
+        "{warnings:?}"
+    );
+    assert!(warnings[0].contains("Slice with n"), "{warnings:?}");
+    let one = env.run(&["table", path_arg(&file), "1"]);
+    let one_w = json_warnings(&one);
+    assert_eq!(one_w.len(), 1, "{one_w:?}");
+    assert!(
+        one_w[0].starts_with("Table 1 has nested insets"),
+        "{one_w:?}"
+    );
 }
 
 #[test]
@@ -1551,16 +1674,7 @@ fn one_cell_is_lq_set_not_one_by_one_table_set() {
 }
 
 fn find_lyx_exe() -> Option<PathBuf> {
-    if let Some(dir) = common::host_layouts_dir() {
-        let p = PathBuf::from(&dir);
-        if let Some(root) = p.parent().and_then(|r| r.parent()) {
-            let exe = root.join("bin").join("LyX.exe");
-            if exe.is_file() {
-                return Some(exe);
-            }
-        }
-    }
-    None
+    common::find_lyx_binary()
 }
 
 fn lyx_export_ok(lyx: &Path, file: &Path) -> bool {

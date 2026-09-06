@@ -55,6 +55,22 @@ pub(crate) struct Merge {
 }
 
 #[derive(Clone, Debug, Serialize)]
+pub(crate) struct LineChange {
+    pub index: usize,
+    pub region: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct CellChange {
+    pub r: usize,
+    pub c: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub deleted: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inserted: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
 pub(crate) struct CatalogRow {
     pub n: usize,
     pub kind: String,
@@ -65,6 +81,12 @@ pub(crate) struct CatalogRow {
     pub data: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub merges: Option<Vec<Merge>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub row_changes: Option<Vec<LineChange>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub column_changes: Option<Vec<LineChange>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cell_changes: Option<Vec<CellChange>>,
 }
 
 #[derive(Clone, Debug)]
@@ -221,7 +243,7 @@ pub(crate) fn catalog_of(
     let parents = parent_map(doc);
     let index = build_query_index(doc, doc.root());
     let mut rows = Vec::new();
-    let mut warnings = Vec::new();
+    let mut nested_ns = Vec::new();
     for &id in tabulars {
         let n = all
             .iter()
@@ -231,9 +253,9 @@ pub(crate) fn catalog_of(
         if n == 0 {
             continue;
         }
-        let (row, warn) = catalog_row(doc, id, n, &parents, &index, traversal)?;
-        if let Some(w) = warn {
-            warnings.push(w);
+        let (row, nested) = catalog_row(doc, id, n, &parents, &index, traversal)?;
+        if nested {
+            nested_ns.push(n);
         }
         rows.push(row);
     }
@@ -243,7 +265,21 @@ pub(crate) fn catalog_of(
             "No matching table. Run 'lq table FILE' to list indexes.",
         ));
     }
+    let warnings = nested_inset_warnings(&nested_ns);
     Ok((rows, warnings))
+}
+
+fn nested_inset_warnings(nested_ns: &[usize]) -> Vec<String> {
+    match nested_ns {
+        [] => Vec::new(),
+        [n] => vec![format!(
+            "Table {n} has nested insets (formula, graphics, caption, …). They are not in data."
+        )],
+        ns => vec![format!(
+            "{} tables have nested insets (formula, graphics, caption, …). They are not in data. Slice with n to see which.",
+            ns.len()
+        )],
+    }
 }
 
 pub(crate) fn pick_by_n(doc: &Document, n: usize) -> Result<NodeId, TableError> {
@@ -333,20 +369,14 @@ fn catalog_row(
     parents: &HashMap<NodeId, NodeId>,
     index: &QueryIndex,
     traversal: &HashMap<NodeId, TraversalState>,
-) -> Result<(CatalogRow, Option<String>), TableError> {
+) -> Result<(CatalogRow, bool), TableError> {
     let grid = parse_grid(doc, tabular)?;
     let (data, merges, nested) = grid_data(doc, &grid);
+    let marks = grid_changes(doc, &grid);
     let kind = table_kind(doc, tabular, parents);
     let at = table_at(doc, tabular, parents, index);
     let (caption, label) = caption_and_label(doc, tabular, parents);
     let region = table_region(tabular, traversal);
-    let warn = if nested {
-        Some(format!(
-            "Table {n} has nested insets (formula, graphics, caption, …). They are not in data."
-        ))
-    } else {
-        None
-    };
     Ok((
         CatalogRow {
             n,
@@ -357,8 +387,11 @@ fn catalog_row(
             region,
             data,
             merges,
+            row_changes: marks.rows,
+            column_changes: marks.columns,
+            cell_changes: marks.cells,
         },
-        warn,
+        nested,
     ))
 }
 
@@ -766,15 +799,103 @@ fn grid_data(doc: &Document, grid: &GridModel) -> (String, Option<Vec<Merge>>, b
         }
         fields.push(line);
     }
-    (
-        serialize_rect(&fields),
-        if merges.is_empty() {
-            None
-        } else {
-            Some(merges)
-        },
-        nested,
-    )
+    (serialize_rect(&fields), nonempty(merges), nested)
+}
+
+fn nonempty<T>(v: Vec<T>) -> Option<Vec<T>> {
+    if v.is_empty() { None } else { Some(v) }
+}
+
+fn line_change_region(open: &str) -> Option<String> {
+    let (kind, _) = parse_change_attr(open)?;
+    if kind == "inserted" || kind == "deleted" {
+        Some(kind)
+    } else {
+        None
+    }
+}
+
+struct PendingMarks {
+    rows: Option<Vec<LineChange>>,
+    columns: Option<Vec<LineChange>>,
+    cells: Option<Vec<CellChange>>,
+}
+
+fn grid_changes(doc: &Document, grid: &GridModel) -> PendingMarks {
+    let mut row_changes = Vec::new();
+    for (i, row) in grid.rows.iter().enumerate() {
+        if let Some(region) = line_change_region(&row.open) {
+            row_changes.push(LineChange {
+                index: i + 1,
+                region,
+            });
+        }
+    }
+    let mut column_changes = Vec::new();
+    for (i, col) in grid.columns.iter().enumerate() {
+        if let Some(region) = line_change_region(col) {
+            column_changes.push(LineChange {
+                index: i + 1,
+                region,
+            });
+        }
+    }
+    let mut cell_changes = Vec::new();
+    for (ri, row) in grid.rows.iter().enumerate() {
+        for (ci, cell) in row.cells.iter().enumerate() {
+            if col_span(&cell.open) == ColSpan::Part || row_span(&cell.open) == RowSpan::Part {
+                continue;
+            }
+            let (deleted, inserted) = cell_change_texts(doc, cell_layout(doc, cell.inset));
+            if deleted.is_none() && inserted.is_none() {
+                continue;
+            }
+            cell_changes.push(CellChange {
+                r: ri + 1,
+                c: ci + 1,
+                deleted,
+                inserted,
+            });
+        }
+    }
+    PendingMarks {
+        rows: nonempty(row_changes),
+        columns: nonempty(column_changes),
+        cells: nonempty(cell_changes),
+    }
+}
+
+fn cell_change_texts(doc: &Document, layout: NodeId) -> (Option<String>, Option<String>) {
+    let mut deleted = Vec::new();
+    let mut inserted = Vec::new();
+    let mut d_depth = 0i32;
+    let mut i_depth = 0i32;
+    for &c in &doc.node(layout).children {
+        match &doc.node(c).kind {
+            NodeKind::Text { text } if !text.is_empty() => {
+                if d_depth > 0 {
+                    deleted.push(text.clone());
+                } else if i_depth > 0 {
+                    inserted.push(text.clone());
+                }
+            }
+            NodeKind::Property { key, .. } if is_change_opener(key) || is_change_closer(key) => {
+                let d = advance_change_depths(key, d_depth, i_depth);
+                d_depth = d.0;
+                i_depth = d.1;
+            }
+            _ => {}
+        }
+    }
+    (join_prose(deleted), join_prose(inserted))
+}
+
+fn join_prose(parts: Vec<String>) -> Option<String> {
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join("\n").replace('\n', " "))
+    }
 }
 
 fn col_span(open: &str) -> ColSpan {

@@ -202,6 +202,49 @@ pub fn host_layouts_dir() -> Option<String> {
         .map(str::to_owned)
 }
 
+/// LyX binary for headless export. `LYX_BINARY` / `LYX_PATH`, then layouts-dir
+/// walk, then `%LOCALAPPDATA%\Programs\LyX *\bin\LyX.exe`.
+pub fn find_lyx_binary() -> Option<PathBuf> {
+    for key in ["LYX_BINARY", "LYX_PATH"] {
+        if let Ok(env) = std::env::var(key) {
+            let p = PathBuf::from(env);
+            if p.is_file() {
+                return Some(p);
+            }
+        }
+    }
+    let mut candidates = Vec::new();
+    if let Some(dir) = host_layouts_dir() {
+        let p = PathBuf::from(&dir);
+        if let Some(root) = p.parent().and_then(|r| r.parent()) {
+            candidates.push(root.join("bin").join("LyX.exe"));
+            candidates.push(root.join("bin").join("lyx.exe"));
+            candidates.push(root.join("bin").join("lyx"));
+        }
+    }
+    let layouts = lq::get_default_layouts_dir();
+    if layouts.is_dir() {
+        let root = layouts.join("..").join("..");
+        candidates.push(root.join("bin").join("LyX.exe"));
+        candidates.push(root.join("bin").join("lyx.exe"));
+        candidates.push(root.join("bin").join("lyx"));
+    }
+    if let Ok(local) = std::env::var("LOCALAPPDATA") {
+        let programs = PathBuf::from(local).join("Programs");
+        if let Ok(rd) = fs::read_dir(&programs) {
+            for e in rd.flatten() {
+                if e.file_type().map(|t| t.is_dir()).unwrap_or(false)
+                    && e.file_name().to_string_lossy().starts_with("LyX ")
+                {
+                    candidates.push(e.path().join("bin").join("LyX.exe"));
+                    candidates.push(e.path().join("bin").join("lyx.exe"));
+                }
+            }
+        }
+    }
+    candidates.into_iter().find(|c| c.is_file())
+}
+
 /// Parse CLI stdout JSON the way Deno `runCliTest` does (including errors).
 pub fn parse_cli_json(out: &CliOutput) -> Value {
     let trimmed = out.stdout.trim();

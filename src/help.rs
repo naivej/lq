@@ -1147,16 +1147,19 @@ Omit n and selector when the file has exactly one table."#,
               row per line. Quotes wrap a field that contains a comma or a
               quote; `""` inside quotes is a literal quote. Not a file path,
               and not tab- or semicolon-separated.
-  --index     On add-row / add-column, the new row or column becomes N
-              (omit = append; `--index 1` prepends)."#,
+  --index     The Nth row or column to be added or deleted."#,
             },
             HelpSection {
                 heading: "Catalog",
                 body: r#"A JSON catalog of `{ "tables": [ … ] }`. Each row has
 `n`, `kind` (float / inline / longtable), `at`, `caption`, `label`, `region`
-(current / inserted / deleted), and `data` (the physical rectangle of prose).
+(current / inserted / deleted — the table as a whole), and `data` (the
+physical rectangle of prose, including rows still marked deleted).
 Optional `merges` lists each merged range from its top-left cell;
 the other cells of the merge are empty fields in `data`.
+Optional `row_changes` / `column_changes` list pending `change=` marks
+(`index`, `region`). Optional `cell_changes` lists cells with `\change_*`
+words (`r`, `c`, plus `deleted` and/or `inserted` text).
 `kind` is longtable when the Tabular has islongtable=true; else float when an
 ancestor is a table float; else inline. Caption and label come from the table
 float, or from a longtable's Caption Standard cell (not Caption Unnumbered)."#,
