@@ -44,6 +44,22 @@ fn render_file(name: &str) -> Option<(String, lq::LivePreviewResponse)> {
     Some((result.response.html.clone(), result.response))
 }
 
+/// 045: a sole float stays in its Standard paragraph (LyX window). LyXHTML lifts it out.
+fn assert_float_chip_in_standard(html: &str, class_needle: &str) {
+    let fig = html
+        .find(class_needle)
+        .unwrap_or_else(|| panic!("missing {class_needle}"));
+    let head = &html[..fig];
+    let std = head
+        .rfind(r#"class="standard""#)
+        .unwrap_or_else(|| panic!("{class_needle} has no Standard paragraph before it"));
+    let between = &html[std..fig];
+    assert!(
+        !between.contains("</div>"),
+        "{class_needle} was lifted out of its Standard paragraph"
+    );
+}
+
 fn empty_navigate() -> LiveNavigate {
     LiveNavigate::default()
 }
@@ -651,6 +667,7 @@ fn live_renderer_table_figure_footnote_formula() {
     assert!(html.contains(r#"class="float-caption-Standard""#));
     assert!(html.contains("data-filepath="));
     assert!(html.contains(r#"src="file:"#));
+    assert_float_chip_in_standard(&html, r#"class="disclose float float-figure""#);
 }
 
 #[test]
@@ -747,7 +764,10 @@ fn strip_mapping_attrs(html: &str) -> String {
 }
 
 fn closest_data_ref(html: &str, phrase: &str) -> String {
-    assert!(html.contains(phrase), "phrase not in Preview HTML: {phrase:?}");
+    assert!(
+        html.contains(phrase),
+        "phrase not in Preview HTML: {phrase:?}"
+    );
     struct El {
         tag: String,
         id: Option<String>,
@@ -3395,6 +3415,7 @@ fn live_renderer_nameref_uses_heading_and_caption_titles() {
     assert!(html.contains(r##"href="#sec_intro_name">Named Introduction</a>"##));
     assert!(html.contains(r##"href="#sec_intro_name">1</a>"##));
     assert!(html.contains(r##"href="#fig_demo_cap">Figure 1</a>"##));
+    assert_float_chip_in_standard(&html, r#"class="disclose float float-figure""#);
 }
 
 #[test]
