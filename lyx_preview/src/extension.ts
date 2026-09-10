@@ -28,11 +28,9 @@ import {
 import { LyxOutlineTreeProvider } from "./outlineTree";
 import { renderWebviewHtml } from "./webview";
 import {
-  LM_TOOL_NAME,
   LiveSelectionPersister,
   LiveSelectionStore,
   compactSelector,
-  invokeLiveSelection,
   parseSelectMessage,
   resolveLiveSelectionPath,
   type LiveSelectionRecord,
@@ -51,10 +49,6 @@ function selectionBelongsToPreview(
   if (!record) return false;
   if (sameFsPath(record.file, previewFile)) return true;
   return Boolean(record.via && sameFsPath(record.via.file, previewFile));
-}
-
-function setLiveOpenContext(): void {
-  void vscode.commands.executeCommand("setContext", "lyxPreview.liveOpen", roster.size > 0);
 }
 
 interface LiveSelectionHost {
@@ -87,7 +81,6 @@ class LivePreviewPanel {
     LivePreviewPanel.byPath.set(this.filePath, this);
     roster.open(this.filePath);
     roster.activatePreview(this.filePath);
-    setLiveOpenContext();
     this.panel.onDidDispose(() => this.dispose(), null, this.disposables);
     this.panel.onDidChangeViewState((e) => {
       if (e.webviewPanel.active) {
@@ -406,7 +399,6 @@ class LivePreviewPanel {
       this.host.onSelectionChange(undefined);
     }
     this.onChangeFocus?.(undefined);
-    setLiveOpenContext();
     if (next) {
       const other = LivePreviewPanel.find(next.path);
       if (other) other.syncOutline();
@@ -524,12 +516,6 @@ export function activate(context: vscode.ExtensionContext): void {
     treeView,
     changeStatus,
     selectStatus,
-    vscode.lm.registerTool(LM_TOOL_NAME, {
-      invoke: () =>
-        new vscode.LanguageModelToolResult([
-          new vscode.LanguageModelTextPart(invokeLiveSelection(selection.get())),
-        ]),
-    }),
     vscode.workspace.onDidChangeConfiguration((e) => {
       if (e.affectsConfiguration("lyx-preview.lqPath")) {
         void ensureCompanionLq();

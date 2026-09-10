@@ -2,7 +2,7 @@
   "name": "lyx-preview",
   "displayName": "LyX Preview",
   "description": "Read-only preview of saved .lyx files.",
-  "version": "0.1.6",
+  "version": "0.1.7",
   "publisher": "CoconutWater",
   "license": "MIT",
   "repository": {
@@ -144,22 +144,7 @@
           "description": "How long to wait for the preview, in milliseconds."
         }
       }
-    },
-    "languageModelTools": [
-      {
-        "name": "lyx-preview_get_live_selection",
-        "displayName": "LyX Preview selection",
-        "modelDescription": "Return the current LyX Preview selection as JSON (file, diskHash, stale, mode, selector, selectedText, changeId, multi, capturedAt, optional via). Use when the user refers to #lyxSelection or the preview caret/highlight. If nothing is selected, the result is 'no Preview selection'. The selector is a read reference, not a mutation selector.",
-        "toolReferenceName": "lyxSelection",
-        "canBeReferencedInPrompt": true,
-        "when": "lyxPreview.liveOpen",
-        "icon": "$(selection)",
-        "inputSchema": {
-          "type": "object",
-          "properties": {}
-        }
-      }
-    ]
+    }
   },
   "scripts": {
     "compile": "tsc -p ./",

@@ -1,14 +1,11 @@
-/** Read-first Live selection record (DL134). One payload for LM tool and JSON. */
+/** Read-first Live selection record (DL134 / DL059). Sidecar JSON only. */
 
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { sameFsPath } from "./fsPath";
 import type { LiveToken, LiveTokenVia } from "./previewSession";
 
-export const NO_LIVE_SELECTION = "no Preview selection";
-export const LM_TOOL_NAME = "lyx-preview_get_live_selection";
-export const LM_TOOL_REF = "lyxSelection";
-export const LIVE_SELECTION_FILENAME = "live-selection.json";
+export const LIVE_SELECTION_FILENAME = "lqsel.json";
 
 export type LiveViewMode = "original" | "tracked" | "clean";
 
@@ -194,11 +191,6 @@ export class LiveSelectionStore {
 
 export function formatLiveSelectionJson(record: LiveSelectionRecord): string {
   return `${JSON.stringify(record, null, 2)}\n`;
-}
-
-export function invokeLiveSelection(record: LiveSelectionRecord | undefined): string {
-  if (!record) return NO_LIVE_SELECTION;
-  return formatLiveSelectionJson(record);
 }
 
 export function compactSelector(record: LiveSelectionRecord): string {

@@ -1,6 +1,6 @@
 # Live pointer
 
-Read this record when the user gives a preview selection this turn (`#lyxSelection` or `@live-selection.json` next to the previewed `.lyx`). It names the owner of the highlight. Use it as the zoom.
+Read this record when the user gives a preview selection this turn (`lqsel.json` next to the previewed `.lyx`). It names the owner of the highlight. Use it as the zoom.
 
 | Field | How to read it |
 |---|---|

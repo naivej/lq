@@ -1,8 +1,6 @@
 /target/
 .lq
-Cargo.lock
 lyx_preview/node_modules/
 lyx_preview/out/
 lyx_preview/*.vsix
-lyx_preview/package-lock.json
-live-selection.json
+lqsel.json

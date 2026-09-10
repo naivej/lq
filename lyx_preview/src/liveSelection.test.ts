@@ -6,15 +6,11 @@ import { describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   LIVE_SELECTION_FILENAME,
-  LM_TOOL_NAME,
-  LM_TOOL_REF,
   LiveSelectionPersister,
   LiveSelectionStore,
-  NO_LIVE_SELECTION,
   compactSelector,
   deleteLiveSelectionFile,
   formatLiveSelectionJson,
-  invokeLiveSelection,
   isObjectOnlyCommandInsetSelector,
   parseLiveSelectionJson,
   parseSelectMessage,
@@ -114,11 +110,11 @@ describe("resolveSelection / store", () => {
     assert.equal(kept?.selectedText, "hi");
   });
 
-  it("clears the record so invoke reports no selection", () => {
+  it("clears the record", () => {
     const store = new LiveSelectionStore();
     store.applySelect(tokens, "tok-1", "hi", false, baseCtx);
     store.clear();
-    assert.equal(invokeLiveSelection(store.get()), NO_LIVE_SELECTION);
+    assert.equal(store.get(), undefined);
   });
 
   it("marks stale when the buffer is dirty", () => {
@@ -240,17 +236,7 @@ describe("resolveSelection / store", () => {
   });
 });
 
-describe("invoke / JSON / path", () => {
-  it("returns no Preview selection when empty", () => {
-    assert.equal(invokeLiveSelection(undefined), NO_LIVE_SELECTION);
-  });
-
-  it("invoke returns the formatted record", () => {
-    const record = resolveSelection(tokens, "tok-1", "the phrase", false, baseCtx)!;
-    assert.equal(invokeLiveSelection(record), formatLiveSelectionJson(record));
-    assert.match(invokeLiveSelection(record), /"selector": "layout\[Standard\]:nth-match\(12\)"/);
-  });
-
+describe("JSON / path", () => {
   it("formats the record and round-trips the file", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lyx-sel-"));
     try {
@@ -345,12 +331,14 @@ describe("invoke / JSON / path", () => {
     assert.equal(formatLiveSelectionJson(record).includes("coords"), false);
   });
 
-  it("declares the LM tool in package.json", () => {
+  it("does not declare a language model tool in package.json", () => {
     const pkg = JSON.parse(readFileSync(join(__dirname, "..", "package.json"), "utf8")) as {
-      contributes: { languageModelTools: Array<{ name: string; toolReferenceName: string }> };
+      contributes: { languageModelTools?: unknown };
     };
-    const tool = pkg.contributes.languageModelTools.find((t) => t.name === LM_TOOL_NAME);
-    assert.ok(tool);
-    assert.equal(tool.toolReferenceName, LM_TOOL_REF);
+    assert.equal(pkg.contributes.languageModelTools, undefined);
+  });
+
+  it("names the sidecar lqsel.json", () => {
+    assert.equal(LIVE_SELECTION_FILENAME, "lqsel.json");
   });
 });
