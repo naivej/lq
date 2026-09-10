@@ -941,11 +941,11 @@ narrower selector or `--depth` for large documents."#,
     },
     HelpPage {
         id: "commands/preview",
-        title: "render the saved document as the Live reader projection",
+        title: "render a preview of the saved document",
         sections: &[
             HelpSection {
                 heading: "Purpose",
-                body: "lq preview - Render the saved document as the Live reader projection.",
+                body: "lq preview - Render a preview of the saved document.",
             },
             HelpSection {
                 heading: "Usage",
@@ -961,7 +961,7 @@ narrower selector or `--depth` for large documents."#,
                 body: r#"One JSON object on stdout:
   contract       Always 'lyx-preview/live-1'.
   projection     Always 'live'.
-  html           Escaped reader-facing HTML for the supported Live corpus.
+  html           Escaped reader-facing HTML.
   source         Saved-source identity: absolute path, SHA-256 of raw file
                  bytes (hashAlgorithm 'sha256', hashInput 'raw-file-bytes'),
                  diskHash, lineEnding (lf|crlf|mixed), lineCount, and
@@ -1000,7 +1000,7 @@ The command does not mutate the file."#,
   <del class="change-deleted" id="change-N">, with the changes[] index
   describing each region. The reader decides which view to show.
 - ERT appears as an escaped 'ERT' chip; Note/Comment appear as click-disclosable
-  private notes; Greyedout is a collapsed chip. These are Live-only (native
+  private notes; Greyedout is a collapsed chip. These appear in Preview only (native
   XHTML omits them).
 - Formulas use a TeX→MathML subset with escaped fallback; they are not executed.
 - Unknown insets become an escaped, marked fallback plus a diagnostic.
@@ -1019,7 +1019,7 @@ The command does not mutate the file."#,
             },
             FurtherReading {
                 page: "concepts/private-notes",
-                hint: "private notes shown as Live disclosures",
+                hint: "private notes shown as Preview disclosures",
             },
             FurtherReading {
                 page: "concepts/tracked-changes",

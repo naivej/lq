@@ -1,7 +1,7 @@
 {
   // Editor language rules for the "lyx" language contributed in package.json.
   // Wired via contributes.languages[].configuration — affects editing .lyx
-  // buffers in VS Code, not the Live preview webview.
+  // buffers in VS Code, not the Preview webview.
   "comments": {
     // LyX file-format / ERT-style line comments start with #.
     "lineComment": {

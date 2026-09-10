@@ -3653,7 +3653,7 @@ fn render_command_inset(block: NodeId, kind: &str, ctx: &mut RenderCtx<'_>) -> S
         let title = if matches!(command.as_str(), "pageref" | "vpageref")
             || matches!(subtype, "pageref" | "vpageref")
         {
-            r#" title="page reference (Live shows target number/name, not a page)""#
+            r#" title="page reference (Preview shows target number/name, not a page)""#
         } else {
             ""
         };

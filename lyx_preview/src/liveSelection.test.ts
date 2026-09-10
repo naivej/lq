@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { describe, it } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import {
-  LIVE_SELECTION_FILENAME,
+  LQSEL_FILENAME,
   LiveSelectionPersister,
   LiveSelectionStore,
   compactSelector,
@@ -241,7 +241,7 @@ describe("JSON / path", () => {
     const dir = mkdtempSync(join(tmpdir(), "lyx-sel-"));
     try {
       const record = resolveSelection(tokens, "tok-2", "cell", false, baseCtx)!;
-      const path = join(dir, LIVE_SELECTION_FILENAME);
+      const path = join(dir, LQSEL_FILENAME);
       await writeLiveSelectionFile(path, record);
       const raw = readFileSync(path, "utf8");
       assert.equal(raw, formatLiveSelectionJson(record));
@@ -255,14 +255,14 @@ describe("JSON / path", () => {
   it("resolves the sidecar next to the previewed lyx, not .lq or globalStorage", () => {
     assert.equal(
       resolveLiveSelectionPath("/tmp/doc.lyx"),
-      join(dirname("/tmp/doc.lyx"), LIVE_SELECTION_FILENAME),
+      join(dirname("/tmp/doc.lyx"), LQSEL_FILENAME),
     );
     assert.equal(
       resolveLiveSelectionPath("C:\\docs\\ch.lyx"),
-      join(dirname("C:\\docs\\ch.lyx"), LIVE_SELECTION_FILENAME),
+      join(dirname("C:\\docs\\ch.lyx"), LQSEL_FILENAME),
     );
     const nested = resolveLiveSelectionPath("/ws/book/master.lyx");
-    assert.equal(nested, join(dirname("/ws/book/master.lyx"), LIVE_SELECTION_FILENAME));
+    assert.equal(nested, join(dirname("/ws/book/master.lyx"), LQSEL_FILENAME));
     assert.doesNotMatch(nested, /(?:^|[/\\])\.lq(?:[/\\]|$)/);
   });
 
@@ -270,7 +270,7 @@ describe("JSON / path", () => {
     const previewed = "/tmp/Help/EmbeddedObjects.lyx";
     assert.equal(
       resolveLiveSelectionPath(previewed),
-      join(dirname(previewed), LIVE_SELECTION_FILENAME),
+      join(dirname(previewed), LQSEL_FILENAME),
     );
   });
 
@@ -278,7 +278,7 @@ describe("JSON / path", () => {
     const dir = mkdtempSync(join(tmpdir(), "lyx-sel-"));
     try {
       const record = resolveSelection(tokens, "tok-1", "hi", false, baseCtx)!;
-      const path = join(dir, LIVE_SELECTION_FILENAME);
+      const path = join(dir, LQSEL_FILENAME);
       await writeLiveSelectionFile(path, record);
       await deleteLiveSelectionFile(path);
       assert.equal(existsSync(path), false);
@@ -292,7 +292,7 @@ describe("JSON / path", () => {
     const dir = mkdtempSync(join(tmpdir(), "lyx-sel-"));
     try {
       const record = resolveSelection(tokens, "tok-1", "hi", false, baseCtx)!;
-      const path = join(dir, LIVE_SELECTION_FILENAME);
+      const path = join(dir, LQSEL_FILENAME);
       const persister = new LiveSelectionPersister(40);
       persister.persist(path, record);
       persister.persist(path, undefined);
@@ -339,6 +339,6 @@ describe("JSON / path", () => {
   });
 
   it("names the sidecar lqsel.json", () => {
-    assert.equal(LIVE_SELECTION_FILENAME, "lqsel.json");
+    assert.equal(LQSEL_FILENAME, "lqsel.json");
   });
 });

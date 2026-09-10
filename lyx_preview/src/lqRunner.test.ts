@@ -60,7 +60,7 @@ function writeFake(dir: string, name: string, js: string): SpawnFn {
 }
 
 describe("runLivePreview", () => {
-  it("resolves a valid Live payload", async () => {
+  it("resolves a valid preview payload", async () => {
     const dir = tempDir();
     try {
       const lq = writeFake(dir, "ok", `process.stdout.write(${JSON.stringify(VALID_PAYLOAD)});\n`);

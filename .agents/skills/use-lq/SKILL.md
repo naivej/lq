@@ -20,7 +20,7 @@ Run the same sequence for every task:
 
 1. **Set the task's author name first.** `lq init --author-name "<task>"` before the first mutation, and switch when the task changes. Replay undo is author-scoped, so each task's edits stay separately revertible. Name the task, not the human. Done when `lq init` shows this task as `authorName`.
 2. **Inspect configuration.** `lq init` shows the selected scope and config — `trackChanges`, `authorName`, optional `layoutsDir` overlay, `refresh` — plus `layoutSearch` (order) and `layoutRoots` (paths) when writing config. Change configuration only with authorization. See the state-scope note below. Done when you can state `trackChanges`, `authorName`, and `refresh` for the selected scope.
-3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → `read --count` on the narrowed selector → text-only. `dump` has no `--count`. When a preview selection is given (`@lqsel.json`), read [`Live_pointer.md`](references/Live_pointer.md) and use that record as the zoom. Done when you can see the exact node(s) you will touch.
+3. **Zoom in.** Output is several times larger than the file, so start broad only when the result is small: `ls -l` → outline (`dump --toc`) → `read --count` on the narrowed selector → text-only. `dump` has no `--count`. When a preview selection is given (`lqsel.json`), read [`Preview_pointer.md`](references/Preview_pointer.md) and use that record as the zoom. Done when you can see the exact node(s) you will touch.
 4. **Check the schema** when the class or insertion context is unfamiliar (`lq schema <file>`) — a Beamer document permits layouts an article does not. Done when the layout or inset you will insert is in that schema, or you skipped because the class is already known.
 5. **Check the blast radius.** `lq read <file> "<selector>" --count` before mutating; read the type breakdown, not just the total. Done when the count matches the intended composition.
 6. **Mutate minimally.** Every match is edited — `insert` duplicates its payload per match, broad `set`/`delete` can rewrite the document. Prefer a unique anchor and the smallest scale that expresses the workflow. Table edits: [`Domain_recipes.md`](references/Domain_recipes.md). Done when `--count` is the intended set and the command is the smallest that does the job.
@@ -105,7 +105,7 @@ Deep reference lives in the `references/` folder, read on demand when its branch
 
 | File | Covers | Reach when |
 | --- | --- | --- |
-| [`Live_pointer.md`](references/Live_pointer.md) | Preview selection record | a preview selection is given (`@lqsel.json`) |
+| [`Preview_pointer.md`](references/Preview_pointer.md) | Preview selection record | a preview selection is given (`lqsel.json`) |
 | [`Reach.md`](references/Reach.md) | The four reach questions, per-command reach, the selection-scale table, private notes | a mutation's reach is uncertain, or a mutation does not change what the selector matched |
 | [`Tracked_changes.md`](references/Tracked_changes.md) | Tracked-change operational rules: regions, editing rejected text, tracking surfaces, undo modes | tracking is on, or the document is under review |
 | [`Domain_recipes.md`](references/Domain_recipes.md) | Cross-references, citations, lists, tables, multi-pass insertion | the task involves those content types or a complex payload |

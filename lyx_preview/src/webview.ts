@@ -738,7 +738,7 @@ details.disclose.flex-container > summary {
   background: #e8f4f8;
   border-color: #3a7a8a;
 }
-/* Denylist plain-text markers (Live-only; native XHTML omits these). */
+/* Denylist plain-text markers (Preview-only; native XHTML omits these). */
 details.disclose.ert > summary,
 details.disclose.phantom > summary,
 details.disclose.nomencl-marker > summary {
@@ -1017,7 +1017,7 @@ img.info-icon {
   vertical-align: text-bottom;
   display: inline;
 }
-/* Quiet break / spacing chrome (Live vs GUI). */
+/* Quiet break / spacing chrome (Preview vs GUI). */
 div.lyx-pagebreak {
   display: block;
   margin: 1.1em 0;

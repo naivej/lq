@@ -1,4 +1,4 @@
-//! Live reader projection (Deno `preview.ts`).
+//! Preview HTML (Deno `preview.ts`).
 //!
 //! Private modules split Deno's one file along existing function clusters
 //! (016 JC1). One [`RenderCtx`], one inset `match` — not a renderer framework.
@@ -267,7 +267,7 @@ pub fn count_lines(text: &str) -> u32 {
 pub fn validate_live_response(value: &Value) -> Result<LivePreviewResponse, LiveContractError> {
     let mut obj = value.clone();
     if !obj.is_object() {
-        return Err(contract_err("Live response must be a JSON object."));
+        return Err(contract_err("Preview response must be a JSON object."));
     }
     let map = obj.as_object().expect("invariant: object checked");
     if map.get("contract").and_then(Value::as_str) != Some(LIVE_CONTRACT) {
@@ -284,7 +284,7 @@ pub fn validate_live_response(value: &Value) -> Result<LivePreviewResponse, Live
     for field in LIVE_DEFERRED_FIELDS {
         if map.contains_key(*field) {
             return Err(contract_err(format!(
-                "Live response must omit deferred field '{field}'."
+                "Preview response must omit deferred field '{field}'."
             )));
         }
     }
@@ -553,7 +553,7 @@ pub fn validate_live_response(value: &Value) -> Result<LivePreviewResponse, Live
     }
 
     serde_json::from_value(obj)
-        .map_err(|e| contract_err(format!("Live response failed to deserialize: {e}")))
+        .map_err(|e| contract_err(format!("Preview response failed to deserialize: {e}")))
 }
 
 #[derive(Clone, Debug, Default)]

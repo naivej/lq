@@ -378,7 +378,7 @@ fn oracle_export_representative_fixture_when_lyx_is_available() {
     for name in PARITY_FIXTURES {
         let file = root.join(name);
         compare_live_to_oracle(&lyx, &file).unwrap_or_else(|diff| {
-            panic!("{name} Live vs oracle:\n{diff}");
+            panic!("{name} Preview vs oracle:\n{diff}");
         });
     }
 }
@@ -393,7 +393,7 @@ fn oracle_export_dl130_help_slice_synthetic_isolates_when_lyx_is_available() {
     for name in SLICE_FIXTURES {
         let file = root.join(name);
         compare_live_to_oracle(&lyx, &file).unwrap_or_else(|diff| {
-            panic!("{name} Live vs oracle:\n{diff}");
+            panic!("{name} Preview vs oracle:\n{diff}");
         });
     }
 }

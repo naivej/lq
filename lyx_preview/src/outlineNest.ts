@@ -55,7 +55,7 @@ const LAYOUT_LEVEL: Record<string, number> = {
 };
 
 /**
- * Scan raw .lyx buffer lines for heading layouts. Used when Live outline is
+ * Scan raw .lyx buffer lines for heading layouts. Used when Preview outline is
  * unavailable (old lq) and to attach real line numbers for the Outline view.
  */
 export function scanLyxHeadingLines(lines: string[]): OutlineEntryLike[] {
@@ -189,10 +189,10 @@ function attachList(
 
 /**
  * Drop Labels that already appear under Figures / Tables / Equations / listings / algorithms.
- * Safety net when Live data is stale or unfiltered.
+ * Safety net when Preview data is stale or unfiltered.
  *
  * Do not drop solely because `text` matches an Outline heading — leftover body labels often
- * inherited the enclosing section title before Live stopped doing that, which hid real Labels.
+ * inherited the enclosing section title before Preview stopped doing that, which hid real Labels.
  */
 export function dedupeNavigateLabels(
   navigate: NavigateLike,

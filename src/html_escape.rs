@@ -1,4 +1,4 @@
-//! HTML escape for Live preview and formula MathML.
+//! HTML escape for Preview and formula MathML.
 
 pub fn escape_live_html(value: &str) -> String {
     value

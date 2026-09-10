@@ -1,11 +1,11 @@
-/** Read-first Live selection record (DL134 / DL059). Sidecar JSON only. */
+/** Preview selection record (DL134 / DL059). Sidecar JSON only. */
 
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { sameFsPath } from "./fsPath";
 import type { LiveToken, LiveTokenVia } from "./previewSession";
 
-export const LIVE_SELECTION_FILENAME = "lqsel.json";
+export const LQSEL_FILENAME = "lqsel.json";
 
 export type LiveViewMode = "original" | "tracked" | "clean";
 
@@ -46,7 +46,7 @@ export function parseSelectMessage(msg: unknown): SelectMessage | undefined {
 
 
 /**
- * CommandInset tokens whose Live pretty text is absent from `--text-only`
+ * CommandInset tokens whose Preview pretty text is absent from `--text-only`
  * (marker-only). DL145 J2 / 1D-C: force empty selectedText → object read.
  */
 export function isObjectOnlyCommandInsetSelector(selector: string): boolean {
@@ -202,7 +202,7 @@ export function compactSelector(record: LiveSelectionRecord): string {
 
 /** Sidecar of the previewed `.lyx` (DL146). Not under `.lq`, not globalStorage. */
 export function resolveLiveSelectionPath(previewedLyxPath: string): string {
-  return join(dirname(previewedLyxPath), LIVE_SELECTION_FILENAME);
+  return join(dirname(previewedLyxPath), LQSEL_FILENAME);
 }
 
 export function parseLiveSelectionJson(raw: string): LiveSelectionRecord | undefined {

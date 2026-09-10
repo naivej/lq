@@ -221,7 +221,7 @@ pub(crate) fn layout_owner_selector(ctx: &RenderCtx<'_>, node: NodeId, name: &st
     )
 }
 
-/// Live lyx-selection for a layout. `prefix_inset` is the innermost path-prefix
+/// Preview lyx-selection for a layout. `prefix_inset` is the innermost path-prefix
 /// inset that owns the layout (Note, Foot, …), or none for a body paragraph.
 pub(crate) fn layout_host_selector(
     ast: &Document,

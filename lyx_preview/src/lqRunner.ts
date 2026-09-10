@@ -17,7 +17,7 @@ export type SpawnFn = (
 ) => PreviewChild;
 
 /**
- * Run `lq preview <file>` and resolve the parsed Live render (DL132 P1/P3).
+ * Run `lq preview <file>` and resolve the parsed Preview render (DL132 P1/P3).
  * An aborted signal kills the child; stdout/stderr are byte-capped so a
  * misbehaving process cannot exhaust extension-host memory.
  */

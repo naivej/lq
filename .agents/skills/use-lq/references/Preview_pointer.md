@@ -1,4 +1,4 @@
-# Live pointer
+# Preview pointer
 
 Read this record when the user gives a preview selection this turn (`lqsel.json` next to the previewed `.lyx`). It names the owner of the highlight. Use it as the zoom.
 
@@ -10,7 +10,7 @@ Read this record when the user gives a preview selection this turn (`lqsel.json`
 | `mode` | `original` (before changes) / `tracked` (with tracked changes) / `clean` (after accepting all changes) shown in preview. |
 | `selector` | Owner for `lq read <file> "<selector>"`. Nested when the highlight is inside an inset. |
 | `selectedText` | Non-empty ⇒ treat as `--text-only` spelling. Empty ⇒ object selection (chips, caret, cite/href/ref). |
-| `changeId` | `change-N` if the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this Live render. |
+| `changeId` | `change-N` if the owner is a tracked region, else `null`. `N` is that region's 1-based document-order ordinal in this preview. |
 | `multi` | Drag crossed owners. `selector` is the **anchor** (start owner); `selectedText` is clipped to that owner only. |
 | `via` | Present when `file` is an included child shown in another document's preview. Use for Context only. |
 | `capturedAt` | When the record was last written. |

@@ -506,7 +506,7 @@ export function activate(context: vscode.ExtensionContext): void {
     changeStatus.show();
   };
 
-  /** Prefer Live outline/navigate ids (match preview HTML); fall back to buffer scan. */
+  /** Prefer Preview outline/navigate ids (match preview HTML); fall back to buffer scan. */
   const refreshTreeForDoc = (doc: vscode.TextDocument | undefined) => {
     if (!doc || !doc.fileName.toLowerCase().endsWith(".lyx")) return;
     refreshOutlineForPath(outlineTree, doc.uri.fsPath, doc);
@@ -540,7 +540,7 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand("lyx-preview.changeView", async () => {
       // J-E fallback: the submenu icon does not render in this VS Code
-      // build's editor/title, so the Live panel title bar carries a plain
+      // build's editor/title, so the Preview panel title bar carries a plain
       // command button (icon = lyx-l-yellow.svg) that opens this quick pick.
       const picked = await vscode.window.showQuickPick(
         [

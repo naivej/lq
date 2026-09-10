@@ -1,4 +1,4 @@
-//! Live contract + renderer (Deno `tests/preview_test.ts`).
+//! Preview contract + renderer (Deno `tests/preview_test.ts`).
 
 mod common;
 
@@ -182,7 +182,7 @@ fn live_contract_valid_response_is_accepted() {
     let ast = parse(&text, false).expect("parse");
     match build_live_response(&path, &ast, &text, None, None, None) {
         Err(err) => {
-            eprintln!("skip: Live render needs LyX layouts ({})", err.message);
+            eprintln!("skip: Preview render needs LyX layouts ({})", err.message);
         }
         Ok(result) => {
             let mut value = serde_json::to_value(&result.response).expect("json");
@@ -360,7 +360,7 @@ fn live_cli_incomplete_file_previews_with_warning_dump_still_fails() {
     let out = run_cli_with(&["preview", path_arg(&tmp)], &home, work.path());
     let parsed = parse_cli_json(&out);
     if parsed.get("code").and_then(Value::as_str).is_some() {
-        eprintln!("skip: Live CLI render needs LyX layouts ({parsed})");
+        eprintln!("skip: Preview CLI render needs LyX layouts ({parsed})");
         return;
     }
     let html = parsed["html"].as_str().unwrap_or("");
@@ -394,7 +394,7 @@ fn live_cli_crlf_is_recorded_as_crlf() {
     let out = run_cli_with(&["preview", path_arg(&tmp)], &home, work.path());
     let parsed = parse_cli_json(&out);
     if parsed.get("code").and_then(Value::as_str).is_some() {
-        eprintln!("skip: Live CLI render needs LyX layouts ({parsed})");
+        eprintln!("skip: Preview CLI render needs LyX layouts ({parsed})");
         return;
     }
     let validated = validate_live_response(&parsed).expect("valid");
@@ -747,7 +747,7 @@ fn strip_mapping_attrs(html: &str) -> String {
 }
 
 fn closest_data_ref(html: &str, phrase: &str) -> String {
-    assert!(html.contains(phrase), "phrase not in Live HTML: {phrase:?}");
+    assert!(html.contains(phrase), "phrase not in Preview HTML: {phrase:?}");
     struct El {
         tag: String,
         id: Option<String>,
@@ -1564,7 +1564,7 @@ fn live_comparison_resolved_icon_file_name_wins_over_the_lfun_arg() {
 #[test]
 fn live_comparison_dl130_tolerances() {
     let live_page = normalize_reader_html(
-        r##"<a class="ref" href="#fig_Two_images" title="page reference (Live shows target number/name, not a page)">4.2</a>"##,
+        r##"<a class="ref" href="#fig_Two_images" title="page reference (Preview shows target number/name, not a page)">4.2</a>"##,
         None,
     );
     let native_page = normalize_reader_html(
@@ -1604,7 +1604,7 @@ fn live_contract_cli_envelope_distinguishes_disk_identity() {
     let out = run_cli_with(&["preview", path_arg(&file)], &home, work.path());
     let parsed = parse_cli_json(&out);
     if parsed.get("code").and_then(Value::as_str).is_some() {
-        eprintln!("skip: Live CLI render needs LyX layouts ({parsed})");
+        eprintln!("skip: Preview CLI render needs LyX layouts ({parsed})");
         return;
     }
     let validated = validate_live_response(&parsed).expect("valid");
@@ -1633,7 +1633,7 @@ fn live_mapping_lyx_code_lines_publish_layout_paths() {
     let text = fs::read_to_string(&path).unwrap();
     let ast = parse(&text, false).unwrap();
     let phrase = "\\usepackage{indentfirst}";
-    assert!(html.contains(phrase), "Live HTML should show {phrase}");
+    assert!(html.contains(phrase), "Preview HTML should show {phrase}");
     let id = closest_data_ref(&html, phrase);
     let token = response
         .tokens

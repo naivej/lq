@@ -1,4 +1,4 @@
-/** Open Live previews and which document LyX Outline is showing. */
+/** Open Preview panels and which document LyX Outline is showing. */
 
 import { normalizeFsPath, sameFsPath } from "./fsPath";
 

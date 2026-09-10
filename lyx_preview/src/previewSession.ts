@@ -1,8 +1,8 @@
-/** Process-generation and last-valid-render state for the Live preview adapter. */
+/** Process-generation and last-valid-render state for the Preview adapter. */
 
 export const LIVE_CONTRACT = "lyx-preview/live-1";
 
-/** Live capability flags. `outline: true` since DL131 Phase B (M2.7); `mapping: true` since DL134. */
+/** Preview capability flags. `outline: true` since DL131 Phase B (M2.7); `mapping: true` since DL134. */
 export const LIVE_CAPABILITIES = {
   review: false,
   mapping: true,
@@ -28,7 +28,7 @@ export interface LiveTokenBundle {
   via?: LiveTokenVia;
 }
 
-/** One mapped Live owner (HTML id/`data-ref` equals token id). */
+/** One mapped Preview owner (HTML id/`data-ref` equals token id). */
 export interface LiveToken {
   id: string;
   bundle: LiveTokenBundle;
@@ -164,7 +164,7 @@ export function parseLiveStdout(stdout: string): LiveRender {
     throw new AdapterError(obj.code === "PARSE_ERROR" ? "PARSE_ERROR" : "PROCESS_ERROR", message);
   }
   if (obj.contract !== LIVE_CONTRACT || obj.projection !== "live" || typeof obj.html !== "string") {
-    contract("lq preview returned an incompatible Live contract.");
+    contract("lq preview returned an incompatible preview contract.");
   }
   for (const field of DEFERRED) {
     if (field in obj) {

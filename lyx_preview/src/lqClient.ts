@@ -29,7 +29,7 @@ export function readUnmanagedLqPathSetting(documentUri?: vscode.Uri): string {
 }
 
 /**
- * Path to spawn for Live preview (DL155 / DL035).
+ * Path to spawn for Preview (DL155 / DL035).
  * Throws AdapterError MISSING_BINARY when unmanaged file is missing and `lqPath` is empty.
  */
 export function discoverLqBinary(documentUri?: vscode.Uri): string {
@@ -50,7 +50,7 @@ let ensuredPath: string | undefined;
 
 /**
  * When `lqPath` is set, ensure that file matches GitHub latest (hash), even if
- * Live will spawn the unmanaged binary (DL034 / DL035). Empty `lqPath` → no download.
+ * Preview will spawn the unmanaged binary (DL034 / DL035). Empty `lqPath` → no download.
  * Soft-fail: if ensure fails while spawn would be unmanaged, toast only (preview continues).
  * Single-flight across activate / config / preview; GitHub check once per path per session.
  */

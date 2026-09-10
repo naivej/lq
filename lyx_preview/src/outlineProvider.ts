@@ -1,4 +1,4 @@
-/** Outline + navigate cache shared by Live preview and Explorer LyX Outline tree. */
+/** Outline + navigate cache shared by Preview and Explorer LyX Outline tree. */
 
 import { normalizeFsPath, sameFsPath } from "./fsPath";
 import type { LiveChangeEntry, LiveNavigate, LiveOutlineEntry } from "./previewSession";

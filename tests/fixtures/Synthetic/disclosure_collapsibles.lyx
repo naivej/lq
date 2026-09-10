@@ -1,16 +1,16 @@
 #LyX 2.5 created this file. For more info see https://www.lyx.org/
-# DL131 Live vs LyX GUI comparison corpus — one example of each common inset kind.
+# DL131 Preview vs LyX GUI comparison corpus — one example of each common inset kind.
 #
-# Purpose: open this file in LyX GUI and in Live preview side by side.
+# Purpose: open this file in LyX GUI and in Preview side by side.
 #
 # Inventory (INSET_CATALOG + important subtypes):
 #   Collapsible chips: Foot (title+body), Note Note/Comment/Greyedout, Marginal,
 #     Box, Float figure/table, Wrap figure, Branch, Caption (nested)
 #   Charstyle Flex (inline, NOT chips): Code, Emph, Strong, Noun, URL
-#   Plain-text marker chips (Live-only): ERT, Phantom/HPhantom/VPhantom,
+#   Plain-text marker chips (Preview-only): ERT, Phantom/HPhantom/VPhantom,
 #     Nomenclature chip "Nom" with nested Argument boxes (Sort as / Description), Argument 1 Short Title
 #   Index chip "Idx" with nested IndexMacro boxes (Subentry / See)
-#   Other Arguments (post:, 2, …): Live silent (parent-consumed)
+#   Other Arguments (post:, 2, …): Preview silent (parent-consumed)
 #   Content: Formula (inline+display), FormulaMacro, Graphics, Tabular,
 #     listings, Preview (non-click bordered box)
 #   Spacing chrome: space, Newline, VSpace/Newpage/Separator markers,
@@ -297,7 +297,7 @@ ShortTitle
 
 \end_inset
 
-Argument short title (Live omits Argument chip)
+Argument short title (Preview omits Argument chip)
 \begin_inset CommandInset label
 LatexCommand label
 name "sec:arg-short"
@@ -502,7 +502,7 @@ a^{2}+b^{2}=c^{2}
 \newcommand{\qDemo}[1]{#1^{2}}
 \end_inset
 
-(FormulaMacro is Live-silent; macros apply to later formulas.)
+(FormulaMacro is Preview-silent; macros apply to later formulas.)
 \end_layout
 \begin_layout Standard
 \begin_inset Graphics
@@ -629,7 +629,7 @@ height "1pt"
 
 \end_layout
 \begin_layout Standard
-After newpage (Live usually omits page breaks).
+After newpage (Preview usually omits page breaks).
 \end_layout
 \begin_layout Section
 Quotes, SpecialChar, script

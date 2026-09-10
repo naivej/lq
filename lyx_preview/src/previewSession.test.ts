@@ -43,7 +43,7 @@ function validRender(over: Record<string, unknown> = {}): string {
 }
 
 describe("parseLiveStdout", () => {
-  it("accepts a Live contract", () => {
+  it("accepts a preview contract", () => {
     const render = parseLiveStdout(validRender());
     assert.equal(render.contract, LIVE_CONTRACT);
     assert.equal(render.projection, "live");

@@ -1,4 +1,4 @@
-//! LyX `.bind` loader for Live Info shortcuts (Deno `bind.ts`).
+//! LyX `.bind` loader for Preview Info shortcuts (Deno `bind.ts`).
 
 use crate::paths::{TextReadError, read_text_file};
 use std::collections::HashSet;

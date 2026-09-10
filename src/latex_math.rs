@@ -1,4 +1,4 @@
-//! TeX-to-MathML for Live formula insets (Deno `latex_math.ts`).
+//! TeX-to-MathML for Preview formula insets (Deno `latex_math.ts`).
 
 use crate::html_escape::escape_live_html;
 use crate::math_alphanum::{MathAlphanumVariant, math_alphanum};
