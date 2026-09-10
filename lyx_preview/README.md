@@ -9,7 +9,7 @@ This extension renders a read-only preview of saved `.lyx` files directly inside
 - **LyX-Familiar Appearance:** Renders layouts, sections, formatting, tables, images, and math with styling faithful to the LyX editor.
 - **LyX Outline View:** Dedicated panel in the Explorer sidebar to navigate the Table of Contents, figures, tables, equations, tracked changes, footnotes, and labels/references across both the raw `.lyx` buffer and the preview.
 - **Tracked-Change Views:** Toggle between **Tracked** (markup shown), **Original** (pre-change), and **Clean** (post-change/accepted) views from the title bar.
-- **Agent Context Sharing:** Selecting text or constructs in the preview generates a temporary `lqsel.json` sidecar next to the previewed `.lyx` file for AI agents using `lq`.
+- **Agent Context Sharing:** Selecting text or constructs in the preview generates a temporary `lqsel.json` file next to the previewed `.lyx` file. To share context, attach it explicitly in a conversation with AI agents.
 - **Status Bar Inspection:** Displays the active `lq` selector, tracked-change author/timestamp metadata, and selection details in the VS Code status bar.
 - **Built-in Webview Search:** Full support for standard search (`Ctrl+F` / `Cmd+F`) inside the preview panel.
 

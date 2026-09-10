@@ -1,4 +1,4 @@
-/** Preview selection record (DL134 / DL059). Sidecar JSON only. */
+/** Preview selection record (DL134 / DL059). On-disk JSON only. */
 
 import { mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -200,7 +200,7 @@ export function compactSelector(record: LiveSelectionRecord): string {
   return text;
 }
 
-/** Sidecar of the previewed `.lyx` (DL146). Not under `.lq`, not globalStorage. */
+/** `lqsel.json` next to the previewed `.lyx` (DL146). Not under `.lq`, not globalStorage. */
 export function resolveLiveSelectionPath(previewedLyxPath: string): string {
   return join(dirname(previewedLyxPath), LQSEL_FILENAME);
 }

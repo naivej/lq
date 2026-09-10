@@ -252,7 +252,7 @@ describe("JSON / path", () => {
     }
   });
 
-  it("resolves the sidecar next to the previewed lyx, not .lq or globalStorage", () => {
+  it("resolves lqsel.json next to the previewed lyx, not .lq or globalStorage", () => {
     assert.equal(
       resolveLiveSelectionPath("/tmp/doc.lyx"),
       join(dirname("/tmp/doc.lyx"), LQSEL_FILENAME),
@@ -274,7 +274,7 @@ describe("JSON / path", () => {
     );
   });
 
-  it("deletes the sidecar and treats a missing file as success", async () => {
+  it("deletes the selection record and treats a missing file as success", async () => {
     const dir = mkdtempSync(join(tmpdir(), "lyx-sel-"));
     try {
       const record = resolveSelection(tokens, "tok-1", "hi", false, baseCtx)!;
@@ -338,7 +338,7 @@ describe("JSON / path", () => {
     assert.equal(pkg.contributes.languageModelTools, undefined);
   });
 
-  it("names the sidecar lqsel.json", () => {
+  it("names the selection record lqsel.json", () => {
     assert.equal(LQSEL_FILENAME, "lqsel.json");
   });
 });
