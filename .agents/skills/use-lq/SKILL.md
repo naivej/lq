@@ -1,6 +1,6 @@
 ---
 name: use-lq
-description: `.lyx` files with lq. Preview selection (`lqsel.json`). Headless LyX create, import, or export. LyX GUI for LyXServer.
+description: "`.lyx` files with lq. Preview selection (`lqsel.json`). Headless LyX create, import, or export. LyX GUI for LyXServer."
 allowed-tools: Bash(lq *)
 ---
 
